@@ -19,6 +19,7 @@ addressable-path checks in ``Substrate.add_*``.
 """
 
 from ._errors import (
+    SourceMirrorExists,
     SubstrateError,
     SubstrateIdMismatch,
     SubstrateInvalidId,
@@ -36,6 +37,7 @@ __all__ = [
     "DEFAULT_TIMEOUT_SECONDS",
     "LOCK_FILENAME",
     "ReplayLog",
+    "SourceMirrorExists",
     "Substrate",
     "SubstrateError",
     "SubstrateIdMismatch",

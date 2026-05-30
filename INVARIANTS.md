@@ -121,6 +121,11 @@ Status legend: `active` (gate enforced) | `near-threshold` (warn) | `waived` (ex
   renderings are deterministic given fixed substrate.
 - **Rationale:** Filesystem-as-truth keeps git-friendly, JIT-loadable,
   agent-direct-writable, and survives loss of cache/db.
+- **Known escape hatch:** hand-edits to paragraph `.md` files in
+  `source-mirror/paragraphs/` are not currently re-verified against the
+  manifest's `content_sha256` hashes; a future verifier (post-M3.1) will
+  close this. INV-8's atomic-write guarantee covers the write path, not
+  post-write tampering.
 
 ## INV-10 — Vocabulary is pinned per distillation
 
@@ -131,15 +136,15 @@ Status legend: `active` (gate enforced) | `near-threshold` (warn) | `waived` (ex
   hash recorded in `source-mirror/manifest.yaml`). All validators read the
   per-distillation snapshot, never the global `~/.amanuensis/vocabularies/` registry.
   The global registry is a starting template, not a runtime dependency.
-- **Gate test (active, partial):** `tests/invariants/test_vocabulary_pinned.py`
+- **Gate test (active):** `tests/invariants/test_vocabulary_pinned.py`
   — verifies every distillation has a vocabulary snapshot; verifies write-once
   semantics (a snapshot for distillation A is independent of subsequent
   registry edits or of snapshots written for distillation B); verifies the
   auditor signal for "no snapshot" (`SubstrateNotFound`) vs "corrupt snapshot"
-  (`SubstrateSnapshotCorrupt`) are distinct typed exceptions. The
-  "snapshot hash matches manifest entry" check is deferred until M3.1
-  ingestion lands the `source-mirror/manifest.yaml` file (TODO documented
-  in the test module).
+  (`SubstrateSnapshotCorrupt`) are distinct typed exceptions; verifies the
+  M3.1 manifest's `vocabulary_snapshot_sha256` matches the SHA-256 of the
+  on-disk snapshot bytes (closing the previously-deferred manifest-hash
+  clause).
 - **Rationale:** Vocabulary registry edits between distillations (Phase 1.5, second
   engagement, or unrelated tinkering) would otherwise silently retroactively change
   what existing atoms mean. The snapshot makes substrate-as-truth (INV-8) hold across

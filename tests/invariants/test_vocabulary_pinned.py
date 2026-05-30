@@ -17,30 +17,32 @@ What this gate certifies
 - A distillation without a snapshot raises ``SubstrateNotFound`` from
   ``get_vocabulary_snapshot`` — the INV-10 violation signal an auditor
   would surface.
-
-Scope boundary
---------------
-TODO(M3.1): INV-10's full charter includes "snapshot hash recorded in
-source-mirror/manifest.yaml". The ``manifest.yaml`` file is M3.1's
-deliverable (source-mirror ingest), which does not exist yet. When M3.1
-lands, add a fourth gate test that walks every distillation, loads its
-manifest, hashes the snapshot file on disk, and asserts
-``manifest.vocabulary_snapshot_hash == hash(read(vocabulary_snapshot_path))``.
+- After M3.1 ingest, the manifest's recorded
+  ``vocabulary_snapshot_sha256`` equals the on-disk snapshot's SHA-256.
+  This is the manifest-hash link INV-10 was deferring until M3.1 landed
+  the source-mirror manifest file.
 """
 
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 
 import pytest
+import yaml
 
 from amanuensis.fs import Substrate, SubstrateNotFound, SubstrateSnapshotCorrupt
+from amanuensis.ingest import ingest_pdf
 from amanuensis.schemas import (
+    AgentAttribution,
     OperandTypeSchema,
+    SourceMirrorManifest,
     Vocabulary,
     VocabularyEntry,
 )
 from tests.invariants._types import MatchedAtomFactory
+
+_INGEST_FIXTURE_PDF = Path(__file__).parent.parent / "fixtures" / "ingest" / "simple-contract.pdf"
 
 SOURCE_ID_A = "src-fixture-001"
 SOURCE_ID_B = "src-fixture-002"
@@ -194,3 +196,44 @@ def test_inv10_corrupt_snapshot_raises(tmp_workspace: Path) -> None:
     assert snapshot_path.exists()
     with pytest.raises(SubstrateSnapshotCorrupt):
         substrate.get_vocabulary_snapshot(SOURCE_ID_A)
+
+
+@pytest.mark.invariants
+def test_inv10_manifest_records_snapshot_hash(tmp_workspace: Path) -> None:
+    """INV-10 — Vocabulary is pinned per distillation.
+
+    The fourth (previously deferred) clause of INV-10: the source-mirror
+    manifest must record the SHA-256 of the per-distillation vocabulary
+    snapshot, so auditors can verify the pin has not been tampered with
+    after ingest. M3.1 lands the manifest file; this gate test asserts:
+
+    1. After running ``ingest_pdf``, ``manifest.vocabulary_snapshot_sha256``
+       equals ``sha256(<vocabulary-snapshot.yaml bytes>).hexdigest()``.
+    2. The manifest on disk round-trips that hash byte-for-byte through
+       ``yaml.safe_load`` + ``SourceMirrorManifest.model_validate``.
+    """
+    substrate = Substrate(tmp_workspace)
+    vocab = _vocabulary_v1()
+    agent = AgentAttribution(
+        kind="llm",
+        identifier="claude-opus-4-7",
+        role="extractor",
+    )
+    manifest = ingest_pdf(
+        substrate=substrate,
+        source_id=SOURCE_ID_A,
+        pdf_path=_INGEST_FIXTURE_PDF,
+        vocabulary=vocab,
+        agent_attribution=agent,
+    )
+
+    snapshot_path = substrate.vocabulary_snapshot_path(SOURCE_ID_A)
+    snapshot_bytes = snapshot_path.read_bytes()
+    expected_hash = hashlib.sha256(snapshot_bytes).hexdigest()
+    assert manifest.vocabulary_snapshot_sha256 == expected_hash
+
+    manifest_path = substrate.manifest_path(SOURCE_ID_A)
+    on_disk = SourceMirrorManifest.model_validate(
+        yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
+    )
+    assert on_disk.vocabulary_snapshot_sha256 == expected_hash

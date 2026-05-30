@@ -45,6 +45,7 @@ from amanuensis.schemas import (
     ProvenanceRecord,
     Relation,
     ReplayLogEntry,
+    SourceMirrorManifest,
     Vocabulary,
     VocabularyEntry,
     compute_id,
@@ -328,16 +329,36 @@ def test_collision_sweep_across_kinds(
     iteration: IterationDirective,
 ) -> None:
     """One of each content-addressable kind. Ids are unique (and prefixes distinct)."""
+    # Build a minimal valid SourceMirrorManifest fixture inline so the sweep
+    # covers the ``m-`` prefix (the sixth content-addressable kind added in
+    # M3.1). Trivial valid values: 64-hex deterministic sha256 strings,
+    # zero-length source bytes, empty paragraph list, deterministic
+    # provenance id.
+    deterministic_hex = "0" * 64
+    manifest = SourceMirrorManifest(
+        id="m-" + "0" * 16,
+        source_id="sweep-test",
+        source_filename="sweep.pdf",
+        source_sha256=deterministic_hex,
+        source_bytes_len=0,
+        ingest_engine="docling",
+        ingest_engine_version="0.0.0",
+        vocabulary_snapshot_sha256=deterministic_hex,
+        provenance_id="p-test1234567890ab",
+        paragraphs=[],
+        schema_version=1,
+    )
     ids = {
         compute_id(atom),
         compute_id(relation),
         compute_id(provenance),
         compute_id(clarification),
         compute_id(iteration),
+        compute_id(manifest),
     }
-    assert len(ids) == 5
+    assert len(ids) == 6
     prefixes = {id_[0] for id_ in ids}
-    assert prefixes == {"a", "r", "p", "c", "i"}
+    assert prefixes == {"a", "r", "p", "c", "i", "m"}
 
 
 # --- 6. Non-content-addressable types raise ValueError ----------------

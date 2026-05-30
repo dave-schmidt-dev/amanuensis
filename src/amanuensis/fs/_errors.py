@@ -60,6 +60,22 @@ class SubstrateSnapshotConflict(SubstrateError):
     """
 
 
+class SourceMirrorExists(SubstrateError):
+    """Raised when ``ingest_pdf`` is called for a source_id whose
+    source-mirror manifest already exists on disk.
+
+    Symmetric with ``SubstrateSnapshotConflict`` (INV-10 vocabulary pin):
+    a source-mirror distillation is write-once. Re-ingesting the same
+    source_id with a shorter PDF would leave orphan ``p-NNNN.md`` files
+    beyond the new paragraph count, and a same-length re-ingest under
+    different Docling vocabulary / version would mix old and new
+    paragraph bodies — both confuse any reader that walks the
+    ``paragraphs/`` directory directly. The substrate refuses rather
+    than silently corrupting on-disk state. To re-ingest, operators
+    delete the distillation's ``source-mirror/`` directory and re-run.
+    """
+
+
 class SubstrateSnapshotCorrupt(SubstrateError):
     """Raised when ``get_vocabulary_snapshot`` finds the snapshot file on
     disk but cannot parse / validate it into a ``Vocabulary``.

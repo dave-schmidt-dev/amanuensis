@@ -60,6 +60,7 @@ from amanuensis.schemas import (
     IterationDirective,
     ProvenanceRecord,
     Relation,
+    SourceMirrorManifest,
     Vocabulary,
     compute_id,
 )
@@ -200,11 +201,32 @@ class Substrate:
         """
         return self._distillation_root(source_id) / "vocabulary-snapshot.yaml"
 
+    def source_mirror_root(self, source_id: str) -> Path:
+        """Canonical root for a distillation's source-mirror (M3.1).
+
+        Pure path computation; no filesystem access.
+        """
+        return self._distillation_root(source_id) / "source-mirror"
+
+    def paragraph_path(self, source_id: str, paragraph_id: str) -> Path:
+        """Canonical path for one paragraph .md file under source-mirror."""
+        _validate_id_component(paragraph_id, label="paragraph_id")
+        return self.source_mirror_root(source_id) / "paragraphs" / f"{paragraph_id}.md"
+
+    def manifest_path(self, source_id: str) -> Path:
+        """Canonical path for a distillation's source-mirror manifest."""
+        return self.source_mirror_root(source_id) / "manifest.yaml"
+
     # --- Identity check ----------------------------------------------
 
     @staticmethod
     def _require_id_matches(
-        model: Atom | Relation | ProvenanceRecord | Clarification | IterationDirective,
+        model: Atom
+        | Relation
+        | ProvenanceRecord
+        | Clarification
+        | IterationDirective
+        | SourceMirrorManifest,
     ) -> None:
         """Refuse to write a model whose declared id != its hash."""
         expected = compute_id(model)
@@ -258,6 +280,21 @@ class Substrate:
         atomic_write_text(path, serialize_iteration_md(iteration))
         return path
 
+    def add_source_mirror_manifest(self, source_id: str, manifest: SourceMirrorManifest) -> Path:
+        """Write a source-mirror manifest (M3.1) atomically.
+
+        Enforces ``manifest.id == compute_id(manifest)`` and that the
+        manifest's ``source_id`` matches the caller-passed ``source_id``.
+        """
+        if manifest.source_id != source_id:
+            raise ValueError(
+                f"manifest.source_id={manifest.source_id!r} does not match source_id={source_id!r}"
+            )
+        self._require_id_matches(manifest)
+        path = self.manifest_path(source_id)
+        atomic_write_text(path, serialize_yaml(manifest))
+        return path
+
     # --- Vocabulary snapshot (INV-10) ---------------------------------
 
     def snapshot_vocabulary(self, source_id: str, vocabulary: Vocabulary) -> Path:
@@ -281,10 +318,11 @@ class Substrate:
         underlying error — silently overwriting an unreadable pin would
         defeat INV-10.
 
-        TODO(M3.1): record the snapshot's content hash in
-        ``source-mirror/manifest.yaml`` on ingest. The manifest file
-        itself is M3.1's deliverable; this method only writes the
-        snapshot.
+        M3.1 (landed): the ingest pipeline reads the on-disk snapshot
+        bytes after this method returns and records their SHA-256 in
+        ``source-mirror/manifest.yaml`` (``vocabulary_snapshot_sha256``).
+        This method itself stays focused on the pin write and remains
+        oblivious to the manifest.
         """
         path = self.vocabulary_snapshot_path(source_id)
         if path.is_file():

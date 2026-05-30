@@ -32,6 +32,7 @@ from amanuensis.schemas import (
     Atom,
     Clarification,
     IterationDirective,
+    ParagraphEntry,
     ProvenanceRecord,
     Relation,
 )
@@ -190,3 +191,31 @@ def parse_relation_yaml(text: str) -> Relation:
 
 def parse_provenance_yaml(text: str) -> ProvenanceRecord:
     return ProvenanceRecord(**_safe_load(text))
+
+
+def serialize_paragraph_md(entry: ParagraphEntry, body: str) -> str:
+    """Serialize a paragraph as YAML-frontmatter + body markdown.
+
+    The frontmatter carries every ``ParagraphEntry`` field except
+    ``content_sha256`` (the body IS the content; the hash is recorded in
+    the manifest, not duplicated per-file). The body is written as-is —
+    Docling text is plain UTF-8 with no escape requirements at this layer.
+    """
+    payload: dict[str, Any] = entry.model_dump(mode="python")
+    # ``content_sha256`` lives in the manifest, not the per-paragraph file.
+    payload.pop("content_sha256", None)
+    return _emit_md(payload, body)
+
+
+def parse_paragraph_md(text: str) -> tuple[dict[str, Any], str]:
+    """Parse a paragraph .md file back into (frontmatter, body).
+
+    Returns the raw frontmatter dict (callers reconstruct
+    ``ParagraphEntry`` by adding the recomputed ``content_sha256``) and
+    the body text exactly as written.
+    """
+    payload = _parse_md(text, "_body")
+    body = payload.pop("_body", "")
+    if not isinstance(body, str):
+        raise ValueError(f"paragraph body must be str, got {type(body).__name__}")
+    return payload, body

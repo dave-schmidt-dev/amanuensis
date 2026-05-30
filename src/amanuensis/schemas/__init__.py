@@ -30,6 +30,7 @@ from .iteration import IterationDirective
 from .provenance import ProvenanceRecord
 from .relation import Relation
 from .replay_log import ReplayLogEntry
+from .source_mirror import ParagraphEntry, SourceMirrorManifest
 from .vocabulary import OperandTypeSchema, Vocabulary, VocabularyEntry
 
 __all__ = [
@@ -39,10 +40,12 @@ __all__ = [
     "IterationDirective",
     "OperandRef",
     "OperandTypeSchema",
+    "ParagraphEntry",
     "ProvenanceRecord",
     "Relation",
     "ReplayLogEntry",
     "RoleAttribution",
+    "SourceMirrorManifest",
     "Vocabulary",
     "VocabularyEntry",
     "compute_id",

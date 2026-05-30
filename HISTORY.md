@@ -537,3 +537,68 @@ Format: dated entries, newest first. Bug entries cite the area touched:
   critical files + 2-3 sentence strategic momentum + active subagents).
   M2 fully shipped; next session entry point is M3.1 (Docling ingestion).
   | files: handoff.md
+- M3.1 — Docling source-mirror ingest landed. Added `docling` runtime
+  dependency (uv-resolved, no version pin); new `amanuensis.ingest`
+  package with the library-only `ingest_pdf(...)` function (no CLI
+  subcommand yet); new `SourceMirrorManifest` + `ParagraphEntry`
+  schemas under `amanuensis.schemas.source_mirror`, registered as the
+  sixth content-addressable type (kind prefix `m-`). The ingest
+  pipeline pins the vocabulary (INV-10), hashes the PDF bytes, runs
+  Docling end-to-end (CPU accelerator forced — macOS MPS hits a
+  float64 incompatibility in rt-detr layout), walks `iterate_items()`
+  while maintaining a heading stack keyed by `SectionHeaderItem.level`,
+  writes one `.md` per paragraph with YAML-frontmatter + body under
+  `distillations/<source-id>/source-mirror/paragraphs/`, persists one
+  `source-mirror-document` PROV record (entity_id derived from
+  `source_sha256` + `activity_ended_at` to break the manifest.id ↔
+  prov.id content-id cycle), and writes the canonical YAML manifest at
+  `source-mirror/manifest.yaml`. New `Substrate` resolvers:
+  `source_mirror_root`, `paragraph_path`, `manifest_path`; new writer
+  `Substrate.add_source_mirror_manifest`. New paragraph-md serializer
+  helpers (`serialize_paragraph_md` / `parse_paragraph_md`) following
+  the existing per-artifact serializer pattern. Test fixture:
+  3-page extract of the CUAD Verizon contract via `pypdfium2`
+  (transitive dep — no new dependency for fixture creation);
+  `tests/fixtures/ingest/SOURCES.md` documents the extraction recipe
+  and CC-BY-4.0 license inheritance. INV-10 graduates from "active
+  (partial)" to fully "active" — new gate test
+  `test_inv10_manifest_records_snapshot_hash` runs `ingest_pdf` and
+  asserts `manifest.vocabulary_snapshot_sha256 ==
+  sha256(snapshot_bytes).hexdigest()`. | files: pyproject.toml,
+  src/amanuensis/schemas/source_mirror.py,
+  src/amanuensis/schemas/_hashing.py,
+  src/amanuensis/schemas/__init__.py,
+  src/amanuensis/fs/substrate.py, src/amanuensis/fs/_serialize.py,
+  src/amanuensis/ingest/__init__.py,
+  src/amanuensis/ingest/docling_ingester.py,
+  tests/fixtures/ingest/simple-contract.pdf,
+  tests/fixtures/ingest/SOURCES.md,
+  tests/ingest/__init__.py, tests/ingest/test_simple_pdf.py,
+  tests/invariants/test_vocabulary_pinned.py, INVARIANTS.md
+- M3.1 code-review fixes: heading-stack underflow padding for
+  documents opening at non-H1 depth (preserves INV-7 depth signal);
+  whitespace-only SECTION_HEADER / paragraph text now silently skipped
+  rather than pushed onto the stack or emitted as a zero-content
+  paragraph; new typed exception `SourceMirrorExists` (symmetric with
+  INV-10's `SubstrateSnapshotConflict`) guards `ingest_pdf` against
+  re-ingest into an existing distillation (orphan-paragraph-file risk
+  + mixed-version body risk); docstring's "macOS / MPS note" rewritten
+  as "CPU accelerator (unconditional)" to acknowledge the dual
+  motivation (MPS float64 bug avoidance + cross-platform determinism);
+  `_docling_version()` captured once instead of called twice in
+  manifest construction; collision-sweep test extended to cover the
+  `m-` prefix (six kinds, all prefixes distinct). New test
+  `test_reingest_refuses_when_manifest_exists` asserts the guard fires
+  and the first-ingest manifest is unchanged on disk. | files:
+  src/amanuensis/ingest/docling_ingester.py,
+  src/amanuensis/fs/_errors.py, src/amanuensis/fs/__init__.py,
+  tests/ingest/test_simple_pdf.py,
+  tests/schemas/test_content_addressing.py
+- [followup] M3.1 review surfaced field-validator gap (sha256 / non-negative
+  integer ranges absent on SourceMirrorManifest — matches pre-existing
+  project convention across all schemas); track for a cross-schema
+  validator pass in a future milestone. Also: no paragraph-body
+  re-verification path yet; hand-edits to paragraph .md files diverge
+  silently from manifest hashes — document in INVARIANTS.md INV-8 as a
+  known escape hatch when a future milestone introduces the verifier.
+  | files: HISTORY.md

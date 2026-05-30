@@ -61,10 +61,30 @@ Synthesis record: `~/Documents/Projects/.plans/amanuensis/phase1-distill-foundat
       "planned" to "active". M3.1 seams left for the manifest-hash
       check (INV-10) and for extending INV-3 to relations /
       clarifications / iterations.
-  - M3 (Ingestion) — **NEXT**. M3.1 (Docling integration via
-    `amanuensis ingest`) is blocked by M2.3 — done. Will need to
-    emit the `source-mirror/manifest.yaml` that lights up INV-10's
-    deferred hash gate.
+  - M3 (Ingestion, 4 tasks) — **IN PROGRESS**.
+    - M3.1 (Docling integration via `amanuensis ingest` library
+      function): **DONE**. New `amanuensis.ingest` package with
+      `ingest_pdf(...)`; new `SourceMirrorManifest` + `ParagraphEntry`
+      schemas (sixth content-addressable type, `m-` prefix); new
+      Substrate resolvers (`source_mirror_root`, `paragraph_path`,
+      `manifest_path`) and writer (`add_source_mirror_manifest`); new
+      typed exception `SourceMirrorExists` (re-ingest refuses to
+      clobber, symmetric with `SubstrateSnapshotConflict`); paragraph
+      .md frontmatter+body serializer pair. INV-10 graduated to fully
+      "active" — manifest-hash gate test live. 254 tests pass; pyright
+      strict + ruff + ruff-format + vulture all clean. Test fixture:
+      3-page CUAD excerpt (519K source → 107K excerpt via pypdfium2;
+      already a docling transitive). Followups tracked: cross-schema
+      field-validator pass (sha256 / non-negative integer ranges
+      currently unvalidated across all schemas, not just
+      SourceMirrorManifest); paragraph-body re-verification path
+      (hand-edits to paragraph .md diverge silently from manifest
+      content_sha256 — INVARIANTS.md INV-8 documents as a known escape
+      hatch).
+    - M3.2 (pdfplumber fallback): pending. Engine selector schema is
+      ready (`Literal["docling", "pdfplumber"]`).
+    - M3.3 (re-ingest determinism test, PM-3 mitigation): pending.
+    - M3.4 (legal-pleading fixture + fidelity test): pending.
   - M4-M11 — pending, downstream of M3.
 
 ## Upcoming phases
