@@ -27,6 +27,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
+from .routes import atoms as atom_routes
 from .routes import dashboard as dashboard_routes
 from .routes import source as source_routes
 
@@ -138,6 +139,7 @@ def create_app() -> FastAPI:
 
     app.include_router(dashboard_routes.router)
     app.include_router(source_routes.router)
+    app.include_router(atom_routes.router)
 
     return app
 

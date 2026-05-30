@@ -1,0 +1,109 @@
+{% extends "base.html" %}
+{% block title %}{{ atom.id }} &middot; amanuensis{% endblock %}
+{% block nav %}
+<a href="/" class="text-neutral-300 hover:text-neutral-50">&larr; dashboard</a>
+<a href="/distillations/{{ source_id }}" class="text-neutral-300 hover:text-neutral-50">overview</a>
+<a href="/distillations/{{ source_id }}/atoms" class="text-neutral-300 hover:text-neutral-50">atoms</a>
+{% endblock %}
+{% block content %}
+<section class="space-y-6">
+  <header class="space-y-1">
+    <p class="text-xs uppercase tracking-wider text-neutral-500">atom</p>
+    <h1 class="font-mono text-xl font-semibold tracking-tight text-neutral-50 break-all">{{ atom.id }}</h1>
+    <p class="text-sm text-neutral-400">
+      in distillation
+      <a
+        href="/distillations/{{ source_id }}"
+        class="font-mono text-neutral-200 underline decoration-neutral-700 underline-offset-2 hover:decoration-neutral-300"
+      >{{ source_id }}</a>
+    </p>
+  </header>
+
+  <section class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+    <div class="rounded border border-neutral-800 bg-neutral-900 p-3">
+      <p class="text-xs uppercase tracking-wider text-neutral-500">predicate</p>
+      <p class="mt-1 font-mono text-sm text-neutral-100">{{ atom.predicate }}</p>
+    </div>
+    <div class="rounded border border-neutral-800 bg-neutral-900 p-3">
+      <p class="text-xs uppercase tracking-wider text-neutral-500">scale anchor</p>
+      <p class="mt-1 text-sm text-neutral-100">{{ atom.scale_anchor }}</p>
+    </div>
+    <div class="rounded border border-neutral-800 bg-neutral-900 p-3">
+      <p class="text-xs uppercase tracking-wider text-neutral-500">kind</p>
+      <p class="mt-1 text-sm text-neutral-100">{{ atom.kind }}</p>
+    </div>
+    <div class="rounded border border-neutral-800 bg-neutral-900 p-3">
+      <p class="text-xs uppercase tracking-wider text-neutral-500">paragraph index</p>
+      <p class="mt-1 text-sm text-neutral-100">{{ atom.paragraph_index }}</p>
+    </div>
+    <div class="rounded border border-neutral-800 bg-neutral-900 p-3">
+      <p class="text-xs uppercase tracking-wider text-neutral-500">char span</p>
+      <p class="mt-1 font-mono text-sm text-neutral-100">[{{ atom.char_span[0] }}, {{ atom.char_span[1] }})</p>
+    </div>
+    <div class="rounded border border-neutral-800 bg-neutral-900 p-3">
+      <p class="text-xs uppercase tracking-wider text-neutral-500">qualifier</p>
+      <p class="mt-1 text-sm text-neutral-100">
+        {% if atom.qualifier_level %}
+        <span class="font-mono">{{ atom.qualifier_level }}</span>
+        {% if atom.qualifier_basis %}
+        <span class="text-neutral-400">&middot; {{ atom.qualifier_basis }}</span>
+        {% endif %}
+        {% else %}
+        <span class="text-neutral-500">none</span>
+        {% endif %}
+      </p>
+    </div>
+  </section>
+
+  <section class="rounded border border-neutral-800 bg-neutral-900 p-4">
+    <h2 class="text-lg font-semibold text-neutral-50">narrative</h2>
+    <p class="mt-2 text-sm text-neutral-200">{{ atom.narrative }}</p>
+  </section>
+
+  <section class="rounded border border-neutral-800 bg-neutral-900 p-4">
+    <h2 class="text-lg font-semibold text-neutral-50">operands</h2>
+    {% if atom.operands %}
+    <ul class="mt-2 space-y-1 text-sm">
+      {% for op in atom.operands %}
+      <li class="rounded border border-neutral-800 bg-neutral-950 px-3 py-2">
+        <span class="text-xs uppercase tracking-wider text-neutral-500">{{ op.role }}</span>
+        <span class="ml-2 font-mono text-neutral-100">{{ op.kind }}:{{ op.value }}</span>
+        {% if op.type_hint %}
+        <span class="ml-2 text-xs text-neutral-400">({{ op.type_hint }})</span>
+        {% endif %}
+      </li>
+      {% endfor %}
+    </ul>
+    {% else %}
+    <p class="mt-2 text-sm text-neutral-500">no operands</p>
+    {% endif %}
+  </section>
+
+  <section class="rounded border border-neutral-800 bg-neutral-900 p-4">
+    <h2 class="text-lg font-semibold text-neutral-50">source paragraph</h2>
+    <p class="mt-1 text-xs text-neutral-500">
+      <span class="font-mono">{{ paragraph_id }}</span>
+      &middot; char span [{{ atom.char_span[0] }}, {{ atom.char_span[1] }})
+    </p>
+    {% if paragraph_body is not none %}
+    <p class="mt-3 whitespace-pre-wrap rounded border border-neutral-800 bg-neutral-950 p-3 text-sm text-neutral-200">{{ before }}<mark class="rounded bg-amber-300/30 px-0.5 text-amber-100">{{ highlight }}</mark>{{ after }}</p>
+    {% else %}
+    <p class="mt-2 text-sm text-neutral-500">
+      paragraph file not found on disk &mdash; the source-mirror may not be ingested for this distillation.
+    </p>
+    {% endif %}
+  </section>
+
+  <section class="rounded border border-neutral-800 bg-neutral-900 p-4">
+    <h2 class="text-lg font-semibold text-neutral-50">provenance</h2>
+    <p class="mt-2 font-mono text-xs text-neutral-200 break-all">{{ atom.provenance_id }}</p>
+  </section>
+
+  <p class="text-sm">
+    <a
+      href="/distillations/{{ source_id }}/atoms"
+      class="text-neutral-300 underline decoration-neutral-700 underline-offset-2 hover:decoration-neutral-300"
+    >&larr; back to atom browser</a>
+  </p>
+</section>
+{% endblock %}

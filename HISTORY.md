@@ -1027,3 +1027,76 @@ Format: dated entries, newest first. Bug entries cite the area touched:
   / `list_clarifications` to `Substrate` so the web layer and
   future CLI consumers share the surface. Doesn't block any
   Phase 1 milestone. | files: src/amanuensis/web/routes/_substrate_counts.py
+- M7.2+M7.4+M8.3+M8.8 — second parallel wave (4 subagents,
+  disjoint files except for additive single-line edits to
+  `cli/__init__.py` and `web/app.py`).
+  - **M7.2** (stub-skip integration test, CV-6):
+    `tests/dispatch/test_orchestrator_skips_stub_roles.py`. Three
+    tests exercise the orchestrator's stub-skip discipline at the
+    full filesystem-state level: queue contains 2 entries (no
+    contrarian), replay-log records the skip with the
+    `"role-skipped:<role>"` token in `substrate_changes`, and
+    malformed-frontmatter skill loading fails closed.
+  - **M7.4** (reconciliation gate + CR-7 clarification):
+    new `amanuensis.dispatch.reconcile` module with
+    `reconcile_outputs(...)` and `ReconcileResult` dataclass. Reads
+    every `dispatch/outputs/<role>-<hash>/output.yaml`; routes by
+    role; for Extractor: builds + commits valid atoms / relations
+    (PROV first, atom on validator-clean); for Auditor: surfaces
+    rejected-atom clarifications + verbatim Auditor clarifications.
+    Auto-raises a `warrant-defensibility-contested` clarification
+    (CR-7) for any relation flagged `warrant_defensibility:
+    contested` — the discriminator is encoded in the existing
+    `Clarification.raised_by_activity` field
+    (`"warrant-defensibility-contested"`) since the schema doesn't
+    carry a `kind` discriminator and this milestone does not extend
+    it. Output files move to `dispatch/outputs/_consumed/...` after
+    reconciliation for idempotent re-runs. New `amanuensis reconcile`
+    CLI command (mutating; acquires workspace flock). 6 new tests.
+  - **Design call** (M7.4): the brief's `subject_atom_id` /
+    `object_atom_id` shape is operational; the actual `Relation`
+    schema uses `from_atom_id` / `to_atom_id`. The parser accepts
+    BOTH shapes so an LLM output in either convention reconciles.
+    The local-atom resolution map (`local_to_committed`) records
+    both the extractor's chosen id and the canonical computed id,
+    so relations can reference either; unresolved refs surface via
+    `lineage_closure`'s clarification path.
+  - **Design call** (M7.4): closed-vocabulary snapshot missing →
+    synthesised `ValidationResult.fail("closed_vocabulary", ...)`
+    rather than silent skip. Reconcile is a write-side gate; the
+    safe default is "reject + clarify" not "admit". The contrast
+    with the M4.2 `atom validate` CLI (which warns) is intentional.
+  - **M8.3** (atom browser + atom detail with source-span
+    highlight): `GET /distillations/<id>/atoms` with HTMX-driven
+    filter UI (scale + predicate-substring + paragraph_index);
+    full-page vs. fragment render via `HX-Request` header. `GET
+    /distillations/<id>/atoms/<atom_id>` shows all atom fields +
+    the atom's source-mirror paragraph with the `char_span` slice
+    wrapped in `<mark>`. Defensive: `char_span` clamped to
+    `[0, len(body)]` on render; missing paragraph file is NOT a
+    500 (informational notice). 9 web tests (4 browser + 2 detail
+    + ambient counts from fixture promotions).
+  - **M8.8** (localhost-only binding test, security):
+    new `validate_bind_host(host, *, allow_public=False)` in
+    `amanuensis.web.config`. Loopback hosts (127.0.0.1, ::1,
+    localhost) accepted; everything else raises
+    `BindHostNotAllowed` unless `AMANUENSIS_ALLOW_PUBLIC_BIND=1`
+    env var override. `load_config()` calls the validator at
+    startup so the FastAPI app refuses to start on a non-loopback
+    bind without explicit opt-in. 9 tests.
+  - Wave 2 net: 27 new tests; 438 total pass. Pyright strict +
+    ruff + ruff-format + vulture all clean. | files:
+    src/amanuensis/dispatch/reconcile.py,
+    src/amanuensis/cli/reconcile.py,
+    src/amanuensis/cli/__init__.py,
+    src/amanuensis/web/app.py,
+    src/amanuensis/web/config.py,
+    src/amanuensis/web/routes/atoms.py,
+    src/amanuensis/web/templates/atom_browser.html,
+    src/amanuensis/web/templates/atom_list_fragment.html,
+    src/amanuensis/web/templates/atom_detail.html,
+    tests/dispatch/test_orchestrator_skips_stub_roles.py,
+    tests/dispatch/test_reconciliation.py,
+    tests/dispatch/test_contested_warrant_clarification.py,
+    tests/web/test_atom_browser.py, tests/web/test_atom_detail.py,
+    tests/web/test_localhost_only.py

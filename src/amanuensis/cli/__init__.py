@@ -39,6 +39,7 @@ from . import (
     init,
     install_skills,
     iteration,
+    reconcile,
     status,
     vocabulary,
 )
@@ -112,6 +113,7 @@ app.command(name="status")(status.status_command)
 app.command(name="install-skills")(install_skills.install_skills_command)
 app.command(name="dispatch")(dispatch.dispatch_command)
 app.command(name="distill")(distill.distill_command)
+app.command(name="reconcile")(reconcile.reconcile_command)
 
 
 # --- Subcommand groups -----------------------------------------------

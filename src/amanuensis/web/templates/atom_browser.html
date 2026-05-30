@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% block title %}atoms &middot; {{ source_id }} &middot; amanuensis{% endblock %}
+{% block nav %}
+<a href="/" class="text-neutral-300 hover:text-neutral-50">&larr; dashboard</a>
+<a href="/distillations/{{ source_id }}" class="text-neutral-300 hover:text-neutral-50">overview</a>
+{% endblock %}
+{% block content %}
+<section class="space-y-6">
+  <header class="space-y-1">
+    <p class="text-xs uppercase tracking-wider text-neutral-500">atoms</p>
+    <h1 class="font-mono text-2xl font-semibold tracking-tight text-neutral-50">{{ source_id }}</h1>
+  </header>
+
+  <form
+    hx-get="."
+    hx-target="#atom-list"
+    hx-trigger="change delay:300ms, keyup delay:300ms from:input[name=predicate]"
+    hx-swap="outerHTML"
+    class="grid grid-cols-1 gap-3 rounded border border-neutral-800 bg-neutral-900 p-4 sm:grid-cols-3"
+  >
+    <label class="flex flex-col gap-1 text-xs">
+      <span class="uppercase tracking-wider text-neutral-500">scale</span>
+      <select
+        name="scale"
+        class="rounded border border-neutral-700 bg-neutral-950 px-2 py-1.5 text-sm text-neutral-100 focus:border-neutral-500 focus:outline-none"
+      >
+        <option value="" {% if scale == "" %}selected{% endif %}>all</option>
+        <option value="sentence" {% if scale == "sentence" %}selected{% endif %}>sentence</option>
+        <option value="paragraph" {% if scale == "paragraph" %}selected{% endif %}>paragraph</option>
+        <option value="section" {% if scale == "section" %}selected{% endif %}>section</option>
+        <option value="document" {% if scale == "document" %}selected{% endif %}>document</option>
+      </select>
+    </label>
+    <label class="flex flex-col gap-1 text-xs">
+      <span class="uppercase tracking-wider text-neutral-500">predicate contains</span>
+      <input
+        type="text"
+        name="predicate"
+        value="{{ predicate }}"
+        placeholder="e.g. asserts_"
+        class="rounded border border-neutral-700 bg-neutral-950 px-2 py-1.5 font-mono text-sm text-neutral-100 focus:border-neutral-500 focus:outline-none"
+      />
+    </label>
+    <label class="flex flex-col gap-1 text-xs">
+      <span class="uppercase tracking-wider text-neutral-500">paragraph index</span>
+      <input
+        type="number"
+        name="paragraph_index"
+        value="{{ paragraph_index }}"
+        min="0"
+        placeholder="any"
+        class="rounded border border-neutral-700 bg-neutral-950 px-2 py-1.5 text-sm text-neutral-100 focus:border-neutral-500 focus:outline-none"
+      />
+    </label>
+  </form>
+
+  {% include "atom_list_fragment.html" %}
+</section>
+{% endblock %}

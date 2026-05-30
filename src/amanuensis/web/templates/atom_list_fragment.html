@@ -1,0 +1,54 @@
+{# HTMX partial — just the table that swaps into #atom-list. #}
+<div id="atom-list" class="space-y-2">
+  <p class="text-xs text-neutral-500">
+    showing <span class="text-neutral-200">{{ filtered_count }}</span> of
+    <span class="text-neutral-200">{{ total_atoms }}</span> atoms
+  </p>
+  {% if atoms %}
+  <div class="overflow-x-auto rounded border border-neutral-800">
+    <table class="min-w-full divide-y divide-neutral-800 text-sm">
+      <thead class="bg-neutral-900 text-left text-xs uppercase tracking-wider text-neutral-400">
+        <tr>
+          <th scope="col" class="px-4 py-2">atom id</th>
+          <th scope="col" class="px-4 py-2">scale</th>
+          <th scope="col" class="px-4 py-2">kind</th>
+          <th scope="col" class="px-4 py-2">predicate</th>
+          <th scope="col" class="px-4 py-2">paragraph</th>
+          <th scope="col" class="px-4 py-2">narrative</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-neutral-800 bg-neutral-950">
+        {% for atom in atoms %}
+        <tr class="hover:bg-neutral-900">
+          <td class="px-4 py-2">
+            <a
+              href="/distillations/{{ source_id }}/atoms/{{ atom.id }}"
+              class="font-mono text-xs text-neutral-100 underline decoration-neutral-700 underline-offset-2 hover:decoration-neutral-300"
+              title="{{ atom.id }}"
+            >{{ atom.id }}</a>
+          </td>
+          <td class="px-4 py-2 text-neutral-300">{{ atom.scale_anchor }}</td>
+          <td class="px-4 py-2 text-neutral-300">{{ atom.kind }}</td>
+          <td class="px-4 py-2 font-mono text-xs text-neutral-200">{{ atom.predicate }}</td>
+          <td class="px-4 py-2 text-neutral-300">{{ atom.paragraph_index }}</td>
+          <td class="px-4 py-2 text-neutral-200">{{ atom.narrative }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="rounded border border-dashed border-neutral-800 bg-neutral-900 p-6 text-center">
+    <p class="text-neutral-300">no atoms match these filters</p>
+    {% if total_atoms %}
+    <p class="mt-1 text-xs text-neutral-500">
+      clear a filter to widen the search ({{ total_atoms }} atoms in this distillation).
+    </p>
+    {% else %}
+    <p class="mt-1 text-xs text-neutral-500">
+      no atoms have been extracted for this distillation yet.
+    </p>
+    {% endif %}
+  </div>
+  {% endif %}
+</div>
