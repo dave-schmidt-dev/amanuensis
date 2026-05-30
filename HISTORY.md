@@ -520,15 +520,18 @@ Format: dated entries, newest first. Bug entries cite the area touched:
   failed with `ModuleNotFoundError: No module named 'amanuensis'` despite
   `uv sync` reporting the package installed. Root cause is a CPython 3.12.13
   regression on macOS: 3.12.13 backported a `site.py` change that skips `.pth`
-  files with `UF_HIDDEN` set, and uv's macOS installer (or APFS metadata on
-  `_`-prefixed files) marks every `.pth` it writes with that flag. The
-  one-line repair is `find .venv -name "*.pth" -exec chflags nohidden {} +`.
-  Permanent fix: added an `unhide-pth-files` pre-push hook that runs the
-  chflags sweep before `pyright-strict` and `pytest`, so the install is
-  self-healing on every push. Linux runners skip silently (chflags is
-  macOS-only; `2>/dev/null || true` keeps the hook portable). Pin to a
-  Python 3.12.12-or-lower point release if you need to dodge the site.py
-  change entirely. | files: .pre-commit-config.yaml
+  files carrying `UF_HIDDEN`, and pytest's own Python startup ends up marking
+  the editable-install `.pth` as hidden between invocations — so a standalone
+  "unhide" hook before pytest does not stick (something between hooks re-hides
+  the file). The one-line manual repair is `find .venv -name "*.pth" -exec
+  chflags nohidden {} +`. Permanent fix: inline the chflags sweep INSIDE each
+  Python-invoking pre-push hook entry (one `bash -c` that runs `chflags
+  nohidden` immediately before `uv run pyright …` and again immediately before
+  `uv run pytest …`), so no other process can re-hide in the gap. Pre-push
+  hooks now self-heal on every push. Linux runners skip silently (chflags is
+  macOS-only; `2>/dev/null || true` keeps the entry portable). Pin to Python
+  3.12.12 or lower if you need to dodge the site.py change entirely. | files:
+  .pre-commit-config.yaml
 - Session-end handoff: refreshed `handoff.md` to the canonical
   `~/.agent/prompts/handoff.md` structure (active plan + current task +
   critical files + 2-3 sentence strategic momentum + active subagents).

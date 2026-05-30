@@ -59,39 +59,34 @@ repos:
         always_run: true
 
       # ---- pre-push only — heavier checks, NOT run on every commit ----
-      # macOS / CPython 3.12.13 workaround: uv's installer marks every
-      # .pth in .venv with UF_HIDDEN, and 3.12.13's site.py now skips
-      # hidden .pth files — which silently breaks the editable install
-      # and produces `ModuleNotFoundError: No module named 'amanuensis'`
-      # from pytest. Sweeping the hidden flag before each heavy hook
-      # makes this self-healing. The `2>/dev/null` keeps Linux happy
-      # where `chflags` doesn't exist.
-      - id: unhide-pth-files
-        name: clear UF_HIDDEN on .venv/**/*.pth (macOS CPython 3.12.13 fix)
-        entry: >-
-          bash -c 'find .venv -name "*.pth" -exec chflags nohidden {} + 2>/dev/null || true'
-        language: system
-        pass_filenames: false
-        always_run: true
-        stages: [pre-push]
-
-      # Type-check the whole tree under pyright strict (per
-      # pyproject.toml [tool.pyright]). Slower than ruff; gates the push.
+      # macOS / CPython 3.12.13 workaround: 3.12.13 backported a
+      # `site.py` change that skips `.pth` files carrying `UF_HIDDEN`,
+      # and `pytest`'s own Python startup ends up marking the editable-
+      # install `.pth` as hidden between invocations on macOS — so a
+      # standalone "unhide" hook before pytest does not stick (something
+      # between hooks re-hides it). The robust fix is to chflags
+      # IMMEDIATELY before each Python invocation, inside the same
+      # `bash -c`, so no other process can re-hide in the gap.
+      # `2>/dev/null || true` keeps Linux runners (no `chflags`) happy.
       - id: pyright-strict
         name: pyright strict (src + tests)
-        entry: uv run pyright src tests
+        entry: >-
+          bash -c 'find .venv -name "*.pth" -exec chflags nohidden {} + 2>/dev/null || true;
+          uv run pyright src tests'
         language: system
         pass_filenames: false
         always_run: true
         stages: [pre-push]
 
-      # Run the full pytest suite. Currently ~7s for 200 tests; will grow
-      # as M5+ wrapper tests + M6+ integration tests + M7 + M11 land. If
-      # this gets slow, split into a fast-mark and gate the slow tier in
-      # CI rather than weakening this hook.
+      # Run the full pytest suite. Currently ~7s for ~250 tests; will
+      # grow as M5+ wrapper tests + M6+ integration tests + M7 + M11
+      # land. If this gets slow, split into a fast-mark and gate the
+      # slow tier in CI rather than weakening this hook.
       - id: pytest
         name: pytest (full suite)
-        entry: uv run pytest -q
+        entry: >-
+          bash -c 'find .venv -name "*.pth" -exec chflags nohidden {} + 2>/dev/null || true;
+          uv run pytest -q'
         language: system
         pass_filenames: false
         always_run: true
