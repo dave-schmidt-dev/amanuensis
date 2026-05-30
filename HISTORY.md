@@ -671,3 +671,50 @@ Format: dated entries, newest first. Bug entries cite the area touched:
   determinism gate). Next session entry point is M4.1 (Typer CLI
   skeleton + INV-1 marker decorator) — the surface area that exposes
   the M3 library functions to supervisors via `amanuensis ingest`.
+- M4.1+M4.2+M4.3 — full CLI surface landed. `amanuensis` registered
+  in `[project.scripts]` (script entry resolves to the Typer root app
+  at `amanuensis.cli:app`). `@require_marker` decorator (per PEP 695
+  type-parameter syntax) enforces INV-1 on every command except
+  `init`; failure emits a clear stderr error and exits with code 2
+  (preflight failure, distinct from command-body failures). Mutating
+  commands acquire the workspace flock; read-only commands do not.
+  Twelve commands ship in this batch: `init`, `ingest`, `status`,
+  `install-skills` (top-level); `atom {list,show,validate}`,
+  `clarification {list,resolve}`, `iteration {list,add}`,
+  `vocabulary {list,show,snapshot}` (subcommand groups). `init`
+  bootstraps the workspace (marker + `docs/` + sensible `.gitignore`);
+  `ingest` wires the M3 ingester(s) with engine selector; `status`
+  prints workspace summary with `--json` option; `atom` exposes the
+  M2 validators via `atom validate`; `clarification resolve` writes
+  the paired resolved-PROV record; `iteration add` writes the issued
+  PROV + the directive; `vocabulary snapshot` echoes the INV-10 pin.
+  `install-skills` is intentionally STUB-LEVEL (M4.3): detects
+  installed harness CLIs via `shutil.which` and emits placeholder
+  install messages; M7.6 finalises the actual file installation
+  once M7.1 ships the skill files. Pyright strict mode globally
+  downgrades `reportUnknownMemberType` + `reportUnknownVariableType`
+  to "none" — Typer's overloaded `Argument`/`Option` signatures
+  collapse to `Any` in strict mode and the rule is unusable
+  per-call; trade-off documented inline in `pyproject.toml`. All
+  4 Click-8.4-incompatible (str, Enum) classes migrated to StrEnum
+  per `UP042`. 48 new CLI tests (250 + 48 + 16 prior fixed = 314
+  pass; pyright strict + ruff + ruff-format + vulture all clean).
+  | files: pyproject.toml, src/amanuensis/cli/__init__.py,
+  src/amanuensis/cli/_marker.py, src/amanuensis/cli/_common.py,
+  src/amanuensis/cli/init.py, src/amanuensis/cli/ingest.py,
+  src/amanuensis/cli/status.py, src/amanuensis/cli/atom.py,
+  src/amanuensis/cli/clarification.py, src/amanuensis/cli/iteration.py,
+  src/amanuensis/cli/vocabulary.py, src/amanuensis/cli/install_skills.py,
+  tests/cli/__init__.py, tests/cli/conftest.py,
+  tests/cli/test_marker_required.py, tests/cli/test_init.py,
+  tests/cli/test_ingest_cli.py, tests/cli/test_status.py,
+  tests/cli/test_atom_cli.py, tests/cli/test_clarification.py,
+  tests/cli/test_iteration.py, tests/cli/test_vocabulary.py,
+  tests/cli/test_install_skills.py
+- [bug] Click 8.4 removed the `CliRunner(mix_stderr=False)` kwarg;
+  five CLI test files used it and collection failed with
+  `TypeError`. Replaced with default `CliRunner()` (stderr now merges
+  into `result.output`) and rewired assertions to read `result.output`
+  instead of `result.stderr`. | files: tests/cli/test_init.py,
+  tests/cli/test_ingest_cli.py, tests/cli/test_status.py,
+  tests/cli/test_atom_cli.py, tests/cli/test_marker_required.py

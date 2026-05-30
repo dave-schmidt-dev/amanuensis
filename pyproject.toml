@@ -22,6 +22,11 @@ dependencies = [
     "pdfplumber",
 ]
 
+# M4.1 registers the CLI entry point so `amanuensis` resolves on PATH
+# after `uv sync`. The Typer root app lives at `amanuensis.cli:app`.
+[project.scripts]
+amanuensis = "amanuensis.cli:app"
+
 [dependency-groups]
 dev = [
     "pytest>=8",
@@ -62,6 +67,15 @@ select = [
 include = ["src", "tests"]
 typeCheckingMode = "strict"
 pythonVersion = "3.12"
+# Typer's `Argument` / `Option` factory functions have heavily-overloaded
+# signatures whose return type collapses to `Any` in pyright strict mode;
+# every CLI command emits a flurry of `reportUnknownMemberType` /
+# `reportUnknownVariableType` noise that hides real issues. The rest of
+# the codebase passes strict mode; this knob trades one strict-mode rule
+# project-wide to keep the CLI signal-to-noise usable. Re-evaluate when
+# typer ships richer stubs.
+reportUnknownMemberType = "none"
+reportUnknownVariableType = "none"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

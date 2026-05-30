@@ -104,8 +104,21 @@ Synthesis record: `~/Documents/Projects/.plans/amanuensis/phase1-distill-foundat
   - **Phase M3 complete**: 266 tests pass; pyright strict, ruff, ruff-
     format, vulture all clean. Walltime ~6:40 (docling × 4 fidelity
     runs + docling × 3 determinism runs dominate).
-  - M4 (CLI surface, 5 tasks) — **IN PROGRESS**. Next: M4.1 Typer
-    skeleton + marker decorator.
+  - M4 (CLI surface, 5 tasks) — **IN PROGRESS** (3/5 done).
+    - M4.1 (Typer skeleton + INV-1 marker decorator): **DONE**.
+      `[project.scripts]` registers `amanuensis = "amanuensis.cli:app"`;
+      `@require_marker` enforces INV-1 with PEP 695 type-parameter
+      syntax; exit code 2 on preflight failure.
+    - M4.2 (init / ingest / status / atom CLI commands): **DONE**.
+      Workspace bootstrap, M3-ingester wiring with engine selector,
+      substrate summary, atom list/show/validate.
+    - M4.3 (clarification / iteration / vocabulary / install-skills):
+      **DONE**. Mutating commands acquire workspace flock; resolve
+      writes paired resolved-PROV; iteration add writes issued-PROV;
+      install-skills is M4.3 STUB level (detects harness CLIs via
+      `shutil.which`; M7.6 finalises actual file installation).
+    - M4.4 (INV-4 read-only / mutating gate): pending.
+    - M4.5 (docs/cli-reference.md): pending.
   - M5-M11 — pending, downstream of M4.
 
 ## Upcoming phases
