@@ -117,9 +117,21 @@ Synthesis record: `~/Documents/Projects/.plans/amanuensis/phase1-distill-foundat
       writes paired resolved-PROV; iteration add writes issued-PROV;
       install-skills is M4.3 STUB level (detects harness CLIs via
       `shutil.which`; M7.6 finalises actual file installation).
-    - M4.4 (INV-4 read-only / mutating gate): pending.
-    - M4.5 (docs/cli-reference.md): pending.
-  - M5-M11 — pending, downstream of M4.
+    - M4.4 (INV-4 read-only-side gate test): **DONE**.
+      11 parametric cases under
+      `tests/invariants/test_determinism_boundary.py` cover every
+      read-only command; assert (substrate unchanged, stdout
+      deterministic across runs, substrate still unchanged after
+      second run). Mutating-side gate deferred to M5.3.
+    - M4.5 (docs/cli-reference.md): **DONE**.
+      Every command's classification + idempotency semantics +
+      flags + example; exit-code table; Known Limitations section.
+  - **Phase M4 complete**: 325 tests pass; pyright strict + ruff +
+    ruff-format + vulture all clean. `amanuensis --help` lists all 12
+    commands; `amanuensis --version` resolves via project.scripts.
+  - M5 (LLM-call wrapper + replay-log writer, 3 tasks) — **IN
+    PROGRESS**. Next: M5.1 cached_call API.
+  - M6-M11 — pending, downstream of M5.
 
 ## Upcoming phases
 

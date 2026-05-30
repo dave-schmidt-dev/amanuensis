@@ -718,3 +718,32 @@ Format: dated entries, newest first. Bug entries cite the area touched:
   instead of `result.stderr`. | files: tests/cli/test_init.py,
   tests/cli/test_ingest_cli.py, tests/cli/test_status.py,
   tests/cli/test_atom_cli.py, tests/cli/test_marker_required.py
+- M4.4+M4.5 — INV-4 read-only-side gate test + docs/cli-reference.md.
+  `tests/invariants/test_determinism_boundary.py` exercises every
+  read-only CLI command (11 cases: status, status --json, atom
+  list/show/validate, clarification list, iteration list, vocabulary
+  list/show/snapshot, install-skills) and asserts (a) substrate is
+  byte-identical before/after, (b) two consecutive runs produce
+  identical stdout, (c) substrate is still byte-identical after the
+  second run. Marked `@pytest.mark.invariants`. The mutating-side gate
+  (init/ingest/clarification resolve/iteration add) is explicitly
+  deferred to M5.3 once the LLM-boundary mechanics (M5.1/M5.2) land
+  — TODO(M5.3) comment in the module docstring names each mutating
+  command and its specific idempotency contract.
+  Fixture sharing: `tests/invariants/conftest.py` re-exports four
+  fixtures from `tests/cli/conftest.py` (cli_workspace, cli_substrate,
+  planted_atom, planted_clarification) — the conventional pytest
+  mechanism for sharing across directories without duplication
+  (pytest_plugins= conflicted with already-registered names).
+  `docs/cli-reference.md` documents every command with classification
+  (read-only / mutating), idempotency semantics, notable flags,
+  one example invocation, exit-code table, and a Known Limitations
+  section covering install-skills' M4.3 stub status, the absent
+  distill/dispatch/export commands, the absent web UI, and the M5.3
+  mutating-side gate. 325 tests pass (314 + 11); pytest -m invariants
+  -q reports 23 passed. Pyright + ruff + ruff-format + vulture all
+  clean. | files: tests/invariants/test_determinism_boundary.py,
+  tests/invariants/conftest.py, docs/cli-reference.md
+- Phase M4 (CLI surface) complete: M4.1-M4.5 all shipped. 325 tests
+  pass; pyright strict + ruff + ruff-format + vulture all clean.
+  Next session entry point is M5.1 (cached LLM call wrapper).

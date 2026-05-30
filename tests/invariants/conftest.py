@@ -33,6 +33,19 @@ from amanuensis.schemas import (
     VocabularyEntry,
     compute_id,
 )
+
+# Re-export the CLI test fixtures so the M4.4 INV-4 read-only gate test
+# (``test_determinism_boundary.py``) can consume them without redefining
+# substrate-setup logic. pytest's conftest discovery is directory-scoped,
+# so a fixture defined in ``tests/cli/conftest.py`` is invisible to
+# ``tests/invariants/`` by default; re-exporting the names here makes
+# them resolvable as parameter-name lookups in this directory's tests.
+from tests.cli.conftest import (  # noqa: F401  (re-exported as pytest fixtures)
+    cli_substrate,
+    cli_workspace,
+    planted_atom,
+    planted_clarification,
+)
 from tests.invariants._types import MatchedAtomFactory
 
 SOURCE_ID = "src-fixture-001"
