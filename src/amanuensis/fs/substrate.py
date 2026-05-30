@@ -75,6 +75,7 @@ from ._errors import (
 )
 from ._serialize import (
     parse_atom_md,
+    parse_provenance_yaml,
     serialize_atom_md,
     serialize_clarification_md,
     serialize_iteration_md,
@@ -352,6 +353,19 @@ class Substrate:
         if not path.is_file():
             raise SubstrateNotFound(f"atom not found at {path}")
         return parse_atom_md(path.read_text(encoding="utf-8"))
+
+    def get_provenance(self, source_id: str, prov_id: str) -> ProvenanceRecord:
+        """Read + validate a ProvenanceRecord by its own content-addressable id.
+
+        Mirrors ``get_atom`` for the YAML-only provenance file format.
+        Validators (notably ``provenance_completeness``, INV-3) reach for
+        this to confirm the record exists at the canonical path and
+        actually describes the atom that claims it.
+        """
+        path = self.provenance_path(source_id, prov_id)
+        if not path.is_file():
+            raise SubstrateNotFound(f"provenance not found at {path}")
+        return parse_provenance_yaml(path.read_text(encoding="utf-8"))
 
     def list_atoms(self, source_id: str) -> Iterable[Atom]:
         """Yield all atoms in a distillation (generator; memory-efficient).

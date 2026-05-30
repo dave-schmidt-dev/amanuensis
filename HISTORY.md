@@ -401,3 +401,115 @@ Format: dated entries, newest first. Bug entries cite the area touched:
   + vulture all clean. The pre-existing M1.7 cross-day-flake bug
   exposed by the gate check was fixed in a separate `fix:` commit
   (912c3aa) before this one.
+- Repository made public on GitHub at https://github.com/dave-schmidt-dev/amanuensis.
+  Pre-publish hygiene: untracked + gitignored `research-transcripts/`,
+  `synthesis/`, and `MANIFEST.md` (client-matter context kept locally);
+  changed author email in `pyproject.toml` to `dave@zdelta.dev` for
+  consistency with git commit attribution and to use the consulting
+  email for open-source attribution; added MIT `LICENSE` at root. After
+  the initial push, a full-history audit found that the deleted files
+  still lived in past commit objects (text-readable), so all 25 commits
+  were squashed into a single `feat: initial public release` orphan
+  commit (`4e2e40f`) and force-pushed to `main`. The squash preserves
+  the milestone-by-milestone narrative in this file while giving the
+  public repo a clean baseline. Pre-commit + pre-push hooks installed
+  via `uv run pre-commit install --hook-type pre-commit --hook-type
+  pre-push`; tool versions aligned with the project's actual
+  installed versions (pre-commit-hooks v6.0.0, ruff v0.15.15, vulture
+  v2.16). Fixed a latent YAML-syntax bug in the existing
+  invariant-marker pre-commit hooks (unquoted `colon-space` sequences
+  in bash-c entries were being parsed as nested mappings).
+- M2.4 — seven canonical validators. | files:
+  src/amanuensis/validators/__init__.py,
+  src/amanuensis/validators/_result.py,
+  src/amanuensis/validators/schema_check.py,
+  src/amanuensis/validators/citation_ledger.py,
+  src/amanuensis/validators/universe_check.py,
+  src/amanuensis/validators/scale_anchor.py,
+  src/amanuensis/validators/closed_vocabulary.py,
+  src/amanuensis/validators/provenance_completeness.py,
+  src/amanuensis/validators/lineage_closure.py,
+  src/amanuensis/fs/substrate.py,
+  tests/validators/__init__.py,
+  tests/validators/_types.py,
+  tests/validators/conftest.py,
+  tests/validators/test_schema_check.py,
+  tests/validators/test_citation_ledger.py,
+  tests/validators/test_universe_check.py,
+  tests/validators/test_scale_anchor.py,
+  tests/validators/test_closed_vocabulary.py,
+  tests/validators/test_provenance_completeness.py,
+  tests/validators/test_lineage_closure.py,
+  tests/fs/test_provenance_io.py
+  Seven canonical validators as pure functions in
+  `src/amanuensis/validators/`, each returning a typed
+  `ValidationResult` (`passed` + `validator` name + human-readable
+  `reason` + optional `subject_id`). Validators: `schema_check`
+  (Pydantic model_validate routing); `citation_ledger` (INV-7 —
+  `source_id` non-empty, `section_path` non-empty list of non-empty
+  strings, `paragraph_index ≥ 0`, `char_span` start non-negative
+  AND start < end); `universe_check` (atom.source_id ∈ supplied
+  known-source set); `scale_anchor` (INV-6 — named restatement
+  with post-construction-mutation defense); `closed_vocabulary`
+  (INV-5 — delegates to `Vocabulary.has_predicate`, alias-aware,
+  caller supplies snapshot per INV-10); `provenance_completeness`
+  (INV-3 — atom.provenance_id non-empty + file present + parseable
+  YAML + valid ProvenanceRecord schema + entity_id matches atom.id;
+  catches `SubstrateNotFound`, `SubstrateInvalidId`,
+  `yaml.YAMLError`, and `pydantic.ValidationError` to keep the
+  validator total over its type); `lineage_closure` (relation's
+  `from_atom_id` and `to_atom_id` resolve to atoms on substrate).
+  `Substrate.get_provenance(source_id, prov_id)` added (mirrors
+  `get_atom`/`get_relation` pattern) to support `provenance_completeness`.
+  Workflow: implementer → spec-compliance (haiku, all checks PASS)
+  → code quality (default, APPROVE WITH NOTES — 8 issues, 1 medium-
+  severity bug: `provenance_completeness` was crashing on corrupt
+  prov YAML instead of returning fail) → fix subagent (3 substantive
+  fixes: corrupt-YAML/schema-violation exception handling,
+  defense-in-depth `start < end` check in `citation_ledger` to
+  match `scale_anchor`'s posture, branch-coverage tests for
+  paragraph_index < 0 / negative char_span / inverted char_span)
+  → orchestrator. Final gate: 238/238 tests pass; pyright strict
+  + ruff + ruff-format + vulture all clean. 38 new tests.
+- M2.5 — invariant gate tests for INV-3, INV-5, INV-10. | files:
+  tests/invariants/__init__.py, tests/invariants/_types.py,
+  tests/invariants/conftest.py,
+  tests/invariants/test_provenance_completeness.py,
+  tests/invariants/test_closed_vocabulary.py,
+  tests/invariants/test_vocabulary_pinned.py, INVARIANTS.md
+  Three gate-test modules under `tests/invariants/`, all marked
+  `@pytest.mark.invariants` so `uv run pytest -m invariants` selects
+  exactly these. Each module quotes the INVARIANTS.md entry it
+  certifies in its docstring. **INV-3** (3 tests): walks the
+  substrate's atoms via `list_atoms`, runs `provenance_completeness`
+  on each; positive case (5 atoms + matching PROV records all pass);
+  negative cases (missing provenance file; provenance record's
+  entity_id mismatches atom.id). Scoped to atoms in M2.5 with
+  `TODO(M3-M9)` to extend to relations / clarifications / iterations
+  once those substrate paths come online. **INV-5** (4 tests):
+  canonical predicate passes; alias passes (alias-aware lookup
+  through `Vocabulary.has_predicate`); unknown predicate fails with
+  reason naming the predicate AND the vocabulary; snapshot-vs-global
+  distinction (a hand-rolled 3-entry subset Vocabulary is snapshotted;
+  an atom whose predicate is in the global registry but NOT in the
+  snapshot is correctly rejected — certifying INV-10's "validators
+  read snapshot, not global" property). **INV-10** (4 tests): every
+  distillation has a snapshot file; snapshot for source A is
+  independent of subsequent registry edits or of snapshots written
+  for source B; no-snapshot raises `SubstrateNotFound`;
+  corrupt-snapshot raises `SubstrateSnapshotCorrupt` (typed-
+  exception distinction matters because the remediation paths
+  diverge — auditor surface). The "snapshot hash matches manifest"
+  half of INV-10's charter is deferred to M3.1 (manifest doesn't
+  exist yet); `TODO(M3.1)` seam in the test module. INVARIANTS.md
+  updated: INV-3, INV-5, INV-10 graduated from "Gate test (planned)"
+  to "Gate test (active)" with scope notes describing what each
+  gate covers and what is deferred. Workflow: implementer
+  (general-purpose) → spec-compliance (haiku, full PASS) →
+  code quality (default, APPROVE WITH NOTES — 7 issues, all
+  minor/nit; one worth folding in: corrupt-snapshot test for
+  INV-10) → orchestrator added the corrupt-snapshot test inline.
+  Final gate: 249/249 tests pass (238 + 11 new — 10 from the
+  implementer + 1 orchestrator-added); pyright strict + ruff +
+  ruff-format + vulture all clean. **M2 (Validators + vocabulary,
+  5 tasks) COMPLETE.**

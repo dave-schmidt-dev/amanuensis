@@ -18,7 +18,8 @@ Synthesis record: `~/Documents/Projects/.plans/amanuensis/phase1-distill-foundat
     and fixed via review: Python 3.14 site.py editable-shim skip (pinned to 3.12);
     cross-day orphan in replay-log recovery (scan-and-unlink under flock). See
     HISTORY.md 2026-05-29 entries for M1.2-M1.9 + the two `[bug]` lines.
-  - M2 (Validators + vocabulary, 5 tasks): **IN PROGRESS**.
+  - M2 (Validators + vocabulary, 5 tasks): **DONE** (249 tests
+    pass, INV-3 / INV-5 / INV-10 gate tests active).
     - M2.1 (acquire three vocabulary fixtures): **DONE**. Three PDFs
       committed under `tests/fixtures/vocabulary-design/` (DOJ post-trial
       brief in US v. Google + CUAD Verizon ABS transfer & servicing
@@ -48,17 +49,23 @@ Synthesis record: `~/Documents/Projects/.plans/amanuensis/phase1-distill-foundat
       `SubstrateSnapshotCorrupt`). 36 new tests, 200/200 overall.
       Manifest-hash recording deferred to M3.1 (manifest doesn't
       exist yet); `TODO(M3.1)` seam in snapshot_vocabulary docstring.
-    - M2.4 (seven validators — schema_check, citation_ledger,
-      universe_check, scale_anchor, closed_vocabulary,
-      provenance_completeness, lineage_closure): **NEXT**. Each as a
-      pure function returning a typed `ValidationResult`. One file
-      per validator in `src/amanuensis/validators/`. Tests per
-      validator with positive + negative cases. Blocked by M2.3 —
-      done.
-    - M2.5 (INV-3 / INV-5 / INV-10 gate tests): pending, downstream
-      of M2.4.
-  - M3 (Ingestion) — pending, blocked by M2.3 (vocabulary registry).
-  - M4-M11 — pending, downstream of M2 + M3.
+    - M2.4 (seven validators): **DONE**. `schema_check`,
+      `citation_ledger` (INV-7), `universe_check`, `scale_anchor`
+      (INV-6), `closed_vocabulary` (INV-5), `provenance_completeness`
+      (INV-3), `lineage_closure`. Each returns a typed
+      `ValidationResult`. `Substrate.get_provenance` added to
+      support `provenance_completeness`. 38 new tests.
+    - M2.5 (INV-3 / INV-5 / INV-10 gate tests): **DONE**. 11 gate
+      tests under `tests/invariants/`, all `@pytest.mark.invariants`.
+      INVARIANTS.md updated to graduate the three invariants from
+      "planned" to "active". M3.1 seams left for the manifest-hash
+      check (INV-10) and for extending INV-3 to relations /
+      clarifications / iterations.
+  - M3 (Ingestion) — **NEXT**. M3.1 (Docling integration via
+    `amanuensis ingest`) is blocked by M2.3 — done. Will need to
+    emit the `source-mirror/manifest.yaml` that lights up INV-10's
+    deferred hash gate.
+  - M4-M11 — pending, downstream of M3.
 
 ## Upcoming phases
 

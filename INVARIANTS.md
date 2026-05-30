@@ -42,8 +42,12 @@ Status legend: `active` (gate enforced) | `near-threshold` (warn) | `waived` (ex
   clarification resolution, iteration directive) has a PROV-O record recording
   who created it, what activity, what it used, and (for LLM contributions)
   which model. Retrofitted provenance is rejected.
-- **Gate test (planned):** `tests/invariants/test_provenance_completeness.py` —
-  walks the substrate; fails if any artifact lacks a PROV-O record.
+- **Gate test (active, scoped to atoms):** `tests/invariants/test_provenance_completeness.py`
+  — walks the substrate's atoms; fails if any atom's `provenance_id` is empty,
+  the corresponding PROV-O record is missing, the file fails to parse, or the
+  record's `entity_id` does not match the atom's id. Scoped to atoms in M2.5;
+  extends to relations / clarifications / iterations in later milestones as
+  those substrate paths come online (TODO documented in the test module).
 - **Rationale:** Documented reasoning is the artifact (Heuer inheritance);
   every cross-boundary action (LLM call, human clarification, iteration) is
   captured structurally so the supervisor can trace any output back to its
@@ -73,9 +77,12 @@ Status legend: `active` (gate enforced) | `near-threshold` (warn) | `waived` (ex
   registry. Open-vocabulary extraction is rejected by the auditor. Adding
   new predicates requires a governance event (human-proposed, test-suite
   validated, version-bumped registry commit).
-- **Gate test (planned):** `tests/invariants/test_closed_vocabulary.py` —
-  rejects atoms whose predicate is not in the registry; verifies the auditor
-  flags them as `vocabulary-violation`.
+- **Gate test (active):** `tests/invariants/test_closed_vocabulary.py` —
+  certifies that the `closed_vocabulary` validator rejects atoms whose
+  predicate is not in the per-distillation snapshot. Exercises canonical
+  predicates, aliases (alias-aware resolution via `Vocabulary.has_predicate`),
+  unknown predicates, and the snapshot-vs-global boundary (a predicate that
+  is in the global registry but not in the snapshot is correctly rejected).
 - **Rationale:** Open-vocabulary "pretty much guarantees drift across long
   matters" (D5 production survey). The closed-vocabulary floor is what makes
   cross-engagement reasoning tractable.
@@ -124,10 +131,15 @@ Status legend: `active` (gate enforced) | `near-threshold` (warn) | `waived` (ex
   hash recorded in `source-mirror/manifest.yaml`). All validators read the
   per-distillation snapshot, never the global `~/.amanuensis/vocabularies/` registry.
   The global registry is a starting template, not a runtime dependency.
-- **Gate test (planned):** `tests/invariants/test_vocabulary_pinned.py` — verifies
-  every distillation has a vocabulary snapshot; verifies the snapshot hash matches
-  the manifest entry; verifies validator code paths reach the snapshot, not the
-  global registry.
+- **Gate test (active, partial):** `tests/invariants/test_vocabulary_pinned.py`
+  — verifies every distillation has a vocabulary snapshot; verifies write-once
+  semantics (a snapshot for distillation A is independent of subsequent
+  registry edits or of snapshots written for distillation B); verifies the
+  auditor signal for "no snapshot" (`SubstrateNotFound`) vs "corrupt snapshot"
+  (`SubstrateSnapshotCorrupt`) are distinct typed exceptions. The
+  "snapshot hash matches manifest entry" check is deferred until M3.1
+  ingestion lands the `source-mirror/manifest.yaml` file (TODO documented
+  in the test module).
 - **Rationale:** Vocabulary registry edits between distillations (Phase 1.5, second
   engagement, or unrelated tinkering) would otherwise silently retroactively change
   what existing atoms mean. The snapshot makes substrate-as-truth (INV-8) hold across
