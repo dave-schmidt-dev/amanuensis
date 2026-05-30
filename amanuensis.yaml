@@ -1,0 +1,72 @@
+# amanuensis project marker + config
+#
+# Presence of this file at a directory root marks it as an amanuensis
+# workspace. Skills check for this marker before activating; CLI commands
+# refuse to operate outside a marked directory (like git, npm, cargo).
+#
+# This file is harness-agnostic: no Claude-specific, Codex-specific, or
+# any other agent-platform-specific config lives here. Per-harness skill
+# discovery is handled at install time by `amanuensis install-skills`.
+
+schema_version: 1
+project_name: amanuensis
+created: "2026-05-29"
+
+# Project posture — see docs/ for the design rationale behind each.
+posture:
+  # Single document per Phase 1 (Distill) run. Multi-document reasoning
+  # is Phase 2 (Map) territory.
+  phase1_input_scope: single-document
+
+  # Hierarchical aggregation with scale-anchored atoms. "Across sentence,
+  # paragraph, section, document" is a query over atoms, not a separate
+  # extraction pass.
+  multi_scale_model: hierarchical-aggregation
+
+  # Multi-agent per level. Phase 1 launches with Extractor + Auditor
+  # active; Contrarian + Constructive activated as the platform matures.
+  active_roles_phase1: [extractor, auditor]
+  staged_roles_phase1: [contrarian, constructive, premortem]
+
+  # Substrate is the source of truth. Renderings (web app, static export)
+  # are pure functions over substrate state. The substrate is rooted at the
+  # workspace itself (no substrate/ wrapper) — per-distillation folders
+  # under distillations/<source-id>/ carry their own clarifications/, replay-log/,
+  # provenance/, and vocabulary-snapshot.yaml. Workspace-level dirs:
+  # iterations/, delivery/, dispatch/, cache/.
+  #
+  # The plan at ~/Documents/Projects/.plans/amanuensis/ defines the layout;
+  # amanuensis.fs is the single path-resolution module that enforces it.
+
+  # Live supervision web app served by `amanuensis serve`.
+  # Delivery artifact built by `amanuensis export`.
+  surfaces: [substrate, live-web-app, static-export]
+
+# Domain config — injected per-engagement. Phase 1 ships with a minimal
+# generic vocabulary; domain-specific vocabularies, Walton scheme
+# catalogues, and probandum hierarchy templates are added per project.
+domain:
+  vocabulary_registry: ~/.amanuensis/vocabularies/generic
+  walton_scheme_catalogue: ~/.amanuensis/schemes/generic
+  probandum_template: ~/.amanuensis/probanda/generic
+
+# Supervision protocol — filesystem-mediated. Per-distillation paths are
+# templated; iterations and delivery live at workspace level.
+supervision:
+  clarifications_dir: "distillations/{source_id}/clarifications/"
+  replay_log: "distillations/{source_id}/replay-log/"
+  iterations_dir: iterations/
+  delivery_gate: delivery/sign-off.yaml
+
+# Determinism posture
+determinism:
+  # Content-addressable IDs (hash of normalized content).
+  ids: content-addressable
+
+  # LLM call results cached by (role, prompt, input_hash, model_id).
+  cache_dir: cache/
+
+  # We don't pin model versions, but we record which model produced
+  # each contribution in PROV-O activity records.
+  pin_models: false
+  record_model_attribution: true

@@ -1,0 +1,84 @@
+# Pre-commit hooks — fast checks at commit time (lint + dead-code +
+# basic file hygiene + INV-1/INV-2 marker gates). The heavier suite
+# (pyright strict + pytest) runs at the `pre-push` stage to keep
+# commit-time latency low; both also run in CI when present.
+#
+# Install both stages with:
+#   uv run pre-commit install --hook-type pre-commit --hook-type pre-push
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+        exclude: ^\.pre-commit-config\.yaml$
+      - id: check-toml
+      - id: check-added-large-files
+        # Vocabulary-design fixture PDFs are intentionally multi-MB.
+        args: [--maxkb=2048]
+        exclude: ^tests/fixtures/vocabulary-design/.*\.pdf$
+      - id: check-merge-conflict
+      - id: detect-private-key
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.6.9
+    hooks:
+      - id: ruff
+        args: [--fix]
+      - id: ruff-format
+
+  - repo: https://github.com/jendrikseipp/vulture
+    rev: v2.13
+    hooks:
+      - id: vulture
+        args: [src, --min-confidence, "80"]
+
+  - repo: local
+    hooks:
+      # Invariant gates — populated as Phase 1 implementation lands.
+      # Each invariant in INVARIANTS.md has a corresponding pytest in
+      # tests/invariants/ that runs as part of the full suite below.
+      - id: invariant-marker-present
+        name: amanuensis.yaml marker present (INV-1)
+        entry: bash -c 'test -f amanuensis.yaml || (echo "INV-1 violation: amanuensis.yaml missing" && exit 1)'
+        language: system
+        pass_filenames: false
+        always_run: true
+
+      - id: no-harness-files
+        name: no harness-specific files at root (INV-2)
+        entry: bash -c '
+          for f in CLAUDE.md AGENTS.md GEMINI.md README.md; do
+            if [ -f "$f" ]; then
+              echo "INV-2 violation: $f at root (harness-specific)"
+              exit 1
+            fi
+          done'
+        language: system
+        pass_filenames: false
+        always_run: true
+
+      # ---- pre-push only — heavier checks, NOT run on every commit ----
+      # Type-check the whole tree under pyright strict (per
+      # pyproject.toml [tool.pyright]). Slower than ruff; gates the push.
+      - id: pyright-strict
+        name: pyright strict (src + tests)
+        entry: uv run pyright src tests
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-push]
+
+      # Run the full pytest suite. Currently ~7s for 200 tests; will grow
+      # as M5+ wrapper tests + M6+ integration tests + M7 + M11 land. If
+      # this gets slow, split into a fast-mark and gate the slow tier in
+      # CI rather than weakening this hook.
+      - id: pytest
+        name: pytest (full suite)
+        entry: uv run pytest -q
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-push]

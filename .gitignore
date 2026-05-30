@@ -1,0 +1,74 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+build/
+dist/
+.eggs/
+
+# Virtualenv / uv
+.venv/
+.python-version
+uv.lock
+
+# Environment + secrets
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# Testing / coverage
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.cache/
+coverage.xml
+*.cover
+
+# Type checking
+.pyright/
+.mypy_cache/
+
+# IDEs / editors
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Build artifacts
+*.log
+/tmp/amanuensis*.log
+
+# Amanuensis local state — content-addressable; rebuildable; not source of truth
+cache/
+*.duckdb-wal
+*.duckdb-shm
+
+# Substrate is per-project — never gitignored at framework level.
+# Individual amanuensis workspaces decide whether to git-track their substrate
+# (typically yes — that's the audit trail).
+#
+# Replay log IS substrate (audit trail) and IS committed; do NOT add
+# replay-log/ to .gitignore.
+
+# Plans live OUTSIDE the project at ~/Documents/Projects/.plans/{project}/
+# (deliberately, for cross-project metrics). Not relevant to .gitignore.
+
+# Imported-research artifacts — kept locally for the maintainer's
+# reference but NOT published. The architecture rationale they captured
+# has already been distilled into `docs/architecture.md` and
+# `INVARIANTS.md`. To republish a sanitised excerpt, hand-edit and
+# commit specific files from a clean branch — do not bulk-add either
+# directory.
+research-transcripts/
+synthesis/
+MANIFEST.md
+
+# Original research zip — large; replace with synthesis/ extract
+brainstorming-distillation-*.zip

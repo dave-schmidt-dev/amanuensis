@@ -1,0 +1,1457 @@
+# amanuensis generic predicate vocabulary v0.1
+# ============================================================================
+#
+# Bootstrap path (INV-10):
+# ------------------------
+# Per amanuensis.yaml, the runtime vocabulary registry is resolved from
+#     domain.vocabulary_registry: ~/.amanuensis/vocabularies/generic
+# This vendored copy under `vocabularies/generic/` is the canonical
+# starting template — it is NOT loaded at runtime. To bootstrap a new
+# host's registry, either:
+#
+#     cp -R vocabularies/generic ~/.amanuensis/vocabularies/generic
+#
+# or override `domain.vocabulary_registry` in your `amanuensis.yaml`
+# to point directly at this in-repo copy.
+#
+# INV-10 (vocabulary pinned per distillation): on each ingest, the
+# active registry is SNAPSHOTTED into the per-distillation folder
+# (distillations/<source-id>/vocabulary-snapshot.yaml). The global
+# registry is therefore a STARTING TEMPLATE, not a runtime dependency:
+# downstream replay reads the snapshot, not the global. This file may
+# evolve freely without breaking historical distillations.
+#
+# INV-5 (closed predicate vocabulary at extraction): every atom emitted
+# during distillation MUST use a predicate (or alias) listed below. The
+# closed-vocabulary gate (M2.4) will reject atoms whose `predicate` is
+# not registered here at extraction time.
+#
+# Design grounding:
+# -----------------
+# All predicates below are grounded in the three M2.2 design fixtures
+# under tests/fixtures/vocabulary-design/:
+#   (1) US v. Google post-trial brief (adversarial / legal pleading)
+#   (2) Verizon ABS Transfer & Servicing Agreement (transactional contract)
+#   (3) NTSB AAR-21/01 Calabasas helicopter accident report (expert)
+# Per the SOURCES.md known-limitations note, the `denies_*` / `contests_*`
+# rebuttal family is grounded primarily in fixture (1); this is a known
+# under-fit that Phase 2 expansion fixtures will stress-test.
+#
+# Naming conventions (per Phase 1 plan §M2.2 spec):
+#   claim     → asserts_* (author's factual assertion)
+#             → alleges_* (claim about another party's conduct)
+#   data      → cites_*, references_*, quotes_*, exhibits_*
+#   qualifier → applies_* (scope: jurisdiction, date_range, methodology, modal)
+#             → declares_*, designates_*, waives_* (contract-meta qualifiers)
+#   rebuttal  → denies_*, contests_*, disputes_*, rejects_*
+#
+# Atom.qualifier_level (high/medium/low/contested) is a FIELD on every
+# atom, not a separate predicate. `qualifier_required: true` below means
+# "the validator requires atoms using this predicate to set
+# Atom.qualifier_level" (e.g., NTSB findings carry explicit modal
+# certainty; contract reps & warranties carry contracted certainty).
+# ============================================================================
+
+name: amanuensis-generic-v0.1
+version: "0.1.0"
+
+entries:
+
+  # =========================================================================
+  # CLAIMS — asserts_* (author's factual assertion)
+  # =========================================================================
+
+  - predicate: asserts_factual_event
+    aliases:
+      - asserts_event
+      - states_event
+      - reports_event
+    operand_types:
+      - name: event
+        kind: literal
+        required: true
+        type_hint: event_description
+      - name: temporal_scope
+        kind: literal
+        required: false
+        type_hint: date_range
+      - name: location
+        kind: literal
+        required: false
+        type_hint: place
+      - name: actor
+        kind: entity
+        required: false
+        type_hint: party
+    qualifier_required: true
+    notes: |
+      Author asserts a discrete factual event occurred. Used heavily for
+      narrative reconstruction (e.g., NTSB History-of-Flight: "the helicopter
+      was destroyed after it entered a descending left turn and crashed into
+      terrain in Calabasas, California").
+
+  - predicate: asserts_factual_state
+    aliases:
+      - asserts_state
+      - asserts_condition_of_fact
+    operand_types:
+      - name: subject
+        kind: entity
+        required: true
+        type_hint: party_or_object
+      - name: state
+        kind: literal
+        required: true
+        type_hint: state_description
+      - name: temporal_scope
+        kind: literal
+        required: false
+        type_hint: date_range
+    qualifier_required: true
+    notes: |
+      Author asserts a state-of-the-world condition holds (e.g., "Island
+      Express had an SMS that was neither required by the FAA nor part of
+      the company's FAA-approved or -accepted programs").
+
+  - predicate: asserts_market_definition
+    aliases:
+      - defines_market
+      - asserts_relevant_market
+    operand_types:
+      - name: market
+        kind: literal
+        required: true
+        type_hint: market_name
+      - name: temporal_scope
+        kind: literal
+        required: false
+        type_hint: date_range
+    qualifier_required: true
+    notes: |
+      Author asserts the scope of a relevant market for antitrust or
+      regulatory analysis (e.g., "the markets for general search services
+      and search advertising"). Distinct from asserts_market_dominance:
+      defines the playing field, not the score.
+
+  - predicate: asserts_market_dominance
+    aliases:
+      - asserts_monopoly_power
+      - asserts_market_power
+    operand_types:
+      - name: actor
+        kind: entity
+        required: true
+        type_hint: party
+      - name: market
+        kind: literal
+        required: true
+        type_hint: market_name
+      - name: temporal_scope
+        kind: literal
+        required: false
+        type_hint: date_range
+    qualifier_required: true
+    notes: |
+      Author asserts an actor holds market power or monopoly position in a
+      defined market (e.g., "For more than a decade, Google has dominated
+      the markets for general search services"). Paired with
+      asserts_market_definition.
+
+  - predicate: asserts_causal_link
+    aliases:
+      - asserts_causation
+      - asserts_because
+      - asserts_caused_by
+    operand_types:
+      - name: cause
+        kind: literal
+        required: true
+        type_hint: factor
+      - name: effect
+        kind: literal
+        required: true
+        type_hint: outcome
+    qualifier_required: true
+    notes: |
+      Author asserts a causal relationship between a cause and an effect
+      (e.g., "Because Google is insulated from competition, Google has less
+      incentive to protect user privacy"). Used in both legal causal
+      arguments and expert findings.
+
+  - predicate: asserts_causal_chain
+    aliases:
+      - asserts_sequence_of_causation
+      - asserts_chain_of_events
+    operand_types:
+      - name: chain
+        kind: literal
+        required: true
+        type_hint: ordered_factors
+      - name: outcome
+        kind: literal
+        required: true
+        type_hint: outcome
+    qualifier_required: true
+    notes: |
+      Author asserts a multi-step causal sequence (e.g., NTSB Finding 6:
+      "The pilot experienced spatial disorientation… which led to his loss
+      of helicopter control and the resulting collision with terrain").
+      Distinct from asserts_causal_link in that it carries ordered
+      intermediate steps. The chain operand is a string-encoded ordered
+      list of factors separated by " -> " (e.g., "search_dominance ->
+      reduced_privacy_competition -> weaker_user_protections"). Downstream
+      serialization preserves this delimiter; richer graph
+      representations are a Phase 2 concern.
+
+  - predicate: asserts_counterfactual
+    aliases:
+      - asserts_what_if
+      - asserts_hypothetical
+    operand_types:
+      - name: antecedent
+        kind: literal
+        required: true
+        type_hint: hypothetical_condition
+      - name: consequent
+        kind: literal
+        required: true
+        type_hint: hypothetical_outcome
+    qualifier_required: true
+    notes: |
+      Author asserts a counterfactual conditional (e.g., NTSB: "Had the
+      pilot completed an updated flight risk analysis form… the flight
+      would have remained within the company's low-risk category"). Modal
+      certainty (would/might/may) maps to Atom.qualifier_level.
+
+  - predicate: asserts_comparison
+    aliases:
+      - asserts_compared_to
+      - asserts_relative_magnitude
+    operand_types:
+      - name: subject
+        kind: entity
+        required: true
+        type_hint: party_or_object
+      - name: reference
+        kind: literal
+        required: true
+        type_hint: party_or_object
+      - name: dimension
+        kind: literal
+        required: true
+        type_hint: comparison_axis
+      - name: magnitude
+        kind: literal
+        required: false
+        type_hint: ratio_or_quantity
+    qualifier_required: true
+    notes: |
+      Author asserts a quantitative or qualitative comparison between two
+      entities (e.g., "Google receives nine times more queries in a day
+      than all its rivals combined"). Magnitude operand captures the
+      ratio/multiplier when stated. reference is kind:literal because
+      real-world references are often group descriptions ("all rivals
+      combined") rather than single named entities.
+
+  - predicate: asserts_evidentiary_absence
+    aliases:
+      - asserts_no_evidence
+      - asserts_absence_of_proof
+    operand_types:
+      - name: missing
+        kind: literal
+        required: true
+        type_hint: proposition
+      - name: searched_for_in
+        kind: literal
+        required: false
+        type_hint: corpus_description
+    qualifier_required: true
+    notes: |
+      Author asserts no evidence was found for a proposition (e.g., NTSB:
+      "there was no evidence that the president was actively involved with
+      the SMS"). Negative-existence claim used heavily in expert findings.
+
+  - predicate: asserts_finding
+    aliases:
+      - finds_that
+      - asserts_expert_finding
+    operand_types:
+      - name: finding
+        kind: literal
+        required: true
+        type_hint: finding_statement
+      - name: subject
+        kind: entity
+        required: false
+        type_hint: party_or_object
+    qualifier_required: true
+    notes: |
+      Author (as expert / investigator) asserts a formal finding (e.g.,
+      NTSB Finding 4: "The loss of outside visual reference was possibly
+      intermittent at first but likely complete by the time the flight
+      began to enter the left turn"). Certainty modal goes to
+      qualifier_level.
+
+  - predicate: asserts_causal_finding
+    aliases:
+      - finds_caused_by
+      - asserts_contributing_factor
+    operand_types:
+      - name: cause
+        kind: literal
+        required: true
+        type_hint: factor
+      - name: effect
+        kind: literal
+        required: true
+        type_hint: outcome
+      - name: contributory
+        kind: literal
+        required: false
+        type_hint: contributing_or_proximate
+    qualifier_required: true
+    notes: |
+      Expert finding specifically attributing cause (e.g., NTSB Finding 8:
+      "Island Express Helicopters Inc.'s lack of a documented policy …
+      hindered the effectiveness of the form"). Distinct from
+      asserts_causal_link by its formal-finding posture; expert reports
+      use this for probable-cause attribution.
+
+  - predicate: asserts_representation_warranty
+    aliases:
+      - represents_and_warrants
+      - asserts_rep_warranty
+      - warrants
+    operand_types:
+      - name: representor
+        kind: entity
+        required: true
+        type_hint: contracting_party
+      - name: representation
+        kind: literal
+        required: true
+        type_hint: factual_statement
+      - name: as_of
+        kind: literal
+        required: false
+        type_hint: date_or_date_range
+    qualifier_required: true
+    notes: |
+      Contract representation & warranty by a named party (e.g., Verizon
+      ABS § 2.4: "the Issuer will have good title to the Depositor
+      Transferred Property, free and clear of any Lien"). Carries
+      contracted certainty — set qualifier_level to "high" by default.
+
+  - predicate: asserts_legal_effect
+    aliases:
+      - asserts_legal_consequence
+      - asserts_creates_interest
+    operand_types:
+      - name: instrument
+        kind: literal
+        required: true
+        type_hint: instrument_or_act
+      - name: effect
+        kind: literal
+        required: true
+        type_hint: legal_consequence
+    qualifier_required: true
+    notes: |
+      Author asserts a legal instrument or act produces a specific legal
+      effect (e.g., Verizon ABS § 2.4: "This Agreement creates a valid and
+      continuing security interest (as defined in the applicable UCC) in
+      the Depositor Transferred Property in favor of the Issuer").
+
+  - predicate: asserts_enforceability
+    aliases:
+      - asserts_binding
+      - asserts_enforceable_against
+    operand_types:
+      - name: right
+        kind: literal
+        required: true
+        type_hint: right_or_interest
+      - name: against
+        kind: literal
+        required: true
+        type_hint: third_party_class
+    qualifier_required: true
+    notes: |
+      Author asserts a right or interest is enforceable against a class of
+      third parties (e.g., Verizon ABS § 2.4: "is enforceable against all
+      creditors of, purchasers from and transferees and absolute assignees
+      of the Depositor").
+
+  - predicate: asserts_obligation
+    aliases:
+      - asserts_must
+      - asserts_shall
+      - asserts_will
+      - asserts_duty
+    operand_types:
+      - name: obligor
+        kind: entity
+        required: true
+        type_hint: party
+      - name: action
+        kind: literal
+        required: true
+        type_hint: action_description
+      - name: trigger
+        kind: literal
+        required: false
+        type_hint: condition_or_date
+    qualifier_required: true
+    notes: |
+      Author asserts a party has an obligation to act (e.g., Verizon ABS
+      § 2.4(B): "All filings (including UCC filings) … will be made within
+      ten (10) days after the Closing Date or the related Acquisition
+      Date"). Modal force (shall / will / must) is captured in
+      qualifier_level.
+
+  - predicate: asserts_discretionary_right
+    aliases:
+      - asserts_may
+      - asserts_permission
+      - asserts_authorized_to
+    operand_types:
+      - name: actor
+        kind: entity
+        required: true
+        type_hint: party
+      - name: action
+        kind: literal
+        required: true
+        type_hint: action_description
+      - name: condition
+        kind: literal
+        required: false
+        type_hint: condition_description
+    qualifier_required: true
+    notes: |
+      Permissive (may / authorized to / at the discretion of) right
+      conferred by a contract (e.g., Verizon ABS § 3.2: "the Servicer may
+      waive late payment charges or other fees that may be collected in
+      the ordinary course of servicing a Receivable"). Distinct from
+      asserts_obligation: this is permissive, not mandatory.
+
+  - predicate: asserts_trigger_event
+    aliases:
+      - asserts_trigger
+      - asserts_triggering_condition
+    operand_types:
+      - name: trigger
+        kind: literal
+        required: true
+        type_hint: condition
+      - name: consequence
+        kind: literal
+        required: true
+        type_hint: consequence
+    qualifier_required: true
+    notes: |
+      A contractual or operational trigger causing a downstream
+      consequence (e.g., Verizon ABS § 3.2: a Servicer modification of a
+      Receivable triggers acquisition obligation under § 3.3). Common
+      pattern: "if X, then Y will…". qualifier_level captures whether the
+      trigger has occurred, is anticipated, is contested, or is
+      hypothetical — consistent with asserts_obligation's contracted
+      certainty treatment.
+
+  - predicate: asserts_condition
+    aliases:
+      - asserts_proviso
+      - asserts_so_long_as
+      - asserts_requirement
+    operand_types:
+      - name: condition
+        kind: literal
+        required: true
+        type_hint: condition_description
+      - name: scope
+        kind: literal
+        required: false
+        type_hint: scope_description
+    qualifier_required: true
+    notes: |
+      A conditional or proviso clause modifying another obligation or
+      right (e.g., Verizon ABS § 3.2: "does not have a material adverse
+      effect on the Noteholders"). Used to capture MAE clauses, "so long
+      as" clauses, and similar provisos. qualifier_level captures whether
+      the condition is satisfied, unsatisfied, or contested — consistent
+      with asserts_obligation's contracted certainty treatment.
+
+  - predicate: asserts_irrevocability
+    aliases:
+      - asserts_unmodifiable
+      - asserts_no_amendment_possible
+    operand_types:
+      - name: subject
+        kind: literal
+        required: true
+        type_hint: clause_or_right
+      - name: scope
+        kind: literal
+        required: false
+        type_hint: scope_description
+    qualifier_required: true
+    notes: |
+      Author asserts a clause cannot be amended away (e.g., Verizon ABS
+      § 10.5: "THE PARTIES WILL NOT AGREE TO AMEND THIS AGREEMENT TO
+      CHANGE THE GOVERNING LAW TO ANY LAW OTHER THAN THE LAWS OF THE
+      STATE OF NEW YORK"). Distinct from waives_right — this is a
+      negative covenant about amendment, not a present waiver.
+
+  - predicate: asserts_party_identity
+    aliases:
+      - identifies_party
+      - asserts_address
+      - asserts_role
+    operand_types:
+      - name: party
+        kind: entity
+        required: true
+        type_hint: party
+      - name: role
+        kind: literal
+        required: true
+        type_hint: contractual_role
+      - name: address
+        kind: literal
+        required: false
+        type_hint: address
+    qualifier_required: false
+    notes: |
+      Identifies a party, its contractual role, and optionally its
+      address (e.g., Verizon ABS § 10.4: agent-for-service blocks naming
+      Verizon ABS LLC, Cellco Partnership d/b/a Verizon Wireless, and
+      their roles as Depositor, Servicer, Marketing Agent).
+
+  - predicate: asserts_party_admission
+    aliases:
+      - asserts_admission_against_interest
+      - asserts_party_acknowledged
+    operand_types:
+      - name: admitting_party
+        kind: entity
+        required: true
+        type_hint: party
+      - name: admission
+        kind: literal
+        required: true
+        type_hint: admission_content
+    qualifier_required: true
+    notes: |
+      Author cites/asserts that an opposing party admitted something
+      against interest (e.g., "[Google] openly acknowledged that it could
+      raise prices 20% year over year without regard to its competitors").
+      Distinguished from quotes_party_statement: this characterizes the
+      admission, not merely the quote.
+
+  - predicate: asserts_alternative_explanation
+    aliases:
+      - offers_alternative_cause
+      - asserts_other_factors
+    operand_types:
+      - name: phenomenon
+        kind: literal
+        required: true
+        type_hint: outcome
+      - name: alternative_causes
+        kind: literal
+        required: true
+        type_hint: factor_list
+    qualifier_required: true
+    notes: |
+      Author offers alternative non-target causal explanations for a
+      phenomenon (e.g., Google brief p.75: "Many external factors may
+      have caused the increase in search, including the growth of the
+      Internet, the adoption and now ubiquity of smartphones…"). Common
+      in adversarial briefs and expert critique.
+
+  - predicate: asserts_alternative_remedy
+    aliases:
+      - asserts_less_restrictive_alternative
+      - asserts_alternative_means
+    operand_types:
+      - name: goal
+        kind: literal
+        required: true
+        type_hint: goal_description
+      - name: alternative
+        kind: literal
+        required: true
+        type_hint: remedy_description
+    qualifier_required: true
+    notes: |
+      Author asserts a less-restrictive or alternative means exists to
+      achieve a stated goal (e.g., Google brief p.75: "there exist several
+      less restrictive means by which Google could lower smartphone
+      prices"). Common in antitrust procompetitive-justification rebuttal.
+
+  - predicate: asserts_regulatory_classification
+    aliases:
+      - asserts_regulatory_status
+      - classifies_under
+    operand_types:
+      - name: subject
+        kind: entity
+        required: true
+        type_hint: subject
+      - name: classification
+        kind: literal
+        required: true
+        type_hint: regulatory_category
+      - name: authority
+        kind: literal
+        required: false
+        type_hint: regulatory_authority
+    qualifier_required: true
+    notes: |
+      Author asserts a subject falls under a specific regulatory
+      classification (e.g., NTSB: "Island Express operated the helicopter
+      as a Title 14 Code of Federal Regulations (CFR) Part 135 on-demand
+      flight under visual flight rules (VFR)").
+      Note: this predicate currently covers both (a) classifying a
+      specific subject under a regulatory category and (b) stating a
+      general regulatory rule. A future split into asserts_regulatory_rule
+      (general rule) and asserts_regulatory_classification (specific
+      subject) is in TODO.md.
+
+  # =========================================================================
+  # CLAIMS — alleges_* (claim about another party's conduct)
+  # =========================================================================
+
+  - predicate: alleges_exclusionary_conduct
+    aliases:
+      - alleges_anticompetitive_conduct
+      - alleges_foreclosure
+    operand_types:
+      - name: actor
+        kind: entity
+        required: true
+        type_hint: party
+      - name: conduct
+        kind: literal
+        required: true
+        type_hint: conduct_description
+      - name: market
+        kind: literal
+        required: false
+        type_hint: market_name
+      - name: temporal_scope
+        kind: literal
+        required: false
+        type_hint: date_range
+    qualifier_required: true
+    notes: |
+      Plaintiff/author alleges an opposing actor engaged in exclusionary
+      anticompetitive conduct (e.g., Google brief p.8: "Google has
+      protected its monopoly power by engaging in exclusionary conduct
+      that thwarted competition and suppressed threats to its dominance";
+      "Google paid billions to lock up search queries for itself").
+
+  - predicate: alleges_harm
+    aliases:
+      - alleges_injury
+      - alleges_consumer_harm
+    operand_types:
+      - name: actor
+        kind: entity
+        required: true
+        type_hint: party
+      - name: victim
+        kind: literal
+        required: true
+        type_hint: victim_class
+      - name: harm
+        kind: literal
+        required: true
+        type_hint: harm_description
+    qualifier_required: true
+    notes: |
+      Plaintiff/author alleges an actor caused harm to a victim class
+      (e.g., Google brief p.60: "Google's Conduct Has Reduced Google's
+      Incentive To Protect Users' Privacy"; consumer-harm allegation).
+
+  - predicate: alleges_misrepresentation
+    aliases:
+      - alleges_public_deception
+      - alleges_false_statement
+    operand_types:
+      - name: actor
+        kind: entity
+        required: true
+        type_hint: party
+      - name: statement
+        kind: literal
+        required: true
+        type_hint: alleged_false_statement
+      - name: true_state
+        kind: literal
+        required: false
+        type_hint: factual_state
+    qualifier_required: true
+    notes: |
+      Plaintiff alleges an actor made a public statement at odds with
+      private knowledge or true state (e.g., Google brief p.8: "Google
+      told the public that Internet search markets were open and
+      competitive… At the same time, Google paid billions to lock up
+      search queries"). Pairs with quotes_party_statement for the literal
+      misrepresenting quote.
+
+  # =========================================================================
+  # DATA / EVIDENCE — cites_*, references_*, quotes_*, exhibits_*
+  # =========================================================================
+
+  - predicate: cites_evidence
+    aliases:
+      - cites_proof
+      - points_to_record
+      - cites_pfof
+      - cites_finding_of_fact
+    operand_types:
+      - name: citation
+        kind: literal
+        required: true
+        type_hint: citation_string
+      - name: proposition
+        kind: literal
+        required: false
+        type_hint: supported_claim
+    qualifier_required: false
+    notes: |
+      Author cites a piece of evidence in the record (e.g., Google brief
+      PFOF cites: "See Proposed Finding Of Fact (PFOF) ¶ 1120"; "PFOF
+      ¶¶ 1144, 1148, 1150"). Citation string includes paragraph or page
+      anchor. Use for record citations, exhibit numbers, deposition
+      pin-cites. When proposition is omitted, the citation supports the
+      parent atom's claim implicitly. INV-7 traceability is preserved via
+      the parent atom's source-span four-tuple; a future schema may
+      promote proposition to kind:doc_span for explicit linkage to
+      another atom.
+
+  - predicate: cites_expert_testimony
+    aliases:
+      - cites_expert
+      - cites_witness_testimony
+      - cites_deposition
+    operand_types:
+      - name: expert
+        kind: entity
+        required: true
+        type_hint: expert_or_witness
+      - name: proposition
+        kind: literal
+        required: true
+        type_hint: testified_fact
+      - name: source
+        kind: literal
+        required: false
+        type_hint: transcript_or_report_cite
+    qualifier_required: true
+    notes: |
+      Author cites identified expert or witness testimony in support of a
+      proposition (e.g., Google brief p.60: "As Prof. Rangel explained,
+      changing Google's privacy defaults involve 'considerable choice
+      friction'"; Google brief p.75: "executives at Apple and T-Mobile
+      both testified that Google's revenue-share payments do not directly
+      factor into phone prices").
+
+  - predicate: cites_party_admission
+    aliases:
+      - cites_against_interest
+      - cites_concession
+    operand_types:
+      - name: party
+        kind: entity
+        required: true
+        type_hint: party
+      - name: admission
+        kind: literal
+        required: true
+        type_hint: admission_content
+      - name: source
+        kind: literal
+        required: false
+        type_hint: citation_string
+    qualifier_required: true
+    notes: |
+      Author cites an opposing party's concession or admission against
+      interest in the record (e.g., Google brief p.75: "he acknowledged
+      that he could not tie that output increase to phone prices").
+      Pairs evidence-level with asserts_party_admission.
+
+  - predicate: references_document
+    aliases:
+      - cross_references
+      - refers_to_document
+      - cites_document
+    operand_types:
+      - name: document
+        kind: literal
+        required: true
+        type_hint: document_identifier
+      - name: section
+        kind: literal
+        required: false
+        type_hint: section_or_clause
+      - name: purpose
+        kind: literal
+        required: false
+        type_hint: purpose_of_reference
+    qualifier_required: false
+    notes: |
+      Author cross-references a document, clause, statute, regulation,
+      treaty, or prior report (e.g., Verizon ABS: "Receivables Transfer
+      Agreements", "Indenture", "ARTICLE 2(1) OF THE HAGUE SECURITIES
+      CONVENTION"; NTSB: "Title 14 Code of Federal Regulations (CFR)
+      Part 135"; Google brief: "See Hr'g Tr. (Sept. 8, 2022), at
+      238:25–239:18"). Different from cites_evidence: this points to
+      authoritative documents, not record evidence.
+
+  - predicate: references_statute
+    aliases:
+      - cites_statute
+      - cites_regulation
+      - references_law
+    operand_types:
+      - name: statute
+        kind: literal
+        required: true
+        type_hint: statute_or_regulation_identifier
+      - name: purpose
+        kind: literal
+        required: false
+        type_hint: purpose_of_reference
+    qualifier_required: false
+    notes: |
+      Author cites a statute, regulation, or treaty by formal identifier
+      (e.g., Verizon ABS § 10.5: "SECTIONS 5-1401 AND 5-1402 OF THE
+      GENERAL OBLIGATIONS LAW OF THE STATE OF NEW YORK"; "the applicable
+      UCC"; NTSB: "14 CFR Part 135"). Narrower than references_document
+      to support downstream legal-corpus enrichment.
+
+  - predicate: quotes_party_statement
+    aliases:
+      - quotes_public_statement
+      - reproduces_statement
+    operand_types:
+      - name: speaker
+        kind: entity
+        required: true
+        type_hint: party_or_witness
+      - name: quote
+        kind: literal
+        required: true
+        type_hint: verbatim_quote
+      - name: source
+        kind: literal
+        required: false
+        type_hint: citation_string
+    qualifier_required: false
+    notes: |
+      Author reproduces a verbatim quote by an identified speaker (e.g.,
+      Google brief p.8: Google claiming "competition is a click away";
+      executives saying they would not "wast[e] our valuable time" on
+      privacy improvements). Use for public statements and internal
+      communications that the author surfaces literally.
+      Discrimination: use quotes_party_statement for statements made by a
+      party in a context intended to bind or represent them (testimony,
+      filings, public statements, formal admissions). Use
+      quotes_internal_communication for internal documents not authored
+      for the opposing party (emails, memos, internal slides) —
+      discoverable but not made for the audience.
+
+  - predicate: quotes_internal_communication
+    aliases:
+      - quotes_internal_document
+      - quotes_email
+    operand_types:
+      - name: source_party
+        kind: entity
+        required: true
+        type_hint: party
+      - name: quote
+        kind: literal
+        required: true
+        type_hint: verbatim_quote
+      - name: source
+        kind: literal
+        required: false
+        type_hint: citation_string
+    qualifier_required: false
+    notes: |
+      Author reproduces a verbatim internal communication (e.g., Google
+      brief p.8: "privately its executives made clear that they would not
+      'wast[e] our valuable time'"). Distinguished from
+      quotes_party_statement to support attorney-eyes-only or sealed-
+      document handling downstream.
+      Discrimination: use quotes_internal_communication for internal
+      documents not intended for the opposing party (emails, memos,
+      internal slides — discoverable but not authored for them). Use
+      quotes_party_statement when the statement was made in a context
+      intended to bind or represent the party (testimony, filings,
+      public statements, formal admissions).
+
+  - predicate: quotes_document
+    aliases:
+      - reproduces_clause
+      - quotes_text
+    operand_types:
+      - name: document
+        kind: literal
+        required: true
+        type_hint: document_identifier
+      - name: quote
+        kind: literal
+        required: true
+        type_hint: verbatim_text
+      - name: purpose
+        kind: literal
+        required: false
+        type_hint: purpose_of_quote
+    qualifier_required: false
+    notes: |
+      Author reproduces verbatim text from a document or statute (e.g.,
+      Verizon ABS § 2.4: financing statements "will contain a statement
+      to the following effect: 'A purchase, absolute assignment or
+      transfer of … will violate the rights of the Secured Party/
+      Assignee'"). Distinguished from quotes_party_statement: source is
+      a document, not a speaker.
+      Discrimination: use quotes_document for verbatim reproduction of
+      document text where the source is the document itself (a clause, a
+      statute, a contract excerpt). Use quotes_party_statement when the
+      verbatim text is attributable to a specific speaker, and
+      quotes_internal_communication for internal-party documents (emails,
+      memos).
+
+  - predicate: exhibits_data
+    aliases:
+      - presents_data
+      - shows_quantitative_evidence
+      - reports_metric
+    operand_types:
+      - name: metric
+        kind: literal
+        required: true
+        type_hint: metric_name
+      - name: value
+        kind: literal
+        required: true
+        type_hint: quantity_or_value
+      - name: source
+        kind: literal
+        required: false
+        type_hint: citation_string
+    qualifier_required: true
+    notes: |
+      Author presents a numeric data point (e.g., Google brief p.8: "more
+      than $20 billion each year to pay for defaults"; p.60: "Google
+      receives nine times more queries in a day"; "19 times more queries"
+      on mobile). Capture metric + value + source separately to support
+      downstream numeric reasoning.
+
+  # =========================================================================
+  # QUALIFIERS — applies_*, declares_*, designates_*, waives_*, concludes_*,
+  # recommends_*
+  # =========================================================================
+
+  - predicate: applies_jurisdiction
+    aliases:
+      - applies_venue
+      - applies_forum
+    operand_types:
+      - name: jurisdiction
+        kind: literal
+        required: true
+        type_hint: jurisdiction_name
+      - name: scope
+        kind: literal
+        required: false
+        type_hint: scope_description
+    qualifier_required: false
+    notes: |
+      Scopes a clause or claim to a specific jurisdiction (e.g., Verizon
+      ABS § 10.6: "Each party submits to the nonexclusive jurisdiction of
+      the United States District Court for the Southern District of New
+      York"). Used as a structural qualifier carried on related claim/
+      obligation atoms.
+
+  - predicate: applies_governing_law
+    aliases:
+      - applies_choice_of_law
+      - applies_law_of
+    operand_types:
+      - name: jurisdiction
+        kind: literal
+        required: true
+        type_hint: jurisdiction_name
+      - name: scope
+        kind: literal
+        required: false
+        type_hint: scope_description
+      - name: carveouts
+        kind: literal
+        required: false
+        type_hint: carveout_list
+    qualifier_required: false
+    notes: |
+      Selects the governing law for a contract or clause (e.g., Verizon
+      ABS § 10.5: "GOVERNED BY, AND CONSTRUED IN ACCORDANCE WITH, THE
+      INTERNAL LAWS OF THE STATE OF NEW YORK"). Distinct from
+      applies_jurisdiction (forum) because choice-of-law and forum
+      selection are independently negotiated.
+
+  - predicate: applies_date_range
+    aliases:
+      - applies_temporal_scope
+      - applies_effective_period
+    operand_types:
+      - name: scope
+        kind: literal
+        required: true
+        type_hint: clause_or_claim_id
+      - name: range
+        kind: literal
+        required: true
+        type_hint: date_range
+    qualifier_required: false
+    notes: |
+      Scopes a claim or obligation to a date range (e.g., Verizon ABS:
+      "All filings… will be made within ten (10) days after the Closing
+      Date or the related Acquisition Date"; Google brief: "For more than
+      a decade"). Used as a structural qualifier on related claim atoms.
+
+  - predicate: applies_scope
+    aliases:
+      - applies_to_scope
+      - scoped_to
+      - applies_only_to
+    operand_types:
+      - name: clause
+        kind: literal
+        required: true
+        type_hint: clause_or_claim_id
+      - name: scope
+        kind: literal
+        required: true
+        type_hint: scope_description
+    qualifier_required: false
+    notes: |
+      General-purpose scope qualifier when the scope is not jurisdiction,
+      time, or modal (e.g., Verizon ABS § 3.2: a payment-application rule
+      "is also applicable to any device payment plan agreements that the
+      Servicer services for itself and others"). Catch-all to keep INV-5
+      closed.
+
+  - predicate: applies_methodology
+    aliases:
+      - applies_procedure
+      - per_procedures
+      - in_accordance_with
+    operand_types:
+      - name: method
+        kind: literal
+        required: true
+        type_hint: methodology_name
+      - name: source
+        kind: literal
+        required: false
+        type_hint: citation_string
+    qualifier_required: false
+    notes: |
+      Scopes a claim or obligation to a named methodology, protocol, or
+      procedure (e.g., Verizon ABS § 3.2: "in accordance with its
+      customary payment application procedures"; "according to the
+      Servicing Procedures"). Critical for expert reports too (NTSB ties
+      findings to inspection protocols).
+
+  - predicate: applies_obligation_modal
+    aliases:
+      - applies_modal_force
+      - applies_shall_will_may
+    operand_types:
+      - name: clause
+        kind: literal
+        required: true
+        type_hint: clause_or_claim_id
+      - name: modal
+        kind: literal
+        required: true
+        type_hint: shall_will_may_must
+    qualifier_required: false
+    notes: |
+      Captures the modal force (shall / will / may / must / will not) of
+      an obligation or right (e.g., Verizon ABS § 10.5 uses "SHALL BE
+      GOVERNED", "SHALL GOVERN", "WILL NOT AGREE"). Distinguishes
+      mandatory vs. permissive operations beyond qualifier_level alone.
+
+  - predicate: applies_legal_carveout
+    aliases:
+      - applies_exception
+      - applies_unless_clause
+      - applies_carve_out
+    operand_types:
+      - name: base_rule
+        kind: literal
+        required: true
+        type_hint: clause_or_claim_id
+      - name: carveout
+        kind: literal
+        required: true
+        type_hint: carveout_description
+    qualifier_required: false
+    notes: |
+      Captures "unless / except / notwithstanding" carveouts that modify
+      another obligation (e.g., Verizon ABS § 3.2: "unless it is required
+      to take the action by Law"; "Notwithstanding anything to the
+      contrary in any other Transaction Document"). Modeled as a
+      qualifier so the carveout follows the base atom.
+
+  - predicate: applies_override
+    aliases:
+      - applies_notwithstanding
+      - overrides_clause
+    operand_types:
+      - name: overriding_clause
+        kind: literal
+        required: true
+        type_hint: clause_or_claim_id
+      - name: overridden
+        kind: literal
+        required: true
+        type_hint: clause_or_document_id
+    qualifier_required: false
+    notes: |
+      Captures a clause that explicitly overrides another instrument
+      (e.g., Verizon ABS § 3.2: "Notwithstanding anything to the contrary
+      in any other Transaction Document"). Distinct from
+      applies_legal_carveout: this points at a target instrument being
+      overridden, not just an internal exception.
+
+  - predicate: declares_definition
+    aliases:
+      - defines_term
+      - declares_term
+    operand_types:
+      - name: term
+        kind: literal
+        required: true
+        type_hint: defined_term
+      - name: definition
+        kind: literal
+        required: true
+        type_hint: definition_text
+    qualifier_required: false
+    notes: |
+      Author defines a term within an instrument (e.g., Verizon ABS:
+      "security interest (as defined in the applicable UCC)"; defined-
+      term references like "Closing Date", "Acquisition Date",
+      "Collection Period"). Use sparingly: prefer references_document
+      when the definition lives in another instrument.
+
+  - predicate: designates_agent
+    aliases:
+      - designates_representative
+      - appoints_agent
+    operand_types:
+      - name: principal
+        kind: entity
+        required: true
+        type_hint: contracting_party
+      - name: agent
+        kind: literal
+        required: true
+        type_hint: agent_identity_or_role
+      - name: purpose
+        kind: literal
+        required: false
+        type_hint: purpose_of_designation
+    qualifier_required: false
+    notes: |
+      A party designates an agent (e.g., Verizon ABS § 10.4: "The agent
+      for service of the Depositor for this Agreement will be the person
+      holding the office of Secretary of the Depositor"). Common in
+      contract boilerplate; distinct from asserts_party_identity which
+      is descriptive, not constitutive.
+
+  - predicate: waives_right
+    aliases:
+      - waives_objection
+      - irrevocably_waives
+    operand_types:
+      - name: waiving_party
+        kind: entity
+        required: true
+        type_hint: party
+      - name: right_waived
+        kind: literal
+        required: true
+        type_hint: right_description
+      - name: scope
+        kind: literal
+        required: false
+        type_hint: scope_description
+    qualifier_required: true
+    notes: |
+      A party waives a right (e.g., Verizon ABS § 10.6: "Each party
+      irrevocably waives, to the fullest extent permitted by Law, any
+      objection… to the venue of a proceeding"). qualifier_level captures
+      whether the waiver is irrevocable, conditional, or future-revocable.
+
+  - predicate: concludes_finding
+    aliases:
+      - formal_conclusion
+      - ntsb_concludes
+      - board_concludes
+    operand_types:
+      - name: conclusion
+        kind: literal
+        required: true
+        type_hint: conclusion_statement
+      - name: authority
+        kind: entity
+        required: false
+        type_hint: institutional_actor
+    qualifier_required: true
+    notes: |
+      A formal institutional conclusion by an expert body (e.g., NTSB
+      p.55: "the NTSB concludes that Island Express' lack of a [policy]
+      …"; p.66 probable-cause determination). Distinguished from
+      asserts_finding: this carries institutional weight (typically a
+      Board, agency, or court determination), and qualifier_level
+      typically resolves to "high".
+
+  - predicate: recommends_action
+    aliases:
+      - recommends_remedy
+      - safety_recommendation
+      - proposes_action
+    operand_types:
+      - name: addressee
+        kind: entity
+        required: false
+        type_hint: addressee
+      - name: action
+        kind: literal
+        required: true
+        type_hint: action_description
+      - name: rationale
+        kind: literal
+        required: false
+        type_hint: rationale_text
+    qualifier_required: true
+    notes: |
+      Author recommends a remedial action (e.g., NTSB Finding 9: "A
+      fully implemented, mandatory safety management system could enhance
+      Island Express Helicopters Inc.'s ability to manage risks"; Finding
+      10: "The use of appropriate simulation devices…"). qualifier_level
+      reflects strength of recommendation.
+
+  # =========================================================================
+  # REBUTTALS — denies_*, contests_*, disputes_*, rejects_*
+  # (grounded primarily in Google brief p.75; known under-fit risk)
+  # =========================================================================
+
+  - predicate: denies_factual_assertion
+    aliases:
+      - denies_fact
+      - denies_claim
+      - rejects_fact
+    operand_types:
+      - name: denied_assertion
+        kind: literal
+        required: true
+        type_hint: opposing_assertion
+      - name: counter_basis
+        kind: literal
+        required: false
+        type_hint: counter_basis_description
+    qualifier_required: true
+    notes: |
+      Author denies an opposing factual assertion (e.g., Google brief
+      p.75: "there is no testimony that any company that distributes
+      devices in the United States does so"). Generic catch-all for
+      pure factual denials.
+
+  - predicate: denies_proof
+    aliases:
+      - asserts_failed_to_prove
+      - denies_burden_met
+    operand_types:
+      - name: opposing_party
+        kind: entity
+        required: true
+        type_hint: party
+      - name: claim
+        kind: literal
+        required: true
+        type_hint: claim_description
+    qualifier_required: true
+    notes: |
+      Author asserts the opposing party failed to meet its burden of
+      proof on an issue (e.g., Google brief p.75: "Google has not proven
+      any link between smartphone prices and competition in search").
+      Distinct from denies_factual_assertion: this is a burden-of-proof
+      attack, not a direct factual denial.
+
+  - predicate: denies_causal_link
+    aliases:
+      - denies_causation
+      - rejects_causal_link
+    operand_types:
+      - name: alleged_cause
+        kind: literal
+        required: true
+        type_hint: factor
+      - name: alleged_effect
+        kind: literal
+        required: true
+        type_hint: outcome
+      - name: counter_basis
+        kind: literal
+        required: false
+        type_hint: counter_basis_description
+    qualifier_required: true
+    notes: |
+      Author denies a causal link asserted by the opposing party (e.g.,
+      Google brief p.75: "Google's revenue-share payments do not directly
+      factor into phone prices"; "he acknowledged that he could not tie
+      that output increase to phone prices"). Symmetric counterpart to
+      asserts_causal_link.
+
+  - predicate: denies_contract_requirement
+    aliases:
+      - denies_contractual_obligation
+      - denies_requires
+    operand_types:
+      - name: instrument
+        kind: literal
+        required: true
+        type_hint: instrument_identifier
+      - name: alleged_requirement
+        kind: literal
+        required: true
+        type_hint: requirement_description
+    qualifier_required: true
+    notes: |
+      Author denies that an instrument requires what the opposing party
+      claims it requires (e.g., Google brief p.75: "Nothing in Google's
+      distribution contracts require Google's partners to use the
+      revenue-share payments to reduce phone prices"). Common in
+      contract-interpretation disputes.
+
+  - predicate: contests_defense
+    aliases:
+      - rebuts_defense
+      - contests_justification
+    operand_types:
+      - name: defense
+        kind: literal
+        required: true
+        type_hint: defense_description
+      - name: counter_basis
+        kind: literal
+        required: false
+        type_hint: counter_basis_description
+    qualifier_required: true
+    notes: |
+      Author rebuts an opposing party's affirmative defense or
+      justification (e.g., Google brief p.75: "Google's shot failed to
+      bank"; rebutting the smartphone-price-pass-through defense as a
+      "bank shot"). Includes rhetorical contest of defenses as well as
+      substantive ones.
+
+  - predicate: contests_expert_methodology
+    aliases:
+      - contests_methodology
+      - critiques_expert_method
+      - denies_methodology
+    operand_types:
+      - name: expert
+        kind: entity
+        required: true
+        type_hint: expert
+      - name: methodology
+        kind: literal
+        required: true
+        type_hint: methodology_description
+      - name: critique
+        kind: literal
+        required: false
+        type_hint: critique_text
+    qualifier_required: true
+    notes: |
+      Author challenges the opposing expert's methodology (e.g., Google
+      brief p.75: "Neither Google nor its experts even attempted to
+      isolate or quantify the alleged effects"; this is methodology-
+      attack, not pure factual denial).
+
+  - predicate: contests_evidentiary_support
+    aliases:
+      - contests_record_support
+      - denies_evidentiary_support
+    operand_types:
+      - name: claim
+        kind: literal
+        required: true
+        type_hint: claim_description
+      - name: missing_support
+        kind: literal
+        required: false
+        type_hint: missing_evidence_description
+    qualifier_required: true
+    notes: |
+      Author argues the opposing party's claim lacks evidentiary support
+      in the record (e.g., Google brief p.75: "there is no testimony
+      that any company that distributes devices in the United States
+      does so" — record-level rebuttal). Pairs with
+      asserts_evidentiary_absence on the affirmative side.
+
+  - predicate: disputes_interpretation
+    aliases:
+      - disputes_meaning
+      - contests_interpretation
+    operand_types:
+      - name: subject
+        kind: literal
+        required: true
+        type_hint: clause_or_evidence_or_finding
+      - name: opposing_interpretation
+        kind: literal
+        required: true
+        type_hint: opposing_interpretation
+      - name: alternative_interpretation
+        kind: literal
+        required: false
+        type_hint: alternative_interpretation
+    qualifier_required: true
+    notes: |
+      Author disputes how the opposing party interprets a contract,
+      statute, document, or piece of evidence. Generic interpretive-
+      dispute hook; will be exercised more broadly by Phase 2 fixtures
+      (contract litigation, regulatory contests).
+
+  - predicate: rejects_justification
+    aliases:
+      - rejects_explanation
+      - rejects_rationale
+    operand_types:
+      - name: opposing_party
+        kind: entity
+        required: true
+        type_hint: party
+      - name: justification
+        kind: literal
+        required: true
+        type_hint: justification_description
+    qualifier_required: true
+    notes: |
+      Author rejects the opposing party's offered justification or
+      explanation as inadequate or pretextual (e.g., Google brief p.75:
+      "Google has not and cannot explain why this as well as other less
+      restrictive alternatives would be ineffective"). Distinguished
+      from contests_defense: this is rejection of an explanation, not
+      rebuttal of an affirmative defense.
