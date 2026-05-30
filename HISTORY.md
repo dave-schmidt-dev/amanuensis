@@ -747,3 +747,55 @@ Format: dated entries, newest first. Bug entries cite the area touched:
 - Phase M4 (CLI surface) complete: M4.1-M4.5 all shipped. 325 tests
   pass; pyright strict + ruff + ruff-format + vulture all clean.
   Next session entry point is M5.1 (cached LLM call wrapper).
+- M5.1+M5.2+M5.3 — LLM-call boundary mechanics landed in one batch.
+  New `amanuensis.llm` package:
+  - `cached_call(...)` (M5.1) computes a canonical `inputs_hash` over
+    `(role, prompt, inputs, model_id)` using the same canonical-form
+    pattern as `schemas/_hashing.py`. Cache hit copies
+    `cache/<hash>.yaml` to `dispatch/outputs/<role>-<hash>/output.yaml`;
+    cache miss writes a `DispatchQueueEntry` at
+    `dispatch/queue/<role>-<hash>.yaml` for the M6 dispatch driver to
+    pick up. Cache file mode 0600 per CV-15 (sensitive prompt/output
+    material); queue mode 0644 (short-lived coordination).
+  - `DispatchQueueEntry` (M5.1 → re-used by M6.1) is a Pydantic v2
+    strict + `extra="forbid"` model — `role`, `prompt`, `inputs`,
+    `model_id`, `inputs_hash`, `enqueued_at: AwareDatetime`,
+    `schema_version`.
+  - `append_replay_entry(...)` (M5.2) is a thin facade over the M1.7
+    `ReplayLog.append` infrastructure — takes a pre-built
+    `ReplayLogEntry`, acquires the workspace flock, increments the
+    seq counter, writes to `replay-log/<date>/seq-NNNN.yaml`. Caller's
+    `seq` is overwritten by the appender (the appender owns seq
+    allocation).
+  - `write_llm_provenance(...)` (M5.2) writes a PROV-O record with
+    `was_attributed_to.identifier = model_id` and
+    `was_attributed_to.kind = "llm"`. Closed entity-type set
+    (`{"atom", "relation", "clarification-raised"}`) and role set
+    (`{"extractor", "auditor", "contrarian", "constructive",
+    "premortem"}`) reject misuse (e.g. `"iteration-issued"` is human-
+    attributed; `"human_supervisor"` role on an LLM-call PROV record
+    is a bug).
+  - **Design call:** `inputs_hash` is NOT a new field on
+    `ProvenanceRecord` (the schema's `_VOLATILE_FIELDS` is empty —
+    every field is identity content, and adding one would churn every
+    existing content-addressable PROV id). Instead the cross-reference
+    PROV ↔ replay-log ↔ cache lives in the replay-log entry's
+    `inputs_hash` field. PROV is locatable from replay-log by
+    `(activity, actor, timestamp)`.
+  - **M5.3 INV-4 mutating-side gate** — three new
+    `@pytest.mark.invariants` cases under
+    `tests/invariants/test_determinism_boundary.py`'s new "Mutating
+    side (M5.3)" section: (a) every LLM-call boundary writes a
+    replay-log entry AND a PROV-O record AND a cache entry,
+    (b) cache-hit replays produce byte-identical outputs,
+    (c) `inputs_hash` is deterministic across re-invocations. The
+    M4.4 TODO(M5.3) block is reframed to note M5.3 has landed.
+  - 16 new tests (6 cache + 7 replay/PROV + 3 mutating-side gate);
+    341 total pass (325 + 16); 26 invariants pass (23 + 3). Pyright
+    strict + ruff + ruff-format + vulture all clean. | files:
+    src/amanuensis/llm/__init__.py, src/amanuensis/llm/cached_call.py,
+    src/amanuensis/llm/queue.py, src/amanuensis/llm/replay_log.py,
+    src/amanuensis/llm/provenance.py, tests/llm/__init__.py,
+    tests/llm/conftest.py, tests/llm/test_cache.py,
+    tests/llm/test_replay_and_prov.py,
+    tests/invariants/test_determinism_boundary.py

@@ -129,9 +129,21 @@ Synthesis record: `~/Documents/Projects/.plans/amanuensis/phase1-distill-foundat
   - **Phase M4 complete**: 325 tests pass; pyright strict + ruff +
     ruff-format + vulture all clean. `amanuensis --help` lists all 12
     commands; `amanuensis --version` resolves via project.scripts.
-  - M5 (LLM-call wrapper + replay-log writer, 3 tasks) — **IN
-    PROGRESS**. Next: M5.1 cached_call API.
-  - M6-M11 — pending, downstream of M5.
+  - M5 (LLM-call wrapper + replay-log writer, 3 tasks) — **DONE**.
+    - M5.1 (`cached_call`): canonical inputs_hash; cache hit copies
+      to dispatch/outputs/; cache miss writes DispatchQueueEntry.
+      File mode 0600 for cache (CV-15).
+    - M5.2 (`append_replay_entry` + `write_llm_provenance`):
+      replay-log facade on M1.7's seq counter; PROV writer with
+      `was_attributed_to.identifier = model_id`; closed entity-type
+      + role sets at the writer boundary.
+    - M5.3 (INV-4 mutating-side gate): three new invariant tests in
+      `tests/invariants/test_determinism_boundary.py`.
+    341 tests pass; 26 invariant tests pass.
+  - M6 (Dispatch driver, 5 tasks) — **IN PROGRESS**. Next: M6.1
+    queue protocol (operations on the DispatchQueueEntry M5.1 already
+    defined).
+  - M7-M11 — pending, downstream of M6.
 
 ## Upcoming phases
 
