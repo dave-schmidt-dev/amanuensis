@@ -19,7 +19,8 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-import yaml
+
+from amanuensis.skills._frontmatter import split_frontmatter
 
 SKILLS_DIR = Path(__file__).resolve().parents[2] / "src" / "amanuensis" / "skills"
 
@@ -34,24 +35,6 @@ REQUIRED_FIELDS: tuple[str, ...] = (
     "phase",
     "cli_commands_invoked",
 )
-
-
-def _split_frontmatter(text: str) -> tuple[str, str]:
-    """Split a skill file into (frontmatter_yaml, body).
-
-    Skill files MUST start with a ``---`` fence on line 1, followed by
-    YAML, followed by a closing ``---`` fence, followed by the body.
-    Anything else is a malformed skill and the test fails loudly.
-    """
-    if not text.startswith("---\n"):
-        raise AssertionError("skill file does not start with '---' frontmatter fence")
-    rest = text[len("---\n") :]
-    closing = rest.find("\n---\n")
-    if closing == -1:
-        raise AssertionError("skill file frontmatter has no closing '---' fence")
-    frontmatter = rest[:closing]
-    body = rest[closing + len("\n---\n") :]
-    return frontmatter, body
 
 
 def _iter_skill_files() -> Iterator[Path]:
@@ -70,14 +53,8 @@ def test_at_least_one_skill_file_present() -> None:
 @pytest.mark.parametrize("skill_path", list(_iter_skill_files()), ids=lambda p: p.name)
 def test_skill_frontmatter_is_well_formed(skill_path: Path) -> None:
     text = skill_path.read_text(encoding="utf-8")
-    frontmatter_yaml, body = _split_frontmatter(text)
+    fm, body = split_frontmatter(text)
     assert body.strip(), f"{skill_path.name}: body is empty"
-
-    parsed: Any = yaml.safe_load(frontmatter_yaml)
-    assert isinstance(parsed, dict), (
-        f"{skill_path.name}: frontmatter must parse to a mapping, got {type(parsed).__name__}"
-    )
-    fm: dict[str, Any] = parsed
 
     for field in REQUIRED_FIELDS:
         assert field in fm, f"{skill_path.name}: missing required field '{field}'"
@@ -123,10 +100,7 @@ def test_skill_frontmatter_is_well_formed(skill_path: Path) -> None:
 def _all_frontmatters() -> list[dict[str, Any]]:
     frontmatters: list[dict[str, Any]] = []
     for path in _iter_skill_files():
-        fm_yaml, _ = _split_frontmatter(path.read_text(encoding="utf-8"))
-        parsed: Any = yaml.safe_load(fm_yaml)
-        assert isinstance(parsed, dict)
-        fm: dict[str, Any] = parsed
+        fm, _ = split_frontmatter(path.read_text(encoding="utf-8"))
         frontmatters.append(fm)
     return frontmatters
 

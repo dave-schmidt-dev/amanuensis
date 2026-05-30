@@ -22,10 +22,13 @@ from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, HTTPException, Request, status
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+
+from .routes import dashboard as dashboard_routes
+from .routes import source as source_routes
 
 # ``_WEB_ROOT`` is the directory containing this file. Templates and
 # static assets live alongside it; resolving them relatively keeps the
@@ -100,6 +103,41 @@ def create_app() -> FastAPI:
         _ = request
         payload: dict[str, Any] = {"status": "ok", "version": pkg_version}
         return JSONResponse(payload)
+
+    @app.exception_handler(HTTPException)
+    async def render_http_exception(  # pyright: ignore[reportUnusedFunction]
+        request: Request, exc: HTTPException
+    ) -> HTMLResponse | JSONResponse:
+        """Render selected HTTPExceptions as HTML; fall back to JSON.
+
+        Specifically, the ``workspace_not_configured`` 503 raised by
+        :func:`amanuensis.web.dependencies.get_substrate` is rendered as
+        the ``workspace_not_configured.html`` template so the supervisor
+        gets a useful page instead of a raw JSON ``detail``. Other
+        HTTPExceptions (404, validation errors) fall through to
+        FastAPI's default JSON serialization.
+        """
+        detail = exc.detail
+        if (
+            exc.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
+            and isinstance(detail, dict)
+            and detail.get("reason") == "workspace_not_configured"
+        ):
+            return templates.TemplateResponse(  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType,reportReturnType]
+                request,
+                "workspace_not_configured.html",
+                {
+                    "workspace_path": detail.get("workspace_path", ""),
+                    "env_var": detail.get("env_var", ""),
+                    "message": detail.get("message", ""),
+                },
+                status_code=exc.status_code,
+            )
+        # Fallback: default FastAPI HTTPException JSON shape.
+        return JSONResponse({"detail": detail}, status_code=exc.status_code)
+
+    app.include_router(dashboard_routes.router)
+    app.include_router(source_routes.router)
 
     return app
 

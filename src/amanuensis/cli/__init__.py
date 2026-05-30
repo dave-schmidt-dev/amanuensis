@@ -34,6 +34,7 @@ from . import (
     atom,
     clarification,
     dispatch,
+    distill,
     ingest,
     init,
     install_skills,
@@ -110,6 +111,7 @@ app.command(name="ingest")(ingest.ingest_command)
 app.command(name="status")(status.status_command)
 app.command(name="install-skills")(install_skills.install_skills_command)
 app.command(name="dispatch")(dispatch.dispatch_command)
+app.command(name="distill")(distill.distill_command)
 
 
 # --- Subcommand groups -----------------------------------------------

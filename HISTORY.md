@@ -938,3 +938,92 @@ Format: dated entries, newest first. Bug entries cite the area touched:
   src/amanuensis/web/static/vendor/htmx.min.js,
   src/amanuensis/web/static/vendor/README.md,
   tests/web/__init__.py, tests/web/test_app_boots.py
+- M7.3+M7.6+M7.7+M8.2 — four parallel subagent dispatches landed
+  cleanly. Disjoint package trees, no merge conflicts.
+  - **M7.3** (`amanuensis distill <source-id>`): orchestrator entry
+    point. Loads the per-role skill body from
+    `amanuensis.skills.*`; skips stub roles (`active: false`) with
+    a clean stderr notice + replay-log entry. For each active role,
+    computes the canonical `inputs_hash` over
+    `{role, prompt, inputs, model_id}` (`inputs` =
+    `{source_id, manifest_path, workspace_root}`; `model_id` =
+    the Phase 1 default `claude-opus-4-7`) and enqueues a
+    `DispatchQueueEntry` via `amanuensis.dispatch.queue.enqueue`.
+    `--role-set` override and `--interactive` (Phase-1 stub
+    redirecting to the default flow). Refuses to run if the source-
+    mirror manifest is absent (clear `amanuensis ingest` hint).
+    New `amanuensis.skills._frontmatter.split_frontmatter` helper
+    (the M7.1 test's hand-rolled splitter promoted to a shared
+    module; the test refactored to import it). 4 new distill CLI
+    tests + 1 marker-parametric extension + the skill-frontmatter
+    test slightly expanded after the helper consolidation.
+  - **Design call** (M7.3): the spec called for a flock held across
+    "classify + enqueue + replay-log-record". POSIX flock is not
+    reentrant within the same process and `append_replay_entry`
+    acquires the same flock — holding both deadlocks. Restructured:
+    classify roles + emit skip notices OUTSIDE the lock; hold the
+    lock ONLY for the queue `enqueue` calls. The dispatch driver
+    has the same discipline (M6 docs already note this).
+  - **Design call** (M7.3): `ReplayLogEntry`'s `entity_type` is a
+    closed `Literal` that does NOT admit `"role-skipped"`, and the
+    closed `role` set does not include `"orchestrator"`. The skip
+    is encoded in the entry's `substrate_changes` list as
+    `"role-skipped:<role>"` + `"role-skipped-reason:<stub_reason>"`,
+    `activity="distill-orchestrate"`, `role="human_supervisor"`.
+    Test asserts on the `substrate_changes` token.
+  - **M7.6** (`install-skills` finalisation): replaces the M4.3
+    stub's "would install" placeholders with real `copyfileobj`
+    semantics under `~/<harness>/skills/amanuensis/` (per-harness
+    namespace under the detected harness's skill root). Idempotent
+    when content matches (mtime unchanged); overwrites on drift.
+    `--dry-run` previews without writing; hidden test-only
+    `--harness-target` overrides `Path.home()`. 8 tests (4 new + 4
+    adapted from M4.3 to use the test seam).
+  - **M7.7** (`docs/skill-author-guide.md`): 349-line guide
+    covering skill file format, the stub mechanism, dispatch queue
+    protocol from the skill's perspective, write-isolation
+    contract, Extractor + Auditor examples (with the
+    contested-warrant CR-7 callout under INV-3), validation flow,
+    cross-links to architecture / cli-reference / INVARIANTS, and
+    a Known Limitations section.
+  - **M8.2** (dashboard + source-overview routes): `GET /` lists
+    every distillation with paragraph + atom + relation +
+    clarification counts; `GET /distillations/<source-id>` shows
+    the source-mirror manifest summary. Per-request `Substrate`
+    via a `get_substrate()` FastAPI dependency reading
+    `AMANUENSIS_WORKSPACE` env var (falls back to CWD). Missing
+    marker / non-existent workspace → 503 rendering
+    `workspace_not_configured.html`. A private
+    `_substrate_counts.py` walks the filesystem for relation +
+    clarification counts (the `Substrate` API doesn't expose
+    `list_relations` / `list_clarifications` / `list_distillations`
+    yet — open follow-up). 11 new web tests.
+  - 411 tests pass (407 from M8.2 + the 4 from M7.3; M7.6 nets to
+    no new count since it replaced stub-era tests 1:1 plus 4 new);
+    pyright strict (with the pre-existing `tests/invariants/
+    conftest.py` re-export noise — see follow-up) + ruff +
+    ruff-format + vulture all clean. | files:
+    src/amanuensis/cli/distill.py, src/amanuensis/cli/__init__.py,
+    src/amanuensis/cli/install_skills.py,
+    src/amanuensis/skills/_frontmatter.py,
+    tests/cli/test_distill_cli.py,
+    tests/cli/test_install_skills.py,
+    tests/cli/test_marker_required.py,
+    tests/skills/test_skill_frontmatter.py,
+    docs/skill-author-guide.md, src/amanuensis/web/app.py,
+    src/amanuensis/web/dependencies.py,
+    src/amanuensis/web/routes/__init__.py,
+    src/amanuensis/web/routes/_substrate_counts.py,
+    src/amanuensis/web/routes/dashboard.py,
+    src/amanuensis/web/routes/source.py,
+    src/amanuensis/web/templates/dashboard.html,
+    src/amanuensis/web/templates/source_overview.html,
+    src/amanuensis/web/templates/workspace_not_configured.html,
+    tests/web/conftest.py, tests/web/test_dashboard.py,
+    tests/web/test_source_overview.py
+- [followup] M8.2 walks the substrate filesystem in a private
+  web helper for relation / clarification counts. A future
+  cleanup pass should hoist `list_distillations` / `list_relations`
+  / `list_clarifications` to `Substrate` so the web layer and
+  future CLI consumers share the surface. Doesn't block any
+  Phase 1 milestone. | files: src/amanuensis/web/routes/_substrate_counts.py

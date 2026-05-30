@@ -154,19 +154,27 @@ Synthesis record: `~/Documents/Projects/.plans/amanuensis/phase1-distill-foundat
       shortcuts subprocess; cache miss writes cache (0600) + PROV.
     382 tests pass; all four harnesses (claude/codex/cursor/gemini)
     detected on the supervisor machine.
-  - M7 (Active roles + orchestrator, 7 tasks) — **IN PROGRESS** (1/7).
+  - M7 (Active roles + orchestrator, 7 tasks) — **IN PROGRESS** (4/7).
     - M7.1 (six skill files): **DONE**. 11 frontmatter tests.
-    - M7.2-M7.7: pending. M7.3 (distill CLI), M7.6 (install-skills
-      final), M7.7 (docs/skill-author-guide.md) dispatchable in
-      parallel after M7.1. M7.4 (reconciliation gate) and M7.5
-      (e2e integration test) sequence after M7.3.
-  - M8 (Web app, 10 tasks) — **IN PROGRESS** (1/10).
+    - M7.3 (`amanuensis distill` CLI): **DONE**. Loads skill bodies;
+      skips stubs with replay-log notice; enqueues active roles;
+      acquires flock narrowly around enqueue (avoids POSIX-flock
+      reentry deadlock). 4 new tests.
+    - M7.6 (install-skills finalisation): **DONE**. Real file
+      copies to `~/<harness>/skills/amanuensis/`; --dry-run +
+      hidden --harness-target seam; idempotent on byte match;
+      overwrites on drift. 8 tests.
+    - M7.7 (docs/skill-author-guide.md): **DONE**. 349 lines.
+    - M7.2 (stub-skip test, CV-6), M7.4 (reconciliation gate +
+      CR-7 clarification), M7.5 (e2e integration): pending.
+  - M8 (Web app, 10 tasks) — **IN PROGRESS** (2/10).
     - M8.1 (FastAPI + Jinja2 + HTMX + Tailwind skeleton): **DONE**.
-      `/healthz`, static mount, lifespan plumbing, pytailwindcss
-      build step, vendored HTMX 1.9.12. 3 tests.
-    - M8.2-M8.10: pending. M8.2 (dashboard + source-overview) is
-      next; downstream routes (M8.3 atoms, M8.4 graph, M8.5 forms,
-      M8.7 status) all sequence after M8.2.
+    - M8.2 (dashboard + source-overview routes): **DONE**. `GET /`
+      lists distillations w/ counts; `GET /distillations/<id>`
+      shows manifest summary. 503 on missing marker. 11 tests.
+    - M8.3-M8.10: pending. M8.3 (atom browser) + M8.5 (forms) +
+      M8.7 (status pages) all serialise on app.py modifications;
+      M8.8 (localhost test) is config-only and parallel-safe.
   - M9-M11 — pending, downstream of M7+M8.
 
 ## Upcoming phases

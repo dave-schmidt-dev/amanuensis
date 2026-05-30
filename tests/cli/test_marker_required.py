@@ -57,6 +57,7 @@ _FACTORIES: list[ArgvFactory] = [
     lambda ws: ["vocabulary", "show", "asserts_obligation", "--workspace", str(ws)],
     lambda ws: ["vocabulary", "snapshot", "src", "--workspace", str(ws)],
     lambda ws: ["install-skills", "--workspace", str(ws)],
+    lambda ws: ["distill", "any-src", "--workspace", str(ws)],
 ]
 
 
