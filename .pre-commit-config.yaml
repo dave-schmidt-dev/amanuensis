@@ -59,6 +59,22 @@ repos:
         always_run: true
 
       # ---- pre-push only — heavier checks, NOT run on every commit ----
+      # macOS / CPython 3.12.13 workaround: uv's installer marks every
+      # .pth in .venv with UF_HIDDEN, and 3.12.13's site.py now skips
+      # hidden .pth files — which silently breaks the editable install
+      # and produces `ModuleNotFoundError: No module named 'amanuensis'`
+      # from pytest. Sweeping the hidden flag before each heavy hook
+      # makes this self-healing. The `2>/dev/null` keeps Linux happy
+      # where `chflags` doesn't exist.
+      - id: unhide-pth-files
+        name: clear UF_HIDDEN on .venv/**/*.pth (macOS CPython 3.12.13 fix)
+        entry: >-
+          bash -c 'find .venv -name "*.pth" -exec chflags nohidden {} + 2>/dev/null || true'
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-push]
+
       # Type-check the whole tree under pyright strict (per
       # pyproject.toml [tool.pyright]). Slower than ruff; gates the push.
       - id: pyright-strict

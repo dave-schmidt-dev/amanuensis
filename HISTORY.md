@@ -513,3 +513,24 @@ Format: dated entries, newest first. Bug entries cite the area touched:
   implementer + 1 orchestrator-added); pyright strict + ruff +
   ruff-format + vulture all clean. **M2 (Validators + vocabulary,
   5 tasks) COMPLETE.**
+
+## 2026-05-30
+
+- [bug] Editable install silently disappeared between sessions: `uv run pytest`
+  failed with `ModuleNotFoundError: No module named 'amanuensis'` despite
+  `uv sync` reporting the package installed. Root cause is a CPython 3.12.13
+  regression on macOS: 3.12.13 backported a `site.py` change that skips `.pth`
+  files with `UF_HIDDEN` set, and uv's macOS installer (or APFS metadata on
+  `_`-prefixed files) marks every `.pth` it writes with that flag. The
+  one-line repair is `find .venv -name "*.pth" -exec chflags nohidden {} +`.
+  Permanent fix: added an `unhide-pth-files` pre-push hook that runs the
+  chflags sweep before `pyright-strict` and `pytest`, so the install is
+  self-healing on every push. Linux runners skip silently (chflags is
+  macOS-only; `2>/dev/null || true` keeps the hook portable). Pin to a
+  Python 3.12.12-or-lower point release if you need to dodge the site.py
+  change entirely. | files: .pre-commit-config.yaml
+- Session-end handoff: refreshed `handoff.md` to the canonical
+  `~/.agent/prompts/handoff.md` structure (active plan + current task +
+  critical files + 2-3 sentence strategic momentum + active subagents).
+  M2 fully shipped; next session entry point is M3.1 (Docling ingestion).
+  | files: handoff.md
