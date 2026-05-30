@@ -871,3 +871,70 @@ Format: dated entries, newest first. Bug entries cite the area touched:
   tests pass; pyright strict + ruff + ruff-format + vulture all
   clean. Next session entry point is M7.1 (skill files for
   orchestrator + Extractor + Auditor + 3 stubs).
+- M7.1 — six skill files landed under `src/amanuensis/skills/`:
+  `distill.md` (orchestrator, active), `distill_extract.md`
+  (Extractor, active), `distill_audit.md` (Auditor, active), plus
+  three stubs `distill_contrarian.md` / `distill_constructive.md` /
+  `distill_premortem.md` (Phase 2 work). Each file is YAML-frontmatter
+  + markdown body with required fields: `name`, `description`, `role`,
+  `version`, `active`, `stub`, `expects_substrate`, `phase`,
+  `cli_commands_invoked`. Stubs carry `stub: true` + `stub_reason`.
+  Orchestrator body walks the supervisor through the six-step distill
+  workflow; Extractor body specifies the structured-YAML output
+  contract and the INV-5/6/7 atom requirements; Auditor body
+  specifies the contested-warrant clarification trigger (CR-7) the
+  M7.4 reconciliation gate will action.
+  Wheel packaging: hatchling's existing `packages = ["src/amanuensis"]`
+  ships every `.md` under `skills/` (verified by `uv build --wheel`
+  + `unzip -l`).
+  `tests/skills/test_skill_frontmatter.py` (11 tests) parametrically
+  validates each file's frontmatter shape and asserts the
+  orchestrator-plus-two-actives-plus-three-stubs ledger. | files:
+  src/amanuensis/skills/__init__.py,
+  src/amanuensis/skills/distill.md,
+  src/amanuensis/skills/distill_extract.md,
+  src/amanuensis/skills/distill_audit.md,
+  src/amanuensis/skills/distill_contrarian.md,
+  src/amanuensis/skills/distill_constructive.md,
+  src/amanuensis/skills/distill_premortem.md,
+  tests/skills/__init__.py,
+  tests/skills/test_skill_frontmatter.py
+- M8.1 — local web app skeleton (FastAPI + Jinja2 + HTMX + Tailwind).
+  Runtime deps added: `fastapi`, `uvicorn[standard]`, `jinja2`,
+  `pytailwindcss` (ships the Tailwind binary in a Python package — no
+  Node toolchain). `src/amanuensis/web/app.py` exposes `create_app()`
+  + module-level `app` (uvicorn entry `amanuensis.web.app:app`) with
+  `GET /healthz` JSON route, static mount at `/static`, Jinja2
+  templates at `/src/amanuensis/web/templates/`, async lifespan
+  context manager (no-op for now but plumbed for M5/M6 wiring later).
+  `WebConfig` (frozen dataclass) defaults `bind_host=127.0.0.1` +
+  `bind_port=8723`; `load_config()` reads `AMANUENSIS_HOST` /
+  `AMANUENSIS_PORT` (with `AMANUENSIS_BIND_HOST` / `_PORT` fallback)
+  so both the `.env.example` convention and the M8.8 binding-refusal
+  semantics are honoured.
+  `build_css.py` is a `python -m amanuensis.web.build_css` entry that
+  invokes `pytailwindcss.run(...)` with `auto_install=True` — first
+  run downloads the standalone Tailwind binary (~16MB); subsequent
+  runs are local. Output is `src/amanuensis/web/static/tailwind.css`
+  (2773 bytes for the M8.1 minimal template surface).
+  HTMX 1.9.12 vendored at `static/vendor/htmx.min.js` (48101 bytes)
+  with a `vendor/README.md` recording the upstream URL.
+  `tests/web/test_app_boots.py` (3 tests) covers `/healthz` JSON,
+  vendored HTMX served correctly, and `create_app()` returning a
+  FastAPI instance. Wheel build verified (`uv build --wheel` packages
+  templates + vendored HTMX + built CSS).
+  Pyright strict: pytailwindcss has no type stubs, so the build_css
+  module carries a targeted `# pyright: ignore` for that import.
+  396 tests pass (393 from M7.1 + 3 from M8.1; 382 baseline + 14
+  new); pyright strict + ruff + ruff-format + vulture all clean.
+  | files: pyproject.toml, src/amanuensis/web/__init__.py,
+  src/amanuensis/web/app.py, src/amanuensis/web/config.py,
+  src/amanuensis/web/build_css.py,
+  src/amanuensis/web/tailwind.config.js,
+  src/amanuensis/web/tailwind.input.css,
+  src/amanuensis/web/templates/base.html,
+  src/amanuensis/web/templates/healthz.html,
+  src/amanuensis/web/static/tailwind.css,
+  src/amanuensis/web/static/vendor/htmx.min.js,
+  src/amanuensis/web/static/vendor/README.md,
+  tests/web/__init__.py, tests/web/test_app_boots.py
