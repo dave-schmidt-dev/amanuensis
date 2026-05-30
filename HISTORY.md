@@ -799,3 +799,75 @@ Format: dated entries, newest first. Bug entries cite the area touched:
     tests/llm/conftest.py, tests/llm/test_cache.py,
     tests/llm/test_replay_and_prov.py,
     tests/invariants/test_determinism_boundary.py
+- M6.1+M6.2+M6.3+M6.4+M6.5 — dispatch driver shipped in one batch.
+  New `amanuensis.dispatch` package:
+  - `dispatch/queue.py` (M6.1): enqueue/dequeue/list_queue/
+    move_to_failures/move_to_outputs with atomic-rename semantics
+    (`os.replace`); failures get a sibling `.failure.yaml` with
+    `reason` + `detail` + `failed_at_iso`.
+  - `dispatch/driver.py` (M6.2): `detect_harnesses()` via shutil.which
+    for {claude, codex, cursor-agent, gemini}; `invoke_role(...)` runs
+    the harness subprocess with `stdin=DEVNULL`, `text=True`,
+    `capture_output=True`, `timeout=…`; `InvokeResult` carries
+    stdout/stderr/exit/walltime/timed_out/parse_error/output_payload.
+    Successful stdout is parsed as YAML/JSON; parse failure → typed
+    `parse_error` field, not a re-raise. Test-only harness override
+    via module-level `TEST_HARNESS_OVERRIDES` + `harness_binary_path=`
+    kwarg on `invoke_role` (clean injection seam for M6.4's echo-role
+    fixture; production passes `None`).
+  - `dispatch/isolation.py` (M6.3 / CV-5): snapshot the workspace
+    mtime tree before role invocation; re-walk after; reject any
+    file added/modified outside the allowed `dispatch/outputs/…/`
+    subtree. Skips `.venv/`, `__pycache__/`, `.git/`. Driver routes
+    violations to `dispatch/failures/` with
+    `reason="write-isolation-violation"`.
+  - Echo-role fixture (M6.4 / CV-7): inline shell-script fixtures
+    written outside the dispatch workspace (so the isolation check
+    doesn't flag the script's own marker files). Tests cover the
+    happy path, cache-hit no-subprocess, and malformed-stdout
+    routing to `failures/`.
+  - `amanuensis dispatch` CLI (M6.5) with `--check` (prints JSON
+    harness probe), `--once` (drain once), `--max-iterations N`
+    (safety cap for the continuous loop). The drain loop: peek
+    queue → cache hit shortcuts to `move_to_outputs` → cache miss
+    snapshots mtime tree → invokes harness → checks write
+    isolation → on success writes cache (mode 0600) + moves to
+    outputs + appends replay-log + writes PROV-O.
+  - **Design calls:**
+    - Driver does NOT delegate cache lookup to `cached_call` (it
+      would re-hash inputs; some entries have pinned hashes for
+      test/recovery). Driver reads `cache/<entry.inputs_hash>.yaml`
+      directly, honoring the pinned contract.
+    - Driver does NOT hold the workspace flock around the drain —
+      `ReplayLog.append` takes the lock itself; re-entering would
+      deadlock. Each helper's individual atomicity covers the gap;
+      future cross-writer mutual exclusion can use a dedicated
+      sentinel.
+    - Role→harness mapping is a hardcoded default for Phase 1
+      (extractor → claude, auditor → claude); a future
+      `dispatch/role_routes.yaml` is M7.x's concern. Unmapped role
+      → `failures/` with `reason="role-unmapped"` (driver never
+      crashes).
+    - PROV-O written only on cache miss (cache hits are
+      deterministic re-plays of the original miss's PROV).
+  - Detected all four harnesses on the supervisor machine
+    (claude, codex, cursor-agent, gemini); `amanuensis dispatch
+    --check` returns valid JSON.
+  - 41 new tests (10 queue + 3 harness detection + 9 retry/parse +
+    7 isolation + 4 echo-role + 3 cache-integration + 5 dispatch-CLI);
+    382 total pass (341 + 41); pyright strict + ruff + ruff-format
+    + vulture all clean. | files: src/amanuensis/dispatch/__init__.py,
+    src/amanuensis/dispatch/queue.py, src/amanuensis/dispatch/driver.py,
+    src/amanuensis/dispatch/isolation.py, src/amanuensis/cli/dispatch.py,
+    src/amanuensis/cli/__init__.py, tests/dispatch/__init__.py,
+    tests/dispatch/conftest.py, tests/dispatch/test_queue_protocol.py,
+    tests/dispatch/test_harness_detection.py,
+    tests/dispatch/test_retry_policy.py,
+    tests/dispatch/test_role_write_isolation.py,
+    tests/dispatch/test_echo_role_fixture.py,
+    tests/dispatch/test_cache_integration.py,
+    tests/cli/test_dispatch_cli.py
+- Phase M6 (Dispatch driver) complete: M6.1-M6.5 all shipped. 382
+  tests pass; pyright strict + ruff + ruff-format + vulture all
+  clean. Next session entry point is M7.1 (skill files for
+  orchestrator + Extractor + Auditor + 3 stubs).

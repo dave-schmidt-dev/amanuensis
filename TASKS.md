@@ -140,10 +140,23 @@ Synthesis record: `~/Documents/Projects/.plans/amanuensis/phase1-distill-foundat
     - M5.3 (INV-4 mutating-side gate): three new invariant tests in
       `tests/invariants/test_determinism_boundary.py`.
     341 tests pass; 26 invariant tests pass.
-  - M6 (Dispatch driver, 5 tasks) — **IN PROGRESS**. Next: M6.1
-    queue protocol (operations on the DispatchQueueEntry M5.1 already
-    defined).
-  - M7-M11 — pending, downstream of M6.
+  - M6 (Dispatch driver, 5 tasks) — **DONE**.
+    - M6.1 (queue protocol): enqueue/dequeue/move-to-failures/
+      move-to-outputs with atomic-rename semantics.
+    - M6.2 (harness detection + invocation): detect_harnesses() +
+      invoke_role() with timeout + parse-error capture.
+    - M6.3 (write-isolation, CV-5): mtime-tree snapshot/compare
+      gate.
+    - M6.4 (echo-role fixture, CV-7): inline shell-script driven
+      tests of the queue protocol.
+    - M6.5 (dispatch CLI + cache integration): `amanuensis
+      dispatch --check/--once/--max-iterations`; cache hit
+      shortcuts subprocess; cache miss writes cache (0600) + PROV.
+    382 tests pass; all four harnesses (claude/codex/cursor/gemini)
+    detected on the supervisor machine.
+  - M7 (Active roles + orchestrator, 7 tasks) — **IN PROGRESS**.
+    Next: M7.1 skill files (foundation for M7.2-M7.7).
+  - M8-M11 — pending, downstream of M7.
 
 ## Upcoming phases
 

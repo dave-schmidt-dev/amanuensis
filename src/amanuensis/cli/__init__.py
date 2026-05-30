@@ -30,7 +30,17 @@ from typing import Annotated
 
 import typer
 
-from . import atom, clarification, ingest, init, install_skills, iteration, status, vocabulary
+from . import (
+    atom,
+    clarification,
+    dispatch,
+    ingest,
+    init,
+    install_skills,
+    iteration,
+    status,
+    vocabulary,
+)
 
 # ``no_args_is_help=True`` makes ``amanuensis`` (no args) print help
 # instead of silently succeeding. ``add_completion=False`` keeps the
@@ -99,6 +109,7 @@ app.command(name="init")(init.init_command)
 app.command(name="ingest")(ingest.ingest_command)
 app.command(name="status")(status.status_command)
 app.command(name="install-skills")(install_skills.install_skills_command)
+app.command(name="dispatch")(dispatch.dispatch_command)
 
 
 # --- Subcommand groups -----------------------------------------------
