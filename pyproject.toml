@@ -9,15 +9,17 @@ authors = [
 ]
 
 # M1.2 adds the foundational runtime deps. Future milestones will add:
-# fastapi, uvicorn, jinja2, pdfplumber, prov, pytailwindcss (no Node
-# toolchain), htmx-python helpers if any. uv resolves the lockfile.
+# fastapi, uvicorn, jinja2, prov, pytailwindcss (no Node toolchain),
+# htmx-python helpers if any. uv resolves the lockfile.
 # M3.1 adds docling for PDF ingest (source-mirror).
+# M3.2 adds pdfplumber as the fallback ingest engine.
 dependencies = [
     "pydantic>=2.9",
     "typer",
     "pyyaml",
     "structlog",
     "docling",
+    "pdfplumber",
 ]
 
 [dependency-groups]

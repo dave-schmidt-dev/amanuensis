@@ -602,3 +602,72 @@ Format: dated entries, newest first. Bug entries cite the area touched:
   silently from manifest hashes — document in INVARIANTS.md INV-8 as a
   known escape hatch when a future milestone introduces the verifier.
   | files: HISTORY.md
+- M3.2 — pdfplumber fallback ingester landed. New
+  `ingest_pdf_pdfplumber(...)` mirrors `ingest_pdf` step-for-step but
+  emits `ingest_engine="pdfplumber"` and `activity="pdfplumber-ingest"`.
+  pdfplumber moved from a stale comment in `pyproject.toml` into the
+  active dependencies list. Paragraph splitting heuristic: per page
+  `extract_text()` split on `\n\s*\n` blank-line boundaries; each
+  non-empty stripped chunk becomes one paragraph. Documented trade-off:
+  `section_path=[]` and `label="text"` uniformly (no heading hierarchy
+  available from pdfplumber). The derived `entity_id` shape is shared
+  with the docling pipeline — engine is a manifest property, not an
+  identity component, so the source-mirror document's PROV identity is
+  engine-agnostic. Same write-once `SourceMirrorExists` guard. New
+  smoke test mirrors the docling smoke test against the same 3-page
+  CUAD fixture (4 tests). | files: pyproject.toml,
+  src/amanuensis/ingest/__init__.py,
+  src/amanuensis/ingest/pdfplumber_ingester.py,
+  tests/ingest/test_pdfplumber_fallback.py
+- M3.3 — re-ingest determinism test (PM-3 mitigation) landed. New
+  `tests/ingest/test_ingest_determinism.py` parametrizes over both
+  ingest engines; each parametrize case runs the engine three times
+  against the same CUAD fixture into three independent tmp_path
+  workspaces and asserts byte-identical output across runs on every
+  field EXCEPT the documented non-deterministic set (`activity_*`
+  timestamps and the ids that derive from them — `prov.id`,
+  `prov.entity_id`, `manifest.id`). The on-disk paragraph `.md` files
+  are also compared as full bytes (frontmatter + body) so a future
+  serializer drift would be caught. Sanity-asserts that timestamps DO
+  differ across runs (so the test isn't accidentally caching). Also
+  added `tests/fixtures/INGEST_FALLBACKS.md` — a structured
+  documentation file (no parser, no tests) for logging fixtures that
+  prove non-deterministic under Docling and need the pdfplumber
+  fallback. Both engines hold determinism on CUAD; INGEST_FALLBACKS.md
+  starts with `(none yet)`. | files:
+  tests/ingest/test_ingest_determinism.py,
+  tests/fixtures/INGEST_FALLBACKS.md
+- M3.4 — legal-pleading fixture + fidelity test landed. The DOJ
+  Antitrust Division's *Plaintiffs' Post-Trial Brief* in *United
+  States v. Google LLC* (Case 1:20-cv-03010-APM, Doc. 837) was copied
+  from `tests/fixtures/vocabulary-design/` (where it had been vetted
+  for M2.1) to `tests/fixtures/legal-pleading/` to clarify its role
+  as the M3.4 fidelity fixture. Git deduplicates the blob by content
+  SHA so the copy is effectively free at the repo level; the
+  fixture's `SOURCES.md` cross-references the shared blob and
+  re-cites the 17 USC §105 public-domain basis. New
+  `tests/ingest/test_legal_pdf_fidelity.py` runs `ingest_pdf` over
+  the brief and asserts three fidelity properties: (1) paragraph
+  boundaries (483 non-empty paragraphs observed against `>= 50`
+  threshold; median `char_count` 225 against `> 100` threshold),
+  (2) citation references preserved (Sherman Act 13 occurrences;
+  Microsoft `253 F.3d` 11 occurrences; PFOF cites in 138 paragraphs
+  via regex `r"PFOF\s*¶?\s*\d+"`), (3) footnote linkage preserved
+  (18 paragraphs labeled `"footnote"` against `>= 1` threshold).
+  Every fidelity threshold landed as the plan specified — no
+  adaptation needed. The determinism test was extended to also
+  parametrize over the legal-pleading fixture; both engines hold
+  byte-identical output across three docling runs (~150 s) and
+  three pdfplumber runs (sub-second), so no fallback recording
+  required. | files:
+  tests/fixtures/legal-pleading/us-v-google-plaintiffs-post-trial-brief-2024.pdf,
+  tests/fixtures/legal-pleading/SOURCES.md,
+  tests/ingest/test_legal_pdf_fidelity.py,
+  tests/ingest/test_ingest_determinism.py
+- Phase M3 (Ingestion) complete: M3.1+M3.2+M3.3+M3.4 all shipped.
+  266 tests pass; pyright strict, ruff (check + format), vulture all
+  clean. Full pytest walltime ~6:40 (dominated by the four 50 s
+  docling runs in the fidelity test and the three runs each in the
+  determinism gate). Next session entry point is M4.1 (Typer CLI
+  skeleton + INV-1 marker decorator) — the surface area that exposes
+  the M3 library functions to supervisors via `amanuensis ingest`.

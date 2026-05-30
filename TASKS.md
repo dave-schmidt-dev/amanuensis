@@ -81,11 +81,32 @@ Synthesis record: `~/Documents/Projects/.plans/amanuensis/phase1-distill-foundat
       (hand-edits to paragraph .md diverge silently from manifest
       content_sha256 — INVARIANTS.md INV-8 documents as a known escape
       hatch).
-    - M3.2 (pdfplumber fallback): pending. Engine selector schema is
-      ready (`Literal["docling", "pdfplumber"]`).
-    - M3.3 (re-ingest determinism test, PM-3 mitigation): pending.
-    - M3.4 (legal-pleading fixture + fidelity test): pending.
-  - M4-M11 — pending, downstream of M3.
+    - M3.2 (pdfplumber fallback): **DONE**. `ingest_pdf_pdfplumber`
+      mirrors the docling pipeline step-for-step; emits
+      `ingest_engine="pdfplumber"` with `section_path=[]` and
+      `label="text"` uniformly (no heading hierarchy from pdfplumber).
+      pdfplumber added to active runtime dependencies. 4 new tests.
+    - M3.3 (re-ingest determinism test, PM-3 mitigation): **DONE**.
+      `test_ingest_determinism.py` parametrizes over both engines;
+      three independent re-ingests asserted byte-identical except for
+      the documented non-deterministic set (timestamps + ids derived
+      from them). New `tests/fixtures/INGEST_FALLBACKS.md`
+      documentation file (no fallbacks recorded — both engines hold
+      determinism on CUAD).
+    - M3.4 (legal-pleading fixture + fidelity test): **DONE**. DOJ
+      *US v. Google* post-trial brief copied to
+      `tests/fixtures/legal-pleading/`; fidelity test asserts
+      paragraph boundaries (483 paragraphs; median char_count 225),
+      citation preservation (Sherman Act 13×, 253 F.3d 11×, PFOF
+      cites in 138 paragraphs), and footnote linkage (18 paragraphs
+      labeled `"footnote"`). Determinism gate extended to legal-
+      pleading fixture; both engines hold byte-identical output.
+  - **Phase M3 complete**: 266 tests pass; pyright strict, ruff, ruff-
+    format, vulture all clean. Walltime ~6:40 (docling × 4 fidelity
+    runs + docling × 3 determinism runs dominate).
+  - M4 (CLI surface, 5 tasks) — **IN PROGRESS**. Next: M4.1 Typer
+    skeleton + marker decorator.
+  - M5-M11 — pending, downstream of M4.
 
 ## Upcoming phases
 
