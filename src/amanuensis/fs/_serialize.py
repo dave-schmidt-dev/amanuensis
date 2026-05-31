@@ -172,6 +172,12 @@ def serialize_clarification_md(clarification: Clarification) -> str:
 
 
 def parse_clarification_md(text: str) -> Clarification:
+    # v1 on-disk records (no ``kind`` discriminator) are migrated to v2 by
+    # T1.10's migration script, auto-invoked from ``Substrate.__init__``
+    # (T1.11). By the time this parser runs in production, every clarification
+    # on disk is v2. Injecting ``kind`` here would corrupt the content hash
+    # (``kind`` is identity-bearing, NOT in ``_VOLATILE_FIELDS``), so v1
+    # records intentionally raise a ``ValidationError`` if they slip through.
     return Clarification(**_parse_md(text, "question"))
 
 

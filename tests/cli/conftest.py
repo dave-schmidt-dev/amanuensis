@@ -156,6 +156,7 @@ def planted_clarification(
     payload: dict[str, Any] = {
         "id": "c-" + "0" * 16,
         "status": "open",
+        "kind": "warrant-defensibility-contested",
         "raised_at": datetime(2026, 5, 30, 12, 5, 0, tzinfo=UTC),
         "raised_by": agent,
         "raised_by_activity": "audit_v1",
@@ -167,7 +168,7 @@ def planted_clarification(
         "resolution": None,
         "raised_provenance_id": prov.id,
         "resolved_provenance_id": None,
-        "schema_version": 1,
+        "schema_version": 2,
     }
     draft = Clarification(**payload)
     payload["id"] = compute_id(draft)

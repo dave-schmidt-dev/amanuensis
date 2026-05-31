@@ -168,6 +168,7 @@ def _clarification_with_hash(payload: dict[str, Any]) -> Clarification:
 def clarification(agent: AgentAttribution) -> Clarification:
     payload: dict[str, Any] = {
         "status": "open",
+        "kind": "warrant-defensibility-contested",
         "raised_at": datetime(2026, 5, 29, 12, 5, 0, tzinfo=UTC),
         "raised_by": agent,
         "raised_by_activity": "audit_v1",
@@ -179,7 +180,7 @@ def clarification(agent: AgentAttribution) -> Clarification:
         "resolution": None,
         "raised_provenance_id": "p-fixture00000002",
         "resolved_provenance_id": None,
-        "schema_version": 1,
+        "schema_version": 2,
     }
     return _clarification_with_hash(payload)
 
@@ -188,6 +189,7 @@ def clarification(agent: AgentAttribution) -> Clarification:
 def resolved_clarification(agent: AgentAttribution, human_agent: AgentAttribution) -> Clarification:
     payload: dict[str, Any] = {
         "status": "resolved",
+        "kind": "warrant-defensibility-contested",
         "raised_at": datetime(2026, 5, 29, 12, 5, 0, tzinfo=UTC),
         "raised_by": agent,
         "raised_by_activity": "audit_v1",
@@ -199,7 +201,7 @@ def resolved_clarification(agent: AgentAttribution, human_agent: AgentAttributio
         "resolution": "parent",
         "raised_provenance_id": "p-fixture00000002",
         "resolved_provenance_id": "p-fixture00000003",
-        "schema_version": 1,
+        "schema_version": 2,
     }
     return _clarification_with_hash(payload)
 

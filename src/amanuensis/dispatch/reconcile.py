@@ -96,10 +96,10 @@ __all__ = ["ReconcileResult", "reconcile_outputs"]
 # Sentinel directory the gate moves consumed outputs under.
 _CONSUMED_DIRNAME: str = "_consumed"
 
-# Clarification ``raised_by_activity`` slot used to encode kinds. The
-# Clarification schema has no ``kind`` field (M1.4) so we route the
-# discriminator through ``raised_by_activity`` and a stable prefix on the
-# question text. CR-7 callers / tests filter on this string.
+# ``raised_by_activity`` values that this module emits on Clarifications.
+# Since T1.8 the Clarification schema also has a ``kind`` discriminator
+# (see ``_kind_for_activity`` below for the mapping). These activity
+# strings still drive filtering / question-text prefixing per CR-7.
 _KIND_WARRANT_CONTESTED: str = "warrant-defensibility-contested"
 _KIND_VALIDATION_FAILED: str = "atom-validation-failed"
 
@@ -935,9 +935,22 @@ def _raise_clarification(
     now = datetime.now(UTC)
     raised_by = AgentAttribution(kind="llm", identifier=identifier, role=role)
 
+    # Every Phase 1 clarification (warrant-contested, atom-validation-failed,
+    # any future auditor surface) is an extraction-time quality issue, so the
+    # kind discriminator is always "warrant-defensibility-contested". The
+    # other two kinds ("resolution-disputed", "resolution-ambiguous") are
+    # MAP-phase clarifications that get raised by T6.3 / T6.4's reconcilers,
+    # not from this Phase 1 path.
+    _clar_kind: Literal[
+        "warrant-defensibility-contested",
+        "resolution-disputed",
+        "resolution-ambiguous",
+    ] = "warrant-defensibility-contested"
+
     clar_draft = Clarification(
         id="c-" + "0" * 16,
         status="open",
+        kind=_clar_kind,
         raised_at=now,
         raised_by=raised_by,
         raised_by_activity=activity,
@@ -949,7 +962,7 @@ def _raise_clarification(
         resolution=None,
         raised_provenance_id="p-" + "0" * 16,
         resolved_provenance_id=None,
-        schema_version=1,
+        schema_version=2,
     )
     clar_id = compute_id(clar_draft)
 

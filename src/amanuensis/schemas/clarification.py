@@ -54,6 +54,11 @@ class Clarification(BaseModel):
 
     id: str
     status: Literal["open", "resolved"]
+    kind: Literal[
+        "warrant-defensibility-contested",
+        "resolution-disputed",
+        "resolution-ambiguous",
+    ]
     raised_at: AwareDatetime
     raised_by: AgentAttribution
     raised_by_activity: str
@@ -70,4 +75,4 @@ class Clarification(BaseModel):
     raised_provenance_id: str
     resolved_provenance_id: str | None = None
 
-    schema_version: int = 1
+    schema_version: int = 2

@@ -94,3 +94,36 @@ def test_clarification_resolved_round_trip(
     rebuilt = Clarification(**obj.model_dump())
     assert rebuilt == obj
     assert rebuilt.resolved_provenance_id == "p-fixture00000099"
+
+
+def test_clarification_kind_warrant_defensibility(
+    clarification_payload: dict[str, Any],
+) -> None:
+    clarification_payload["kind"] = "warrant-defensibility-contested"
+    c = Clarification(**clarification_payload)
+    assert c.kind == "warrant-defensibility-contested"
+    assert c.schema_version == 2
+
+
+def test_clarification_kind_resolution_disputed(
+    clarification_payload: dict[str, Any],
+) -> None:
+    clarification_payload["kind"] = "resolution-disputed"
+    c = Clarification(**clarification_payload)
+    assert c.kind == "resolution-disputed"
+
+
+def test_clarification_kind_resolution_ambiguous(
+    clarification_payload: dict[str, Any],
+) -> None:
+    clarification_payload["kind"] = "resolution-ambiguous"
+    c = Clarification(**clarification_payload)
+    assert c.kind == "resolution-ambiguous"
+
+
+def test_clarification_kind_required(
+    clarification_payload: dict[str, Any],
+) -> None:
+    clarification_payload.pop("kind", None)
+    with pytest.raises(ValidationError):
+        Clarification(**clarification_payload)

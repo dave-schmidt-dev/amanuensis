@@ -151,6 +151,7 @@ def clarification_payload(agent: AgentAttribution) -> dict[str, Any]:
     return {
         "id": "c-fixture00000001",
         "status": "open",
+        "kind": "warrant-defensibility-contested",
         "raised_at": datetime(2026, 5, 29, 12, 5, 0, tzinfo=UTC),
         "raised_by": agent,
         "raised_by_activity": "audit_v1",
@@ -162,7 +163,7 @@ def clarification_payload(agent: AgentAttribution) -> dict[str, Any]:
         "resolution": None,
         "raised_provenance_id": "p-fixture00000002",
         "resolved_provenance_id": None,
-        "schema_version": 1,
+        "schema_version": 2,
     }
 
 
