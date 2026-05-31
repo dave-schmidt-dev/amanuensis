@@ -38,6 +38,8 @@ from amanuensis.schemas import (
     AgentAttribution,
     EntitySupersede,
     ProvenanceRecord,
+    Resolution,
+    ResolutionSupersede,
     RoleAttribution,
     compute_id,
 )
@@ -979,20 +981,325 @@ def entity_merge_command(
 
 
 # ---------------------------------------------------------------------------
-# resolution sub-commands (stubs — T7.8-T7.9)
+# resolution sub-commands (T7.7, T7.8)
 # ---------------------------------------------------------------------------
 
 
 @resolution_app.command("show")
-def resolution_show_command() -> None:
-    """Show a resolution record (stub; T7.8)."""
-    typer.echo("TODO: show")
+@require_marker
+def resolution_show_command(
+    resolution_id: Annotated[
+        str,
+        typer.Argument(help="Resolution id (e.g. j-<hash>)."),
+    ],
+    workspace: Annotated[
+        Path | None,
+        typer.Option(
+            "--workspace",
+            "-w",
+            help="Workspace root (must contain amanuensis.yaml). Defaults to CWD.",
+        ),
+    ] = None,
+) -> None:
+    """Print a resolution record's YAML + supersede chain + latest-for-triple (read-only; T7.7)."""
+    workspace_path = workspace_from_kwargs({"workspace": workspace})
+    substrate = Substrate(workspace_path)
+
+    from amanuensis.fs._errors import SubstrateNotFound
+
+    try:
+        r = substrate.get_resolution(resolution_id)
+    except SubstrateNotFound as exc:
+        typer.secho(
+            f"resolution '{resolution_id}' not found in mappings/resolutions/",
+            err=True,
+        )
+        raise typer.Exit(code=1) from exc
+
+    # Print raw YAML body verbatim.
+    typer.echo(substrate.resolution_path(resolution_id).read_text(encoding="utf-8"), nl=False)
+
+    # Supersede chain section.
+    typer.echo("\n## Supersede chain")
+    chain_entries: list[str] = []
+    for record in substrate.list_supersedes(kind="resolution"):
+        if not isinstance(record, ResolutionSupersede):
+            continue
+        if record.superseded_resolution_id == resolution_id:
+            chain_entries.append(
+                f"superseded by {record.id} → resolution {record.replacement_resolution_id}"
+                f" (reason: {record.reason})"
+            )
+        if record.replacement_resolution_id == resolution_id:
+            chain_entries.append(
+                f"supersedes {record.superseded_resolution_id} (reason: {record.reason})"
+            )
+    if chain_entries:
+        for entry in chain_entries:
+            typer.echo(entry)
+    else:
+        typer.echo("(no supersede chain)")
+
+    # Latest-for-triple section.
+    typer.echo("\n## Latest for triple")
+    latest = substrate.latest_resolution_for(r.source_id, r.atom_id, r.operand_index)
+    if latest is not None and latest.id == resolution_id:
+        typer.echo("(this resolution is the latest for its triple)")
+    else:
+        latest_id = latest.id if latest is not None else "(none)"
+        typer.echo(
+            f"Latest for triple ({r.source_id}, {r.atom_id}, {r.operand_index}): {latest_id}"
+        )
 
 
 @resolution_app.command("supersede")
-def resolution_supersede_command() -> None:
-    """Supersede a resolution record (stub; T7.9)."""
-    typer.echo("TODO: supersede")
+@require_marker
+def resolution_supersede_command(
+    old_id: Annotated[
+        str,
+        typer.Argument(help="Resolution id to supersede (e.g. j-<hash>)."),
+    ],
+    new_entity: Annotated[
+        str,
+        typer.Option(
+            "--new-entity",
+            help="Entity id the new resolution will point at.",
+        ),
+    ],
+    reason: Annotated[
+        str,
+        typer.Option(
+            "--reason",
+            help="Human-readable reason for the correction.",
+        ),
+    ],
+    actor: Annotated[
+        str,
+        typer.Option(
+            "--actor",
+            help="Identifier of the human performing the correction.",
+        ),
+    ] = "cli",
+    confidence: Annotated[
+        str,
+        typer.Option(
+            "--confidence",
+            help="Confidence level for the new resolution (high/medium/low).",
+        ),
+    ] = "high",
+    dry_run: Annotated[
+        bool,
+        typer.Option(
+            "--dry-run",
+            help="Print what would be written without making any changes.",
+        ),
+    ] = False,
+    workspace: Annotated[
+        Path | None,
+        typer.Option(
+            "--workspace",
+            "-w",
+            help="Workspace root (must contain amanuensis.yaml). Defaults to CWD.",
+        ),
+    ] = None,
+) -> None:
+    """Supersede a resolution, writing a new Resolution + ResolutionSupersede record (T7.8).
+
+    Acquires workspace flock for the duration of the write.
+    Supports --dry-run (no writes).
+    """
+    from typing import Literal, cast
+
+    workspace_path = workspace_from_kwargs({"workspace": workspace})
+    substrate = Substrate(workspace_path)
+
+    from amanuensis.dispatch.reconcile import (
+        _stable_role_attribution_at,  # pyright: ignore[reportPrivateUsage]
+    )
+    from amanuensis.fs._errors import SubstrateNotFound
+
+    # Validate confidence value.
+    if confidence not in {"high", "medium", "low"}:
+        typer.secho(
+            f"--confidence must be one of high/medium/low, got '{confidence}'",
+            err=True,
+        )
+        raise typer.Exit(code=2)
+    confidence_lit = cast("Literal['high', 'medium', 'low']", confidence)
+
+    # Validate old-id exists.
+    try:
+        old_res = substrate.get_resolution(old_id)
+    except SubstrateNotFound as exc:
+        typer.secho(
+            f"resolution '{old_id}' not found in mappings/resolutions/",
+            err=True,
+        )
+        raise typer.Exit(code=1) from exc
+
+    # Validate new-entity exists.
+    if not substrate.entity_path(new_entity).is_file():
+        typer.secho(
+            f"entity '{new_entity}' not found in mappings/entities/",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+    # Validate old-id is the latest for its triple.
+    latest = substrate.latest_resolution_for(
+        old_res.source_id, old_res.atom_id, old_res.operand_index
+    )
+    if latest is not None and latest.id != old_id:
+        typer.secho(
+            f"resolution '{old_id}' is already superseded by '{latest.id}'; "
+            "supersede the latest in the chain",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+    now = datetime.now(UTC)
+    agent = AgentAttribution(kind="human", identifier=actor, role="human_supervisor")
+
+    # Derive stable_at for the new resolution's role_attribution.
+    stable_hash_input = old_id + new_entity + reason
+    stable_at = _stable_role_attribution_at(stable_hash_input)
+
+    # Build new Resolution.
+    new_res_draft = Resolution(
+        id="j-" + "0" * 16,
+        source_id=old_res.source_id,
+        atom_id=old_res.atom_id,
+        operand_index=old_res.operand_index,
+        entity_id=new_entity,
+        confidence=confidence_lit,
+        basis="supervisor correction via amanuensis map resolution supersede",
+        provenance_id="p-" + "0" * 16,
+        role_attributions=[RoleAttribution(agent=agent, activity="supersede", at=stable_at)],
+        schema_version=1,
+    )
+    new_res_id = compute_id(new_res_draft)
+
+    # Build ProvenanceRecord for the new Resolution.
+    res_prov_draft = ProvenanceRecord(
+        id="p-" + "0" * 16,
+        entity_type="resolution",
+        entity_id=new_res_id,
+        activity="resolution-supersede",
+        activity_started_at=now,
+        activity_ended_at=now,
+        used_entity_ids=[new_entity],
+        was_attributed_to=agent,
+        was_influenced_by=[],
+        schema_version=1,
+    )
+    res_prov_id = compute_id(res_prov_draft)
+    res_prov = res_prov_draft.model_copy(update={"id": res_prov_id})
+    new_res = new_res_draft.model_copy(update={"id": new_res_id, "provenance_id": res_prov_id})
+
+    # Build ResolutionSupersede.
+    rs_draft = ResolutionSupersede(
+        id="s-" + "0" * 16,
+        superseded_resolution_id=old_id,
+        replacement_resolution_id=new_res_id,
+        reason=reason,
+        provenance_id="p-" + "0" * 16,
+        role_attributions=[RoleAttribution(agent=agent, activity="superseded", at=now)],
+        schema_version=1,
+    )
+    rs_id = compute_id(rs_draft)
+
+    # Build ProvenanceRecord for the ResolutionSupersede.
+    rs_prov_draft = ProvenanceRecord(
+        id="p-" + "0" * 16,
+        entity_type="resolution-supersede",
+        entity_id=rs_id,
+        activity="resolution-supersede",
+        activity_started_at=now,
+        activity_ended_at=now,
+        used_entity_ids=[],
+        was_attributed_to=agent,
+        was_influenced_by=[],
+        schema_version=1,
+    )
+    rs_prov_id = compute_id(rs_prov_draft)
+    rs_prov = rs_prov_draft.model_copy(update={"id": rs_prov_id})
+    rs = rs_draft.model_copy(update={"id": rs_id, "provenance_id": rs_prov_id})
+
+    # --- Dry-run: print what would be written --------------------------
+    if dry_run:
+        typer.echo("[dry-run] No writes will be made.")
+        typer.echo(f"Would write new Resolution: {new_res_id}")
+        typer.echo(serialize_yaml(new_res))
+        typer.echo(f"Would write ResolutionSupersede: {rs_id}")
+        typer.echo(serialize_yaml(rs))
+        latest_after = new_res_id  # the new resolution would be the latest
+        typer.echo(
+            f"Resulting latest for triple ({old_res.source_id}, {old_res.atom_id}, "
+            f"{old_res.operand_index}): {latest_after}"
+        )
+        return
+
+    # --- Mutating path: acquire flock and write ------------------------
+    try:
+        with acquire_workspace_lock(workspace_path, timeout=5.0):
+            substrate_changes: list[str] = []
+
+            # Write the ResolutionSupersede FIRST so that add_resolution's
+            # duplicate-triple guard (latest_resolution_for) sees the old
+            # resolution as already superseded and allows the new one.
+            rs_prov_path = substrate.mappings_provenance_path(rs_prov.id)
+            atomic_write_text(rs_prov_path, serialize_yaml(rs_prov))
+            substrate_changes.append(str(rs_prov_path.relative_to(workspace_path)))
+
+            substrate.add_resolution_supersede(rs)
+            rs_path = substrate.supersede_path(rs.id)
+            substrate_changes.append(str(rs_path.relative_to(workspace_path)))
+
+            # Now write the new Resolution (the supersede chain is in place).
+            res_prov_path = substrate.mappings_provenance_path(res_prov.id)
+            atomic_write_text(res_prov_path, serialize_yaml(res_prov))
+            substrate_changes.append(str(res_prov_path.relative_to(workspace_path)))
+
+            substrate.add_resolution(new_res)
+            new_res_path = substrate.resolution_path(new_res.id)
+            substrate_changes.append(str(new_res_path.relative_to(workspace_path)))
+
+            # Compute inputs_hash for the replay-log entry.
+            inputs_payload = json.dumps(
+                {
+                    "confidence": confidence,
+                    "new_entity": new_entity,
+                    "old_id": old_id,
+                    "reason": reason,
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+            inputs_hash = hashlib.sha256(inputs_payload).hexdigest()
+
+            actor_attr = AgentAttribution(kind="human", identifier=actor, role="human_supervisor")
+            ReplayLog.for_mappings(workspace_path).append(
+                actor=actor_attr,
+                activity="resolution-supersede",
+                inputs_hash=inputs_hash,
+                outputs_hash=inputs_hash,
+                cache_hit=False,
+                substrate_changes=substrate_changes,
+                duration_seconds=0.0,
+                _lock_held=True,
+            )
+
+    except WorkspaceLockTimeout as exc:
+        typer.secho(
+            "workspace flock held by another process — wait or release .amanuensis-lock",
+            err=True,
+        )
+        raise typer.Exit(code=2) from exc
+
+    typer.echo(
+        f"Superseded resolution '{old_id}' → '{new_res_id}' (entity: {new_entity}). "
+        f"ResolutionSupersede id: {rs_id}"
+    )
 
 
 # ---------------------------------------------------------------------------

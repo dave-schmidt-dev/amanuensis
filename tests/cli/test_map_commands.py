@@ -1,5 +1,7 @@
 """Tests for the ``amanuensis map`` Typer sub-app."""
 
+# pyright: reportPrivateUsage=false
+
 from __future__ import annotations
 
 import json
@@ -353,3 +355,246 @@ def test_entity_merge_dry_run_no_writes(tmp_path: Path) -> None:
 def test_entity_merge_rejects_already_superseded(tmp_path: Path) -> None:
     """Already-superseded entity rejected without --force."""
     pytest.skip("TODO: 3-entity scaffold helper needed")
+
+
+# ---------------------------------------------------------------------------
+# T7.7: map resolution show tests
+# ---------------------------------------------------------------------------
+
+
+def test_map_resolution_show_not_found(tmp_path: Path) -> None:
+    workspace = _make_workspace(tmp_path)
+    res = runner.invoke(
+        app,
+        [
+            "map",
+            "resolution",
+            "show",
+            "j-" + "9" * 16,
+            "--workspace",
+            str(workspace),
+        ],
+    )
+    assert res.exit_code == 1
+    assert "not found" in (res.stdout + res.stderr).lower()
+
+
+def test_map_resolution_show_renders(tmp_path: Path) -> None:
+    """Show a planted resolution — full YAML + latest-for-triple section."""
+    workspace = _make_workspace(tmp_path)
+    # Plant an entity + resolution via _build_entity / _build_resolution.
+    from datetime import UTC, datetime
+
+    from amanuensis.dispatch.reconcile import (  # pyright: ignore[reportPrivateUsage]
+        _build_entity,
+        _build_resolution,
+    )
+    from amanuensis.fs import Substrate
+    from amanuensis.fs._atomic import atomic_write_text
+    from amanuensis.fs._serialize import serialize_yaml
+
+    substrate = Substrate(workspace)
+    now = datetime.now(UTC)
+    entity, eprov = _build_entity(
+        {"kind": "organization", "canonical_name": "ACME Corp", "aliases": []},
+        activity="map-resolve",
+        inputs_hash="a" * 64,
+        now=now,
+    )
+    atomic_write_text(substrate.mappings_provenance_path(eprov.id), serialize_yaml(eprov))
+    substrate.add_entity(entity)
+    resolution, rprov = _build_resolution(
+        {
+            "source_id": "src1",
+            "atom_id": "a-" + "0" * 16,
+            "operand_index": 0,
+            "confidence": "high",
+            "basis": "test",
+        },
+        entity_id=entity.id,
+        activity="map-resolve",
+        inputs_hash="a" * 64,
+        now=now,
+    )
+    atomic_write_text(substrate.mappings_provenance_path(rprov.id), serialize_yaml(rprov))
+    substrate.add_resolution(resolution)
+
+    res = runner.invoke(
+        app,
+        [
+            "map",
+            "resolution",
+            "show",
+            resolution.id,
+            "--workspace",
+            str(workspace),
+        ],
+    )
+    assert res.exit_code == 0, f"stdout={res.stdout!r} stderr={res.stderr!r}"
+    assert resolution.id in res.stdout
+    assert "Supersede chain" in res.stdout
+    assert "Latest for triple" in res.stdout
+    assert "(this resolution is the latest for its triple)" in res.stdout
+
+
+# ---------------------------------------------------------------------------
+# T7.8: map resolution supersede tests
+# ---------------------------------------------------------------------------
+
+
+def _plant_resolution(workspace: Path, *, hash_seed: str = "p") -> tuple[str, str]:
+    """Plant one entity + one resolution; return (entity_id, resolution_id)."""
+    from datetime import UTC, datetime
+
+    from amanuensis.dispatch.reconcile import (  # pyright: ignore[reportPrivateUsage]
+        _build_entity,
+        _build_resolution,
+    )
+    from amanuensis.fs import Substrate
+    from amanuensis.fs._atomic import atomic_write_text
+    from amanuensis.fs._serialize import serialize_yaml
+
+    substrate = Substrate(workspace)
+    now = datetime.now(UTC)
+    entity, eprov = _build_entity(
+        {"kind": "organization", "canonical_name": "ACME", "aliases": []},
+        activity="map-resolve",
+        inputs_hash=hash_seed * 64,
+        now=now,
+    )
+    atomic_write_text(substrate.mappings_provenance_path(eprov.id), serialize_yaml(eprov))
+    substrate.add_entity(entity)
+    resolution, rprov = _build_resolution(
+        {
+            "source_id": "src1",
+            "atom_id": "a-" + "0" * 16,
+            "operand_index": 0,
+            "confidence": "high",
+            "basis": "test",
+        },
+        entity_id=entity.id,
+        activity="map-resolve",
+        inputs_hash=hash_seed * 64,
+        now=now,
+    )
+    atomic_write_text(substrate.mappings_provenance_path(rprov.id), serialize_yaml(rprov))
+    substrate.add_resolution(resolution)
+    return entity.id, resolution.id
+
+
+def test_resolution_supersede_writes_records(tmp_path: Path) -> None:
+    workspace = _make_workspace(tmp_path)
+    _old_entity_id, old_resolution_id = _plant_resolution(workspace, hash_seed="r")
+    # Plant a second entity to redirect to.
+    from datetime import UTC, datetime
+
+    from amanuensis.dispatch.reconcile import _build_entity  # pyright: ignore[reportPrivateUsage]
+    from amanuensis.fs import Substrate
+    from amanuensis.fs._atomic import atomic_write_text
+    from amanuensis.fs._serialize import serialize_yaml
+
+    substrate = Substrate(workspace)
+    now = datetime.now(UTC)
+    new_entity, eprov = _build_entity(
+        {"kind": "organization", "canonical_name": "ACME Corp", "aliases": []},
+        activity="map-resolve",
+        inputs_hash="s" * 64,
+        now=now,
+    )
+    atomic_write_text(substrate.mappings_provenance_path(eprov.id), serialize_yaml(eprov))
+    substrate.add_entity(new_entity)
+
+    res = runner.invoke(
+        app,
+        [
+            "map",
+            "resolution",
+            "supersede",
+            old_resolution_id,
+            "--new-entity",
+            new_entity.id,
+            "--reason",
+            "wrong entity match",
+            "--workspace",
+            str(workspace),
+        ],
+    )
+    assert res.exit_code == 0, f"stdout={res.stdout!r} stderr={res.stderr!r}"
+    # New Resolution + ResolutionSupersede written.
+    resolution_files = list((workspace / "mappings" / "resolutions").glob("j-*.yaml"))
+    assert len(resolution_files) == 2  # old + new
+    supersede_files = list((workspace / "mappings" / "supersedes").glob("s-*.yaml"))
+    assert len(supersede_files) == 1
+
+
+def test_resolution_supersede_dry_run_no_writes(tmp_path: Path) -> None:
+    workspace = _make_workspace(tmp_path)
+    new_entity_id, old_resolution_id = _plant_resolution(workspace, hash_seed="t")
+    res = runner.invoke(
+        app,
+        [
+            "map",
+            "resolution",
+            "supersede",
+            old_resolution_id,
+            "--new-entity",
+            new_entity_id,
+            "--reason",
+            "x",
+            "--dry-run",
+            "--workspace",
+            str(workspace),
+        ],
+    )
+    assert res.exit_code == 0
+    assert "dry-run" in res.stdout.lower() or "would write" in res.stdout.lower()
+    # Still only 1 resolution + 0 supersedes.
+    resolution_files = list((workspace / "mappings" / "resolutions").glob("j-*.yaml"))
+    assert len(resolution_files) == 1
+    supersede_dir = workspace / "mappings" / "supersedes"
+    if supersede_dir.is_dir():
+        assert list(supersede_dir.glob("s-*.yaml")) == []
+
+
+def test_resolution_supersede_unknown_old_id(tmp_path: Path) -> None:
+    workspace = _make_workspace(tmp_path)
+    new_entity_id, _ = _plant_resolution(workspace, hash_seed="u")
+    res = runner.invoke(
+        app,
+        [
+            "map",
+            "resolution",
+            "supersede",
+            "j-" + "9" * 16,
+            "--new-entity",
+            new_entity_id,
+            "--reason",
+            "x",
+            "--workspace",
+            str(workspace),
+        ],
+    )
+    assert res.exit_code == 1
+    assert "not found" in (res.stdout + res.stderr).lower()
+
+
+def test_resolution_supersede_unknown_new_entity(tmp_path: Path) -> None:
+    workspace = _make_workspace(tmp_path)
+    _, old_resolution_id = _plant_resolution(workspace, hash_seed="v")
+    res = runner.invoke(
+        app,
+        [
+            "map",
+            "resolution",
+            "supersede",
+            old_resolution_id,
+            "--new-entity",
+            "e-" + "9" * 16,
+            "--reason",
+            "x",
+            "--workspace",
+            str(workspace),
+        ],
+    )
+    assert res.exit_code == 1
+    assert "not found" in (res.stdout + res.stderr).lower()
