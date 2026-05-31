@@ -32,23 +32,24 @@ Prior plan: `~/Documents/Projects/.plans/amanuensis/phase1-distill-foundation-20
 ## Upcoming phases
 
 - [in progress] **Phase 2a (Resolve) — M1+M2+M3+M4+M5+M6 SHIPPED 2026-05-31;
-  M7–M11 remain (38 tasks).** M1 (12 tasks, schema foundation) +
+  M7 wave 1+2 (T7.1–T7.6) shipped 2026-05-31; M7 wave 3+ remain.**
+  M1 (12 tasks, schema foundation) +
   M2 (5 tasks, entity-kind vocabulary) + M3 (11 tasks, substrate
   API extensions) + M4 (3 tasks, INV-9+INV-2 executable gates) +
   M5 (5 tasks, map_resolve/map_audit skills) + M6 (8 tasks,
-  dispatch+reconcile extension for map roles) = 44 of 82 tasks done.
-  Heavy parallelism via subagent waves; combined spec+code-quality
-  reviewer per task. Real defects caught in review and fixed
-  inline across milestones: T1.8 hash-corrupting v1 `kind` injection
-  in `_serialize.py`; T1.10 frontmatter `find("---")` mid-content
-  bug; M3 implementer's `from conftest import`; M6 nested-lock
-  deadlock in `ReplayLog.append`; M6 over-strict `_MAP_ROLE_RE`
-  regex; M6 missing `_non_empty_kind` validator on Entity; M6
-  `role_attribution.at` timestamp drift breaking idempotency
-  (fixed via deterministic `_stable_role_attribution_at` derived
-  from `inputs_hash`). 633 fast tests + 3 integration tests pass;
-  pyright strict + ruff clean. Next action: continue with M7 (CLI
-  map family — `amanuensis map ...` Typer sub-app, 13 tasks).
+  dispatch+reconcile extension for map roles) + M7 T7.1–T7.6 (map
+  CLI: sub-app skeleton, orchestrator, preflight, status, entity
+  list/show/merge) = 50 of 82 tasks done. Defects caught: T1.8
+  hash-corrupting v1 `kind` injection in `_serialize.py`; T1.10
+  frontmatter `find("---")` mid-content bug; M3 implementer's `from
+  conftest import`; M6 nested-lock deadlock in `ReplayLog.append`;
+  M6 over-strict `_MAP_ROLE_RE` regex; M6 missing `_non_empty_kind`
+  validator on Entity; M6 `role_attribution.at` timestamp drift
+  breaking idempotency (fixed via deterministic
+  `_stable_role_attribution_at` derived from `inputs_hash`).
+  86 fast tests + 3 integration tests pass; pyright strict + ruff
+  clean. Next action: M7 wave 3 (T7.7–T7.10: resolution show/
+  supersede, vocabulary show/snapshot).
 - [pending] Phase 2b (Connect) — cross-doc support/attack edges built
   on Phase 2a's resolved entities. Full brainstorm cycle required;
   blocked on 2a implementation.
