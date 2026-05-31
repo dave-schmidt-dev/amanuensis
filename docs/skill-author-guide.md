@@ -315,21 +315,7 @@ returns `(frontmatter_dict, body)`. Use this helper (rather than
 re-implementing the split) in any new code that loads skill files; the
 test module uses an equivalent inline implementation for isolation.
 
-## Cross-links
-
-- [`docs/architecture.md`](./architecture.md) — system architecture
-  and the surrounding component map.
-- [`docs/cli-reference.md`](./cli-reference.md) — `amanuensis distill`
-  and `amanuensis install-skills` command details, including harness
-  detection.
-- [`INVARIANTS.md`](../INVARIANTS.md) — INV-1 (marker), INV-3
-  (provenance by construction), INV-4 (determinism boundary), INV-5
-  (closed vocabulary), INV-6 (`scale_anchor`), INV-7 (citation
-  four-tuple), INV-8 (substrate is the source of truth).
-- [`tests/skills/test_skill_frontmatter.py`](../tests/skills/test_skill_frontmatter.py)
-  — the parametric frontmatter gate.
-
-## Known limitations
+## Known Limitations
 
 - Stubs are Phase 1 placeholders for Phase 2 roles; activating one
   requires a code + test + plan iteration (not just a frontmatter
@@ -347,3 +333,21 @@ test module uses an equivalent inline implementation for isolation.
 - `amanuensis install-skills` is a copy, not a symlink. Editing a
   shipped skill in-tree does not propagate to installed harness skill
   directories until you re-run `amanuensis install-skills`.
+
+## See also
+
+- [`architecture.md`](./architecture.md) — system architecture and the
+  surrounding component map; the dispatch driver section explains how
+  skills are routed to harness CLIs.
+- [`cli-reference.md`](./cli-reference.md) — `amanuensis distill` and
+  `amanuensis install-skills` command details, including harness
+  detection.
+- [`supervision-protocol.md`](./supervision-protocol.md) — how a
+  supervisor exercises the role contracts described here in the
+  canonical end-to-end run.
+- [`../INVARIANTS.md`](../INVARIANTS.md) — INV-1 (marker), INV-3
+  (provenance by construction), INV-4 (determinism boundary), INV-5
+  (closed vocabulary), INV-6 (`scale_anchor`), INV-7 (citation
+  four-tuple), INV-8 (substrate is the source of truth).
+- [`../tests/skills/test_skill_frontmatter.py`](../tests/skills/test_skill_frontmatter.py)
+  — the parametric frontmatter gate.

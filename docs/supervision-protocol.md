@@ -222,9 +222,9 @@ validate`, `clarification list`, `iteration list`, `vocabulary list`,
 they are safe to run concurrently with any mutating operation, and
 their output is a snapshot of substrate state at read time.
 
-## What this protocol does NOT yet provide
+## Known Limitations
 
-Known limitations as of M8.10:
+What this protocol does NOT yet provide, as of M8.10:
 
 - **No multi-supervisor coordination.** A workspace assumes a single
   human supervisor at a time. Multiple supervisors editing the same
@@ -235,7 +235,8 @@ Known limitations as of M8.10:
 - **No redaction-aware ingest.** The source-mirror captures every
   paragraph including any sensitive text. Filing the source PDF
   safely — disk encryption, access controls, retention policy — is the
-  supervisor's responsibility.
+  supervisor's responsibility. Redaction support is a Phase 2
+  candidate.
 - **No automated iteration-directive consumption.** Directives are
   recorded with full PROV but the distill orchestrator does not yet
   read pending directives on subsequent runs. Open follow-up; until it
@@ -244,24 +245,24 @@ Known limitations as of M8.10:
 - **Dispatch driver runs harness CLIs via subprocess.** In-process LLM
   SDK invocation (calling `anthropic` / `openai` client libraries
   directly) is out of scope for Phase 1; the subprocess boundary is
-  what makes the write-isolation contract enforceable
-  (`skill-author-guide.md` § "Write-isolation contract").
+  what makes the write-isolation contract enforceable. See
+  [`skill-author-guide.md`](./skill-author-guide.md#write-isolation-contract).
 - **`amanuensis export` is the M9.1 stub.** A single self-contained
   HTML file is the entire delivery surface in Phase 1. The full
   audit-HTML bundle, prose-report rendering, and render-time policy
   gates are Phase 4.
 
-## Cross-links
+## See also
 
-- [`docs/architecture.md`](./architecture.md) — system architecture
-  and component map.
-- [`docs/cli-reference.md`](./cli-reference.md) — per-command
-  reference for the 13-command CLI surface.
-- [`docs/skill-author-guide.md`](./skill-author-guide.md) — role
-  contracts, frontmatter, dispatch queue protocol, write-isolation.
-- [`INVARIANTS.md`](../INVARIANTS.md) — especially INV-1 (marker),
+- [`architecture.md`](./architecture.md) — system architecture and
+  component map.
+- [`cli-reference.md`](./cli-reference.md) — per-command reference for
+  the CLI surface invoked throughout the canonical run.
+- [`skill-author-guide.md`](./skill-author-guide.md) — role contracts,
+  frontmatter, dispatch queue protocol, write-isolation.
+- [`../INVARIANTS.md`](../INVARIANTS.md) — especially INV-1 (marker),
   INV-3 (provenance by construction), INV-4 (determinism boundary),
   and INV-8 (substrate is the source of truth).
-- [`tests/integration/test_distill_tiny_fixture.py`](../tests/integration/test_distill_tiny_fixture.py)
+- [`../tests/integration/test_distill_tiny_fixture.py`](../tests/integration/test_distill_tiny_fixture.py)
   — the end-to-end integration test for the happy path described
   above.

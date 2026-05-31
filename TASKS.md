@@ -168,13 +168,21 @@ Synthesis record: `~/Documents/Projects/.plans/amanuensis/phase1-distill-foundat
     export <source-id> --format static-html --output PATH`
     produces a self-contained HTML file (no CDN; pure f-string
     rendering; `</script` injection defense; 0644 mode).
-  - M10 (Documentation polish, 1 task) — **IN PROGRESS**.
-    M10.1 (cross-link sweep + Known Limitations review): now
-    unblocked (needs M7.7 + M8.10).
+  - M10 (Documentation polish, 1 task) — **DONE**. Cross-link
+    sweep + Known Limitations review; tests/docs/test_cross_links.py
+    enforces both. 11 new tests.
   - M11 (INVARIANT CI gate + final validation, 3 tasks) — **IN
-    PROGRESS**. M11.1 (CI workflow) now unblocked. M11.2
-    (manual e2e on legal-pleading fixture) needs M11.1; M11.3
-    (final docs sync + invariant-gate verifier) needs M11.2.
+    PROGRESS** (1/3).
+    - M11.1 (CI workflow): **DONE**. .github/workflows/ci.yml
+      gates lint + typecheck + dead-code + pytest + invariants
+      + e2e on Ubuntu 24.04 / Python 3.12. Lockfile caveat
+      (uv.lock currently gitignored) documented inline.
+    - M11.2 (manual e2e on legal-pleading fixture): pending.
+      Requires real LLM dispatch via a harness CLI; the M7.5
+      integration test already covers the synthetic-output
+      structural happy path against the same DOJ brief.
+    - M11.3 (final docs sync + invariant gate-test verifier):
+      pending. Needs M11.2.
 
 ## Upcoming phases
 

@@ -581,7 +581,37 @@ content-addressable id. `compute_id()` rejects all four with a
 
 ---
 
-## References
+## Known Limitations
+
+- **No automated schema-version migration.** Every Pydantic model
+  carries a `schema_version: int` field (default `1`); changing the
+  on-disk shape of a record bumps that integer, but there is no
+  registered migration runner that walks a workspace and rewrites
+  records. A migration tool is a Phase 2 candidate.
+- **`Atom.section_path` and `Atom.operands[].value` are free-form
+  strings.** Phase 1 does not normalize entity references across
+  documents; Phase 2 (Map) introduces the entity-resolution layer that
+  populates a canonical entity registry from these strings. See
+  [INV-9](../INVARIANTS.md#inv-9--cross-document-reasoning-is-phase-2s-job-not-phase-1s).
+- **8-byte truncation of SHA-256 content-addressable ids.** Roughly
+  `2^32` records before the birthday-collision probability approaches
+  50% — comfortably above realistic single-engagement corpora. Sweeping
+  fixture corpora certifies zero collisions; a production collision is
+  a governance event (lengthen truncation, re-canonicalize, version the
+  id scheme).
+- **No retrofit path for legacy / partial provenance.** INV-3
+  (provenance by construction) makes retrofitted PROV records
+  un-mintable: every substrate-creating event must produce the PROV
+  record at the moment of creation. Importing pre-existing artifacts
+  with synthetic provenance is intentionally out of scope.
+- **Vocabulary registry edits between distillations do not retroactively
+  propagate.** INV-10 pins the per-distillation snapshot; this is the
+  intent. Migrating an existing distillation to a newer vocabulary
+  requires re-ingest (Phase 2 may add a re-snapshot tool).
+
+---
+
+## See also
 
 - [`architecture.md`](./architecture.md) — system-level architecture
   (substrate-as-truth, three surfaces, determinism boundary,

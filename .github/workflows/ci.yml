@@ -1,0 +1,112 @@
+# M11.1 — CI gate for amanuensis.
+#
+# Runs the full quality gate on every push and pull request:
+#   ruff (lint + format) -> pyright (strict) -> vulture (dead code)
+#   -> pytest (unit/integration) -> pytest -m invariants (REQUIRED gate)
+#   -> Playwright E2E (pytest -m e2e shells `npx playwright test`).
+#
+# Lockfile dependency (intentional, documented):
+#   `uv sync --frozen` requires `uv.lock` to be present in the checked-out
+#   tree. As of M11.1, `uv.lock` is listed in `.gitignore`, so CI will
+#   fail at the sync step with a clear error until that policy decision
+#   is reversed. Fix:
+#       uv lock && git add -f uv.lock && git commit
+#   (and remove `uv.lock` from `.gitignore`). M11.1 ships the gate; the
+#   lockfile-commit decision is left to the orchestrator.
+#
+# Determinism notes:
+#   - Runner is pinned to `ubuntu-24.04`, NOT `ubuntu-latest`, so the
+#     image doesn't auto-promote underneath us.
+#   - Action versions are pinned to majors (`@v4`, `@v5`, `@v3`) — fine
+#     for now; tighten to SHAs if/when supply-chain hardening is in scope.
+#   - The macOS `chflags nohidden` self-heal pattern from local dev is
+#     NOT replicated here: `chflags` doesn't exist on Linux and the
+#     hidden-flag issue was a macOS Finder/Spotlight artifact only.
+#
+# Workflow-injection safety:
+#   No untrusted event fields (issue/PR title, commit message, head_ref,
+#   etc.) are interpolated into `run:` steps. The only `${{ ... }}`
+#   expansions are `github.ref` (concurrency key, not shell-evaluated)
+#   and `matrix.python-version` (literal pinned to "3.12").
+
+name: CI
+
+on:
+  push:
+    branches:
+      - "**"
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: test (py${{ matrix.python-version }})
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12"]
+
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+
+      - name: setup python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "0.4.30"
+
+      - name: uv sync --frozen (lockfile required)
+        run: uv sync --frozen
+
+      - name: "ruff: lint"
+        run: uv run ruff check .
+
+      - name: "ruff: format check"
+        run: uv run ruff format --check .
+
+      - name: "pyright: strict mode"
+        run: uv run pyright
+
+      - name: "vulture: dead code (min confidence 80)"
+        run: uv run vulture src --min-confidence 80
+
+      - name: "pytest: unit + integration suite"
+        run: uv run pytest -q -m "not invariants and not e2e"
+
+      - name: "pytest: invariants gate (required)"
+        run: uv run pytest -m invariants -q
+
+      - name: setup node 20 (for playwright)
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: "playwright: npm ci"
+        working-directory: tests/e2e
+        run: npm ci
+
+      - name: "playwright: install browsers"
+        working-directory: tests/e2e
+        run: npx playwright install --with-deps chromium
+
+      - name: "pytest: e2e gate"
+        id: e2e
+        run: uv run pytest -m e2e -q
+
+      - name: upload playwright report (on failure)
+        if: failure() && steps.e2e.conclusion == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: tests/e2e/playwright-report/
+          if-no-files-found: ignore
+          retention-days: 14

@@ -1254,3 +1254,39 @@ Format: dated entries, newest first. Bug entries cite the area touched:
     tests/e2e/test_playwright_runs.py,
     tests/e2e/README.md, tests/e2e/.gitignore,
     tests/e2e/fixtures/.gitignore
+- M10.1+M11.1 — fifth parallel wave (2 subagents). M10 (docs
+  polish) and M11.1 (CI workflow) both done.
+  - **M10.1** (cross-link sweep + Known Limitations review):
+    swept every `docs/*.md`; ensured each carries a `## Known
+    Limitations` section (matching `r"^#{1,3}\s+Known\s+
+    [Ll]imitations\b"`) and a `## See also` cross-link block.
+    Removed stale milestone-status limits in `cli-reference.md`
+    (`distill`/`dispatch`/`reconcile`/`export` now exist as
+    commands). New `tests/docs/test_cross_links.py` (11 cases):
+    walks every `.md` link, dereferences relative paths (strips
+    `#anchor`), skips external URLs, asserts no dead links, and
+    asserts each doc has a Known Limitations header.
+  - **M11.1** (CI workflow): `.github/workflows/ci.yml` (112
+    lines) gates push + pull_request on ubuntu-24.04 + Python
+    3.12. Steps: checkout → setup-python → setup-uv (pinned
+    0.4.30) → uv sync --frozen → ruff lint → ruff format check
+    → pyright strict → vulture (min-confidence 80) → pytest
+    unit+integration → pytest invariants gate (REQUIRED, explicit
+    step) → setup-node 20 → npm ci → playwright install
+    --with-deps chromium → pytest e2e gate → upload playwright-
+    report on failure. Concurrency: `ci-${{ github.ref }}` with
+    `cancel-in-progress`. No `chflags` step (macOS-only quirk;
+    runner is Ubuntu).
+  - **Lockfile caveat** (M11.1): `uv.lock` is currently gitignored
+    + not in the working tree, so `uv sync --frozen` will fail on
+    the first CI run with a clear error. Fix path documented in
+    the workflow's top-of-file comment: `uv lock && git add -f
+    uv.lock && git commit` + remove from `.gitignore`. Per task
+    scope M11.1 did NOT modify `.gitignore` or commit a lockfile —
+    flagged for the orchestrator's final docs sync (M11.3).
+  - 11 new tests; 477 total pass. Pyright + ruff + ruff-format
+    + vulture all clean. | files: docs/architecture.md,
+    docs/cli-reference.md, docs/schema-reference.md,
+    docs/skill-author-guide.md, docs/supervision-protocol.md,
+    tests/docs/__init__.py, tests/docs/test_cross_links.py,
+    .github/workflows/ci.yml

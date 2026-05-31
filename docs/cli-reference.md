@@ -307,20 +307,32 @@ amanuensis install-skills [--harness HARNESS]
 | `1` | Command body error (validator failure, missing atom, missing snapshot, ingest failure, etc.). |
 | `2` | Preflight / usage failure — most often the INV-1 marker check (`amanuensis.yaml` missing) or an unknown enum value rejected by Typer before the command body runs. |
 
-## Known limitations
+## Known Limitations
 
-The CLI surface is still landing milestone by milestone. As of M4.5:
+- **`install-skills` is a stub.** It detects installed harness CLIs and
+  reports the install location but writes no skill files. A future
+  milestone re-classifies the command as mutating once the production
+  install path lands.
+- **No interactive shell completion.** Typer would support shell
+  completion installation; it is not wired in Phase 1.
+- **No `--quiet` / `--verbose` flags.** Read-only commands emit a fixed
+  amount of stdout; mutating commands print one summary line. Verbosity
+  control is a Phase 2 candidate.
+- **`atom validate` does not invoke the `lineage_closure` validator.**
+  That validator operates over relations, not atoms; relation-level
+  validation gets its own CLI surface once relation ingest is wired.
+- **No `redact` command.** Redaction-aware ingest is out of scope for
+  Phase 1 (acknowledged); see
+  [`architecture.md`](./architecture.md#known-limitations).
 
-- `install-skills` is an M4.3 stub: it detects harnesses but does not
-  yet install skill files. M7.6 will finalise this command once M7.1
-  ships the six skill files.
-- No `distill`, `dispatch`, or `export` commands yet. They land in M7.3,
-  M6.5, and M9.1 respectively.
-- No web UI for supervision yet. The browser-based supervisor app is
-  M8.
-- The INV-4 read-only side is gated by
-  `tests/invariants/test_determinism_boundary.py`; the mutating-side
-  gate (cache + replay-log discipline for `init`, `ingest`,
-  `clarification resolve`, `iteration add`) arrives in M5.3.
+## See also
 
-This list grows as more milestones land.
+- [`architecture.md`](./architecture.md) — system architecture, the
+  three surfaces, the determinism boundary, module decomposition.
+- [`schema-reference.md`](./schema-reference.md) — per-record schemas
+  for every CLI input and output.
+- [`supervision-protocol.md`](./supervision-protocol.md) — how the CLI
+  commands compose into a supervised end-to-end run.
+- [`../INVARIANTS.md`](../INVARIANTS.md) — the invariants charter
+  (INV-1 marker, INV-4 determinism boundary, INV-10 vocabulary
+  pinning).

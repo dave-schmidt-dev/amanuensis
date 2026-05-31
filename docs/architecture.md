@@ -305,7 +305,7 @@ The substrate is a shared mutable resource. The discipline:
 | Cache write (`cache/<input-hash>.yaml`) | No | Idempotent by content addressing |
 
 The lock is `fcntl.flock` on `<workspace>/.amanuensis-lock`. POSIX-only
-(see [Known limitations](#known-limitations-phase-1)). The lock module
+(see [Known Limitations](#known-limitations)). The lock module
 refuses to flock a directory that lacks the `amanuensis.yaml` marker —
 defense-in-depth on INV-1 so a caller can't accidentally flock the
 wrong tree.
@@ -351,15 +351,44 @@ remaining modules are scheduled in M2–M9.
 
 ---
 
-## Known limitations (Phase 1)
+## Known Limitations
 
-These are deliberate scope cuts, not bugs.
+Phase 1 deliberate scope cuts, not bugs. The list mirrors the
+"acknowledged" items in the project's synthesis records
+(`synthesis/distillation-pipeline-architecture-2026-05-28.md` and
+`synthesis/verified-deliverable-workflow-architecture-2026-05-28.md`).
 
 - **Single document per distillation.** Multi-document reasoning
   (entity resolution across sources, cross-document support/attack
-  edges) is Phase 2 (Map). See [INV-9](../INVARIANTS.md#inv-9--cross-document-reasoning-is-phase-2s-job-not-phase-1s).
+  edges) is Phase 2 (Map). See
+  [INV-9](../INVARIANTS.md#inv-9--cross-document-reasoning-is-phase-2s-job-not-phase-1s).
 - **Single supervisor.** No multi-user concurrency; the live web app is
-  localhost-only.
+  localhost-only. Multi-supervisor coordination (identity-aware audit,
+  conflict resolution beyond the workspace flock's mutual exclusion) is
+  a Phase 4 candidate.
+- **No redaction-aware ingestion.** The source-mirror captures every
+  paragraph including sensitive text. Filing the source PDF safely is
+  the supervisor's responsibility. Redaction support is a Phase 2
+  candidate.
+- **In-process LLM SDK invocation is out of scope.** The dispatch
+  driver invokes harness CLIs (`claude`, `codex`, `cursor-agent`,
+  `gemini`) as subprocesses; the subprocess boundary is what makes the
+  write-isolation contract enforceable. Calling an `anthropic` /
+  `openai` client library directly is not supported in Phase 1.
+- **Iteration directive consumption is not yet automated.** Directives
+  are written with full PROV but the distill orchestrator does not yet
+  read pending directives on the next run. The supervisor must adjust
+  the next `amanuensis distill` invocation manually until a later
+  milestone wires consumption. See
+  [`supervision-protocol.md`](./supervision-protocol.md#3-iteration-directives).
+- **`amanuensis export` is a Phase-1 stub.** A single self-contained
+  HTML file is the entire delivery surface in Phase 1 (M9.1); the full
+  audit-HTML bundle, prose-report rendering, and render-time policy
+  gates are Phase 4.
+- **Cross-document reasoning is Phase 2's job.** Phase 1 emits
+  intra-document relations only; cross-document support/attack edges,
+  shared entity graphs, and probandum hierarchies spanning sources are
+  Phase 2 (Map) outputs.
 - **POSIX-only.** The workspace flock uses `fcntl.flock`. Windows
   support is out of scope for Phase 1.
 - **Python 3.12+ but `<3.14`.** Python 3.14's `site.py` change skips
@@ -375,17 +404,17 @@ These are deliberate scope cuts, not bugs.
 - **`ReplayLog.get_entry(seq)` is O(num_days).** Scans each day
   directory in turn. Acceptable for Phase 1 corpora; an index file is
   a candidate optimization.
-- **No redaction-aware ingestion.** Acknowledged from external review;
-  redaction support is a Phase 2 candidate.
 - **Generic vocabulary only.** Phase 1 ships a single generic
   vocabulary at `~/.amanuensis/vocabularies/generic/`. Domain-specific
   vocabularies (forensic-crypto, contract-review) are per-engagement
-  bootstrap. [INV-10](../INVARIANTS.md#inv-10--vocabulary-is-pinned-per-distillation)
+  bootstrap.
+  [INV-10](../INVARIANTS.md#inv-10--vocabulary-is-pinned-per-distillation)
   ensures per-distillation pinning regardless of which vocabulary is
   active at ingest.
 - **Three role stubs.** Contrarian / Constructive / Premortem skills
   exist as stubs (`stub: true` in frontmatter); the orchestrator skips
-  them. Only Extractor + Auditor run in Phase 1.
+  them. Only Extractor + Auditor run in Phase 1. See
+  [`skill-author-guide.md`](./skill-author-guide.md#the-stub-mechanism).
 - **Cytoscape graph soft cap of ~750 atoms / 2000 edges.** Above the
   cap, the relation graph falls back to a "view by section" mode where
   the supervisor selects a section path and the graph renders scoped
@@ -394,11 +423,19 @@ These are deliberate scope cuts, not bugs.
 
 ---
 
-## References
+## See also
 
+- [`cli-reference.md`](./cli-reference.md) — per-command reference for
+  the `amanuensis` console script (init / ingest / status / atom /
+  clarification / iteration / vocabulary / install-skills).
 - [`schema-reference.md`](./schema-reference.md) — per-model field
   documentation, canonical-form rules, content-addressable id
   algorithm, INVARIANTS enforcement points.
+- [`skill-author-guide.md`](./skill-author-guide.md) — skill file
+  format, dispatch queue protocol, write-isolation contract.
+- [`supervision-protocol.md`](./supervision-protocol.md) — the four
+  supervision surfaces (checkpoints, clarifications, iteration
+  directives, delivery gate) and the canonical end-to-end run.
 - [`../INVARIANTS.md`](../INVARIANTS.md) — the invariants charter
   (INV-1 through INV-10).
 - [`../amanuensis.yaml`](../amanuensis.yaml) — the project marker and
