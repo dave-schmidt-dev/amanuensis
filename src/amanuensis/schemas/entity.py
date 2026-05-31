@@ -88,3 +88,10 @@ class Entity(BaseModel):
         if not v.strip():
             raise ValueError("canonical_name must be non-empty")
         return v
+
+    @field_validator("kind")
+    @classmethod
+    def _non_empty_kind(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("kind must be non-empty")
+        return v

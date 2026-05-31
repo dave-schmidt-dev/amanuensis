@@ -55,14 +55,17 @@ review so a human resolving the clarification can navigate back.
 
 from __future__ import annotations
 
+import hashlib
+import re
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal, cast
 
 import yaml
 
 from amanuensis.fs import (
+    ReplayLog,
     Substrate,
     SubstrateNotFound,
     SubstrateSnapshotCorrupt,
@@ -72,9 +75,11 @@ from amanuensis.schemas import (
     AgentAttribution,
     Atom,
     Clarification,
+    Entity,
     OperandRef,
     ProvenanceRecord,
     Relation,
+    Resolution,
     RoleAttribution,
     Vocabulary,
     compute_id,
@@ -95,6 +100,13 @@ __all__ = ["ReconcileResult", "reconcile_outputs"]
 
 # Sentinel directory the gate moves consumed outputs under.
 _CONSUMED_DIRNAME: str = "_consumed"
+
+# Regex that matches map-* role output directory names.
+# Group 1 = role (map-resolve | map-audit), Group 2 = inputs hash.
+# Hash chars stay deliberately permissive (\w): production hashes are
+# [a-f0-9] from SHA-256 but synthetic test fixtures use arbitrary
+# repeated chars for visual identification.
+_MAP_ROLE_RE = re.compile(r"^(map-(?:resolve|audit))-(\w+)$")
 
 # ``raised_by_activity`` values that this module emits on Clarifications.
 # Since T1.8 the Clarification schema also has a ``kind`` discriminator
@@ -182,6 +194,7 @@ def reconcile_outputs(
                     role=role,
                     inputs_hash=inputs_hash,
                     substrate=substrate,
+                    workspace_root=workspace_root,
                     known_source_ids=known_source_ids,
                     vocab_cache=vocab_cache,
                     result=result,
@@ -241,10 +254,18 @@ def _iter_pending_outputs(outputs_root: Path) -> list[Path]:
 def _parse_output_dir_name(name: str) -> tuple[str, str]:
     """Split ``<role>-<hash>`` into ``(role, hash)``.
 
-    Roles do not contain hyphens in Phase 1 (extractor / auditor / ...),
-    so we split on the FIRST hyphen. Raises :class:`ValueError` for any
-    other shape so the iterator can skip non-output dirs.
+    Map roles (``map-resolve``, ``map-audit``) contain a hyphen in the role
+    name itself, so a naïve first-hyphen split would produce ``("map",
+    "resolve-<hash>")``. The regex branch handles them explicitly.
+    Single-component roles (extractor / auditor / ...) fall through to
+    the ``partition`` path.
+
+    Raises :class:`ValueError` for any shape that cannot be parsed, so
+    the iterator can skip non-output dirs.
     """
+    m = _MAP_ROLE_RE.match(name)
+    if m:
+        return m.group(1), m.group(2)
     if "-" not in name:
         raise ValueError(f"output dir name {name!r} has no hyphen")
     role, _, inputs_hash = name.partition("-")
@@ -281,6 +302,7 @@ def _process_one_output(
     role: str,
     inputs_hash: str,
     substrate: Substrate,
+    workspace_root: Path,
     known_source_ids: set[str],
     vocab_cache: dict[str, Vocabulary | None],
     result: ReconcileResult,
@@ -317,6 +339,21 @@ def _process_one_output(
         _process_auditor_output(
             payload=payload,
             substrate=substrate,
+            result=result,
+        )
+    elif role == "map-resolve":
+        _process_map_resolve_output(
+            payload=payload,
+            inputs_hash=inputs_hash,
+            substrate=substrate,
+            workspace_root=workspace_root,
+            result=result,
+        )
+    elif role == "map-audit":
+        _process_map_audit_output(
+            payload=payload,
+            substrate=substrate,
+            workspace_root=workspace_root,
             result=result,
         )
     else:
@@ -908,6 +945,386 @@ def _process_auditor_output(
             role="auditor",
         )
         result.clarifications_raised.append(clar_id)
+
+
+# --- Map-resolve path --------------------------------------------------
+
+
+def _process_map_resolve_output(
+    *,
+    payload: dict[str, Any],
+    inputs_hash: str,
+    substrate: Substrate,
+    workspace_root: Path,
+    result: ReconcileResult,
+) -> None:
+    """Reconcile one map-resolve output payload.
+
+    The resolver's ``proposals.yaml`` (surfaced here as ``payload``) carries:
+
+    - ``proposed_entities``: list of entity dicts.
+    - ``proposed_resolutions``: list of resolution dicts, each with an
+      ``entity_index`` back-ref into the ``proposed_entities`` list.
+
+    Each entity is written to ``mappings/entities/`` via
+    :meth:`Substrate.add_entity`; each resolution to
+    ``mappings/resolutions/`` via :meth:`Substrate.add_resolution`. A
+    single mappings-scope replay-log entry is appended recording every
+    path written.
+
+    Empty lists produce no substrate writes and a ``substrate_changes: []``
+    replay-log entry (SC-7 / R14 no-op contract).
+    """
+    proposed_entities = _as_list(payload.get("proposed_entities"))
+    proposed_resolutions = _as_list(payload.get("proposed_resolutions"))
+    substrate_changes: list[str] = []
+
+    # Build committed entities list (index → entity id) for resolution
+    # back-references.
+    committed_entity_ids: list[str] = []
+    now = datetime.now(UTC)
+
+    for raw_entity in proposed_entities:
+        if not isinstance(raw_entity, dict):
+            committed_entity_ids.append("")
+            continue
+        entity_dict: dict[str, Any] = cast("dict[str, Any]", raw_entity)
+        try:
+            entity, prov = _build_entity(
+                entity_dict, activity="map-resolve", inputs_hash=inputs_hash, now=now
+            )
+        except (ValueError, KeyError) as exc:
+            result.errors.append(
+                (Path("(in-memory-entity)"), f"entity-build failed: {exc}"),
+            )
+            committed_entity_ids.append("")
+            continue
+        # Write prov to mappings/provenance/.
+        prov_path = substrate.mappings_provenance_path(prov.id)
+        from amanuensis.fs._atomic import atomic_write_text
+        from amanuensis.fs._serialize import serialize_yaml
+
+        atomic_write_text(prov_path, serialize_yaml(prov))
+        substrate_changes.append(str(prov_path.relative_to(workspace_root)))
+        # Write entity (idempotent; immutable).
+        substrate.add_entity(entity)
+        committed_entity_ids.append(entity.id)
+        entity_path = substrate.entity_path(entity.id)
+        substrate_changes.append(str(entity_path.relative_to(workspace_root)))
+
+    for raw_res in proposed_resolutions:
+        if not isinstance(raw_res, dict):
+            continue
+        res_dict: dict[str, Any] = cast("dict[str, Any]", raw_res)
+        entity_index = res_dict.get("entity_index")
+        if (
+            not isinstance(entity_index, int)
+            or entity_index < 0
+            or entity_index >= len(committed_entity_ids)
+        ):
+            result.errors.append(
+                (Path("(in-memory-resolution)"), f"entity_index {entity_index!r} out of range"),
+            )
+            continue
+        entity_id = committed_entity_ids[entity_index]
+        if not entity_id:
+            # The entity failed to build; skip this resolution.
+            continue
+        try:
+            resolution, prov = _build_resolution(
+                res_dict,
+                entity_id=entity_id,
+                activity="map-resolve",
+                inputs_hash=inputs_hash,
+                now=now,
+            )
+        except (ValueError, KeyError) as exc:
+            result.errors.append(
+                (Path("(in-memory-resolution)"), f"resolution-build failed: {exc}"),
+            )
+            continue
+        from amanuensis.fs._atomic import atomic_write_text
+        from amanuensis.fs._serialize import serialize_yaml
+
+        prov_path = substrate.mappings_provenance_path(prov.id)
+        atomic_write_text(prov_path, serialize_yaml(prov))
+        substrate_changes.append(str(prov_path.relative_to(workspace_root)))
+        substrate.add_resolution(resolution)
+        res_path = substrate.resolution_path(resolution.id)
+        substrate_changes.append(str(res_path.relative_to(workspace_root)))
+
+    _append_mappings_replay(
+        workspace_root=workspace_root,
+        inputs_hash=inputs_hash,
+        substrate_changes=substrate_changes,
+        activity="map-resolve",
+    )
+
+
+def _stable_role_attribution_at(inputs_hash: str) -> datetime:
+    """Return a deterministic ``at`` timestamp derived from ``inputs_hash``.
+
+    Used so the role_attribution carried inside content-addressable
+    Entity / Resolution records is stable across re-runs of the same
+    resolver output (otherwise ``datetime.now()`` flips content hashes
+    and the second reconcile trips INV-14's duplicate-triple guard).
+
+    Maps the first 8 hex/word chars of the hash into a fixed two-year
+    window starting at 2026-01-01 UTC. The exact value is opaque — only
+    its determinism per ``inputs_hash`` matters.
+    """
+    base = datetime(2026, 1, 1, tzinfo=UTC)
+    h = hashlib.sha256(inputs_hash.encode("utf-8")).hexdigest()
+    offset_seconds = int(h[:8], 16) % (2 * 365 * 24 * 3600)
+    return base + timedelta(seconds=offset_seconds)
+
+
+def _build_entity(
+    raw: dict[str, Any],
+    *,
+    activity: str,
+    inputs_hash: str,
+    now: datetime,
+) -> tuple[Entity, ProvenanceRecord]:
+    """Construct an Entity + its ProvenanceRecord from a resolver proposal.
+
+    The role-attribution ``at`` is derived deterministically from
+    ``inputs_hash`` so re-running the same resolver output produces the
+    same content-addressable Entity id (idempotency contract). The
+    ProvenanceRecord still uses real wall-clock ``now`` — prov records
+    are a log of what actually happened, not part of entity identity.
+    """
+    stable_at = _stable_role_attribution_at(inputs_hash)
+    role_attribution = RoleAttribution(
+        agent=AgentAttribution(kind="llm", identifier="map-resolve", role="map-resolve"),
+        activity="proposed",
+        at=stable_at,
+    )
+    entity_draft = Entity(
+        id="e-" + "0" * 16,
+        kind=str(raw.get("kind", "")),
+        canonical_name=str(raw.get("canonical_name", "")),
+        aliases=[str(a) for a in _as_list(raw.get("aliases"))],
+        notes=_coerce_optional_str(raw.get("notes")),
+        provenance_id="p-" + "0" * 16,
+        role_attributions=[role_attribution],
+        schema_version=1,
+    )
+    entity_id = compute_id(entity_draft)
+    prov_draft = ProvenanceRecord(
+        id="p-" + "0" * 16,
+        entity_type="entity",
+        entity_id=entity_id,
+        activity=activity,
+        activity_started_at=now,
+        activity_ended_at=now,
+        used_entity_ids=[],
+        was_attributed_to=AgentAttribution(
+            kind="llm", identifier="map-resolve", role="map-resolve"
+        ),
+        was_influenced_by=[inputs_hash] if inputs_hash else [],
+        schema_version=1,
+    )
+    prov_id = compute_id(prov_draft)
+    prov = prov_draft.model_copy(update={"id": prov_id})
+    entity = entity_draft.model_copy(update={"id": entity_id, "provenance_id": prov_id})
+    return entity, prov
+
+
+def _build_resolution(
+    raw: dict[str, Any],
+    *,
+    entity_id: str,
+    activity: str,
+    inputs_hash: str,
+    now: datetime,
+) -> tuple[Resolution, ProvenanceRecord]:
+    """Construct a Resolution + its ProvenanceRecord from a resolver proposal."""
+    confidence_raw = raw.get("confidence", "medium")
+    if confidence_raw not in {"high", "medium", "low"}:
+        raise ValueError(f"confidence {confidence_raw!r} not in closed set")
+    confidence_lit = cast("Literal['high', 'medium', 'low']", confidence_raw)
+
+    stable_at = _stable_role_attribution_at(inputs_hash)
+    role_attribution = RoleAttribution(
+        agent=AgentAttribution(kind="llm", identifier="map-resolve", role="map-resolve"),
+        activity="proposed",
+        at=stable_at,
+    )
+    resolution_draft = Resolution(
+        id="j-" + "0" * 16,
+        source_id=str(raw.get("source_id", "")),
+        atom_id=str(raw.get("atom_id", "")),
+        operand_index=int(raw.get("operand_index", 0)),
+        entity_id=entity_id,
+        confidence=confidence_lit,
+        basis=str(raw.get("basis", "map-resolve proposal")),
+        provenance_id="p-" + "0" * 16,
+        role_attributions=[role_attribution],
+        schema_version=1,
+    )
+    resolution_id = compute_id(resolution_draft)
+    prov_draft = ProvenanceRecord(
+        id="p-" + "0" * 16,
+        entity_type="resolution",
+        entity_id=resolution_id,
+        activity=activity,
+        activity_started_at=now,
+        activity_ended_at=now,
+        used_entity_ids=[entity_id],
+        was_attributed_to=AgentAttribution(
+            kind="llm", identifier="map-resolve", role="map-resolve"
+        ),
+        was_influenced_by=[inputs_hash] if inputs_hash else [],
+        schema_version=1,
+    )
+    prov_id = compute_id(prov_draft)
+    prov = prov_draft.model_copy(update={"id": prov_id})
+    resolution = resolution_draft.model_copy(update={"id": resolution_id, "provenance_id": prov_id})
+    return resolution, prov
+
+
+def _append_mappings_replay(
+    *,
+    workspace_root: Path,
+    inputs_hash: str,
+    substrate_changes: list[str],
+    activity: str,
+) -> None:
+    """Append a single replay-log entry to the mappings-scope log."""
+    log = ReplayLog.for_mappings(workspace_root)
+    log.append(
+        actor=AgentAttribution(kind="llm", identifier="reconcile", role="map-resolve"),
+        activity=activity,
+        inputs_hash=inputs_hash,
+        outputs_hash=inputs_hash,
+        cache_hit=False,
+        substrate_changes=substrate_changes,
+        duration_seconds=0.0,
+        _lock_held=True,  # reconcile_outputs already holds the workspace flock
+    )
+
+
+# --- Map-audit path ----------------------------------------------------
+
+
+def _process_map_audit_output(
+    *,
+    payload: dict[str, Any],
+    substrate: Substrate,
+    workspace_root: Path,
+    result: ReconcileResult,
+) -> None:
+    """Reconcile one map-audit output payload.
+
+    The auditor's ``decisions.yaml`` (surfaced here as ``payload``) carries:
+
+    - ``accepted_entities``: list of entity ids confirmed by the auditor.
+    - ``accepted_resolutions``: list of resolution ids confirmed.
+    - ``rejected_entities``: list of entity ids the auditor rejected.
+    - ``rejected_resolutions``: list of resolution ids the auditor rejected.
+    - ``clarifications``: list of dicts with ``kind``, ``source_id``, and
+      optionally ``context_refs`` / ``question``.
+
+    Cross-check: every accepted id must exist in the substrate. Unknown ids
+    are appended to ``result.errors``. Clarifications are written under
+    ``distillations/<source_id>/clarifications/open/`` via
+    :meth:`Substrate.add_clarification`.
+    """
+    accepted_entities = _as_list(payload.get("accepted_entities"))
+    accepted_resolutions = _as_list(payload.get("accepted_resolutions"))
+    substrate_changes: list[str] = []
+    inputs_hash = _coerce_optional_str(payload.get("inputs_hash")) or ""
+
+    # Cross-check accepted entity ids.
+    for raw_id in accepted_entities:
+        entity_id = str(raw_id) if raw_id is not None else ""
+        if not entity_id:
+            continue
+        entity_path = substrate.entity_path(entity_id)
+        if not entity_path.is_file():
+            result.errors.append(
+                (entity_path, f"accepted_entity {entity_id!r} not found in substrate"),
+            )
+
+    # Cross-check accepted resolution ids.
+    for raw_id in accepted_resolutions:
+        resolution_id = str(raw_id) if raw_id is not None else ""
+        if not resolution_id:
+            continue
+        resolution_path = substrate.resolution_path(resolution_id)
+        if not resolution_path.is_file():
+            result.errors.append(
+                (resolution_path, f"accepted_resolution {resolution_id!r} not found in substrate"),
+            )
+
+    # Process clarifications.
+    for raw_clar in _as_list(payload.get("clarifications")):
+        if not isinstance(raw_clar, dict):
+            continue
+        clar_dict: dict[str, Any] = cast("dict[str, Any]", raw_clar)
+        kind_raw = clar_dict.get("kind", "resolution-disputed")
+        if kind_raw not in {
+            "resolution-disputed",
+            "resolution-ambiguous",
+            "warrant-defensibility-contested",
+        }:
+            kind_raw = "resolution-disputed"
+        clar_kind = cast(
+            "Literal['warrant-defensibility-contested', 'resolution-disputed', 'resolution-ambiguous']",  # noqa: E501
+            kind_raw,
+        )
+        source_id = _coerce_optional_str(clar_dict.get("source_id")) or "workspace"
+        context_refs = [str(r) for r in _as_list(clar_dict.get("context_refs"))]
+        question = str(clar_dict.get("question", "(no question)"))
+        now = datetime.now(UTC)
+        raised_by = AgentAttribution(kind="llm", identifier="map-audit", role="map-audit")
+
+        clar_draft = Clarification(
+            id="c-" + "0" * 16,
+            status="open",
+            kind=clar_kind,
+            raised_at=now,
+            raised_by=raised_by,
+            raised_by_activity="map-audit",
+            context_refs=context_refs,
+            question=question,
+            options=None,
+            resolved_at=None,
+            resolved_by=None,
+            resolution=None,
+            raised_provenance_id="p-" + "0" * 16,
+            resolved_provenance_id=None,
+            schema_version=2,
+        )
+        clar_id = compute_id(clar_draft)
+        prov_draft = ProvenanceRecord(
+            id="p-" + "0" * 16,
+            entity_type="clarification-raised",
+            entity_id=clar_id,
+            activity="map-audit",
+            activity_started_at=now,
+            activity_ended_at=now,
+            used_entity_ids=context_refs,
+            was_attributed_to=raised_by,
+            was_influenced_by=[],
+            schema_version=1,
+        )
+        prov_id = compute_id(prov_draft)
+        prov = prov_draft.model_copy(update={"id": prov_id})
+        substrate.add_provenance(source_id, prov)
+        clar = clar_draft.model_copy(update={"id": clar_id, "raised_provenance_id": prov_id})
+        substrate.add_clarification(source_id, clar)
+        clar_path = substrate.clarification_path(source_id, clar_id, resolved=False)
+        substrate_changes.append(str(clar_path.relative_to(workspace_root)))
+        result.clarifications_raised.append(clar_id)
+
+    _append_mappings_replay(
+        workspace_root=workspace_root,
+        inputs_hash=inputs_hash,
+        substrate_changes=substrate_changes,
+        activity="map-audit",
+    )
 
 
 # --- Clarification raising ---------------------------------------------

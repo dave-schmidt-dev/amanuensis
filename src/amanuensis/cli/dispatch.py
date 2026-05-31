@@ -77,9 +77,10 @@ from amanuensis.dispatch.queue import (
     move_to_failures,
     move_to_outputs,
 )
-from amanuensis.fs import Substrate
+from amanuensis.fs import ReplayLog, Substrate
 from amanuensis.fs._atomic import atomic_write_text
 from amanuensis.fs._serialize import _safe_load  # pyright: ignore[reportPrivateUsage]
+from amanuensis.fs.replay_log import _MAP_ROLES  # pyright: ignore[reportPrivateUsage]
 from amanuensis.llm import (
     DispatchQueueEntry,
     append_replay_entry,
@@ -99,6 +100,8 @@ from ._marker import require_marker, workspace_from_kwargs
 _DEFAULT_ROLE_TO_HARNESS: dict[str, str] = {
     "extractor": "claude",
     "auditor": "claude",
+    "map-resolve": "claude",
+    "map-audit": "claude",
 }
 
 
@@ -461,15 +464,36 @@ def _append_replay(
     duration_seconds: float,
     substrate_changes: list[str],
 ) -> None:
-    """Append a ReplayLogEntry for this dispatch (M5.2 facade)."""
+    """Append a ReplayLogEntry for this dispatch (M5.2 facade).
+
+    Map roles (``map-resolve``, ``map-audit``) route to the workspace-
+    level mappings replay log (``mappings/replay-log/``). All other roles
+    route to the per-distillation replay log via :func:`append_replay_entry`.
+    """
     actor = AgentAttribution(
         kind="llm",
         identifier=entry.model_id,
         role=_coerce_role(entry.role),
     )
+    now = datetime.now(UTC)
+    if entry.role in _MAP_ROLES:
+        # Map roles write to the workspace-level mappings scope, not to
+        # a per-distillation tree. Use ReplayLog.for_mappings directly so
+        # the replay-log path resolver is in one place (fs.replay_log).
+        ReplayLog.for_mappings(workspace_path).append(
+            actor=actor,
+            activity=f"{entry.role}-dispatch",
+            inputs_hash=entry.inputs_hash,
+            outputs_hash=outputs_hash,
+            cache_hit=cache_hit,
+            substrate_changes=substrate_changes,
+            duration_seconds=duration_seconds,
+            timestamp=now,
+        )
+        return
     log_entry = ReplayLogEntry(
         seq=0,  # Overwritten by the appender.
-        timestamp=datetime.now(UTC),
+        timestamp=now,
         actor=actor,
         activity=f"{entry.role}-dispatch",
         inputs_hash=entry.inputs_hash,

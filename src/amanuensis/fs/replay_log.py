@@ -71,6 +71,7 @@ API:
 from __future__ import annotations
 
 from collections.abc import Iterable
+from contextlib import nullcontext
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
@@ -324,6 +325,7 @@ class ReplayLog:
         tokens_output: int | None = None,
         cost_estimate_cents: float | None = None,
         lock_timeout: float = DEFAULT_TIMEOUT_SECONDS,
+        _lock_held: bool = False,
     ) -> ReplayLogEntry:
         """Append one entry to the replay log.
 
@@ -360,7 +362,15 @@ class ReplayLog:
         if timestamp is None:
             timestamp = datetime.now(UTC)
 
-        with acquire_workspace_lock(self.workspace_root, timeout=lock_timeout):
+        # Reentrancy: if the caller is already inside acquire_workspace_lock
+        # (e.g. reconcile_outputs holds it across all per-output handlers),
+        # they pass _lock_held=True so we don't deadlock on re-acquisition.
+        lock_cm = (
+            nullcontext()
+            if _lock_held
+            else acquire_workspace_lock(self.workspace_root, timeout=lock_timeout)
+        )
+        with lock_cm:
             # Step 2: read current counter (default 0 if missing).
             current_seq = self.read_seq()
 

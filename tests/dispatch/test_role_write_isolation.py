@@ -9,6 +9,11 @@ Five contracts:
    violation.
 4. Deletions are NOT reported (per module docstring).
 5. The snapshot ignores skip directories (.venv / __pycache__ / .git).
+
+T6.7 extension: ``map-resolve`` and ``map-audit`` output directories use
+multi-component names (e.g. ``map-resolve-<hash>``). The isolation
+machinery accepts them as valid ``allowed_subtree`` values just like
+single-component role dirs (``extractor-<hash>``).
 """
 
 from __future__ import annotations
@@ -16,6 +21,8 @@ from __future__ import annotations
 import os
 import time
 from pathlib import Path
+
+import pytest
 
 from amanuensis.dispatch.isolation import (
     assert_no_unauthorized_mutation,
@@ -144,3 +151,62 @@ def test_violation_list_is_sorted(dispatch_workspace: Path) -> None:
         before, dispatch_workspace, allowed_subtree=allowed
     )
     assert violations == sorted([a.resolve(), m.resolve(), z.resolve()])
+
+
+# --- T6.7: map-role output dirs as allowed_subtree values -----------------
+#
+# ``map-resolve`` and ``map-audit`` dir names contain a hyphen in the role
+# component itself (e.g. ``map-resolve-aabbcc...``). Verify that the
+# write-isolation machinery treats them like any other output dir — writes
+# inside are clean and writes outside are flagged.
+
+
+@pytest.mark.parametrize(
+    "role_dir",
+    [
+        "map-resolve-" + "a" * 64,
+        "map-audit-" + "b" * 64,
+        # Phase 1 roles for comparison: single-component names still work.
+        "extractor-" + "c" * 64,
+        "auditor-" + "d" * 64,
+    ],
+)
+def test_map_role_output_dir_no_violation_when_writing_inside(
+    dispatch_workspace: Path, role_dir: str
+) -> None:
+    """Writing inside a map-role output dir reports no isolation violation."""
+    allowed = dispatch_workspace / "dispatch" / "outputs" / role_dir
+    allowed.mkdir(parents=True)
+
+    before = snapshot_workspace_tree(dispatch_workspace, allowed_subtree=allowed)
+
+    _touch(allowed / "output.yaml", "proposed_entities: []\n")
+
+    violations = assert_no_unauthorized_mutation(
+        before, dispatch_workspace, allowed_subtree=allowed
+    )
+    assert violations == []
+
+
+@pytest.mark.parametrize(
+    "role_dir",
+    [
+        "map-resolve-" + "e" * 64,
+        "map-audit-" + "f" * 64,
+    ],
+)
+def test_map_role_output_dir_violation_when_writing_outside(
+    dispatch_workspace: Path, role_dir: str
+) -> None:
+    """Writing outside a map-role output dir is flagged as an isolation violation."""
+    allowed = dispatch_workspace / "dispatch" / "outputs" / role_dir
+    allowed.mkdir(parents=True)
+
+    before = snapshot_workspace_tree(dispatch_workspace, allowed_subtree=allowed)
+
+    forbidden = _touch(dispatch_workspace / "mappings" / "entities" / "e-fake.md", "rogue")
+
+    violations = assert_no_unauthorized_mutation(
+        before, dispatch_workspace, allowed_subtree=allowed
+    )
+    assert forbidden.resolve() in violations
