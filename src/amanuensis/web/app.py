@@ -29,8 +29,10 @@ from fastapi.templating import Jinja2Templates
 
 from .routes import atoms as atom_routes
 from .routes import dashboard as dashboard_routes
+from .routes import entities as entities_routes
 from .routes import forms as form_routes
 from .routes import relations as relation_routes
+from .routes import resolutions as resolution_routes
 from .routes import source as source_routes
 from .routes import status as status_routes
 
@@ -146,6 +148,8 @@ def create_app() -> FastAPI:
     app.include_router(relation_routes.router)
     app.include_router(form_routes.router)
     app.include_router(status_routes.router)
+    app.include_router(entities_routes.router)
+    app.include_router(resolution_routes.router)
 
     return app
 

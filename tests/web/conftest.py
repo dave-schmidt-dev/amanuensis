@@ -27,10 +27,12 @@ from amanuensis.schemas import (
     AgentAttribution,
     Atom,
     Clarification,
+    Entity,
     OperandRef,
     OperandTypeSchema,
     ParagraphEntry,
     ProvenanceRecord,
+    Resolution,
     RoleAttribution,
     SourceMirrorManifest,
     Vocabulary,
@@ -249,3 +251,164 @@ def planted_clarification_workspace(
     atom, prov = _plant_atom(web_substrate, SOURCE_ID)
     clar = _plant_clarification(web_substrate, atom=atom, prov=prov, source_id=SOURCE_ID)
     return web_workspace, clar, atom, prov
+
+
+# ---------------------------------------------------------------------------
+# Entity + Resolution fixture helpers (T8.1 - T8.3)
+# ---------------------------------------------------------------------------
+
+
+def _plant_entity(
+    substrate: Substrate,
+    *,
+    kind: str,
+    canonical_name: str,
+    aliases: list[str] | None = None,
+    notes: str | None = None,
+) -> tuple[Entity, ProvenanceRecord]:
+    """Plant one Entity + its mappings-layer ProvenanceRecord.
+
+    Builds a content-addressable Entity via the standard compute_id
+    pattern, then persists it to ``mappings/entities/`` and its prov
+    to ``mappings/provenance/``.
+    """
+    agent = AgentAttribution(kind="llm", identifier="test-resolver", role="map-resolve")
+    role_attribution = RoleAttribution(
+        agent=agent,
+        activity="proposed",
+        at=datetime(2026, 5, 30, 12, 0, 0, tzinfo=UTC),
+    )
+    entity_draft = Entity(
+        id="e-" + "0" * 16,
+        kind=kind,
+        canonical_name=canonical_name,
+        aliases=aliases or [],
+        notes=notes,
+        provenance_id="p-" + "0" * 16,
+        role_attributions=[role_attribution],
+        schema_version=1,
+    )
+    entity_id = compute_id(entity_draft)
+
+    prov_payload: dict[str, Any] = {
+        "id": "p-" + "0" * 16,
+        "entity_type": "entity",
+        "entity_id": entity_id,
+        "activity": "reconcile_v1",
+        "activity_started_at": datetime(2026, 5, 30, 12, 0, 0, tzinfo=UTC),
+        "activity_ended_at": datetime(2026, 5, 30, 12, 0, 1, tzinfo=UTC),
+        "used_entity_ids": [],
+        "was_attributed_to": agent,
+        "was_influenced_by": [],
+        "schema_version": 1,
+    }
+    prov_draft = ProvenanceRecord(**prov_payload)
+    prov_id = compute_id(prov_draft)
+    prov_payload["id"] = prov_id
+    prov = ProvenanceRecord(**prov_payload)
+
+    entity = entity_draft.model_copy(update={"id": entity_id, "provenance_id": prov_id})
+    # Write prov to mappings/provenance/ (no substrate helper; write directly).
+    prov_path = substrate.mappings_provenance_path(prov.id)
+    prov_path.parent.mkdir(parents=True, exist_ok=True)
+    prov_path.write_text(prov.model_dump_json(indent=2), encoding="utf-8")
+    substrate.add_entity(entity)
+    return entity, prov
+
+
+def _plant_resolution(
+    substrate: Substrate,
+    *,
+    entity: Entity,
+    atom: Atom,
+    source_id: str,
+) -> tuple[Resolution, ProvenanceRecord]:
+    """Plant one Resolution + its mappings-layer ProvenanceRecord."""
+    agent = AgentAttribution(kind="llm", identifier="test-resolver", role="map-resolve")
+    role_attribution = RoleAttribution(
+        agent=agent,
+        activity="proposed",
+        at=datetime(2026, 5, 30, 12, 0, 0, tzinfo=UTC),
+    )
+    resolution_draft = Resolution(
+        id="j-" + "0" * 16,
+        source_id=source_id,
+        atom_id=atom.id,
+        operand_index=0,
+        entity_id=entity.id,
+        confidence="high",
+        basis="exact-name-match in fixture",
+        provenance_id="p-" + "0" * 16,
+        role_attributions=[role_attribution],
+        schema_version=1,
+    )
+    resolution_id = compute_id(resolution_draft)
+
+    prov_payload: dict[str, Any] = {
+        "id": "p-" + "0" * 16,
+        "entity_type": "resolution",
+        "entity_id": resolution_id,
+        "activity": "reconcile_v1",
+        "activity_started_at": datetime(2026, 5, 30, 12, 0, 0, tzinfo=UTC),
+        "activity_ended_at": datetime(2026, 5, 30, 12, 0, 1, tzinfo=UTC),
+        "used_entity_ids": [entity.id],
+        "was_attributed_to": agent,
+        "was_influenced_by": [],
+        "schema_version": 1,
+    }
+    prov_draft = ProvenanceRecord(**prov_payload)
+    prov_id = compute_id(prov_draft)
+    prov_payload["id"] = prov_id
+    prov = ProvenanceRecord(**prov_payload)
+
+    resolution = resolution_draft.model_copy(update={"id": resolution_id, "provenance_id": prov_id})
+    # Write prov to mappings/provenance/ (no substrate helper; write directly).
+    prov_path = substrate.mappings_provenance_path(prov.id)
+    prov_path.parent.mkdir(parents=True, exist_ok=True)
+    prov_path.write_text(prov.model_dump_json(indent=2), encoding="utf-8")
+    substrate.add_resolution(resolution)
+    return resolution, prov
+
+
+@pytest.fixture
+def planted_entities_workspace(web_workspace: Path, web_substrate: Substrate) -> Path:
+    """Workspace with 2 entities of different kinds.
+
+    Plants:
+    - ``ACME Corp`` (kind=``organization``) with alias ``Acme``
+    - ``Alice Smith`` (kind=``person``)
+
+    Returns the workspace path (use ``monkeypatch.setenv`` in tests).
+    """
+    _plant_entity(
+        web_substrate,
+        kind="organization",
+        canonical_name="ACME Corp",
+        aliases=["Acme"],
+    )
+    _plant_entity(
+        web_substrate,
+        kind="person",
+        canonical_name="Alice Smith",
+    )
+    return web_workspace
+
+
+@pytest.fixture
+def planted_resolutions_workspace(web_workspace: Path, web_substrate: Substrate) -> Path:
+    """Workspace with 1 entity + 1 atom + 1 resolution.
+
+    Plants the atom under ``SOURCE_ID``, an entity, and a resolution
+    linking the atom's first operand to the entity.
+
+    Returns the workspace path.
+    """
+    atom, _atom_prov = _plant_atom(web_substrate, SOURCE_ID)
+    entity, _entity_prov = _plant_entity(
+        web_substrate,
+        kind="organization",
+        canonical_name="ACME Corp",
+        aliases=["Acme"],
+    )
+    _plant_resolution(web_substrate, entity=entity, atom=atom, source_id=SOURCE_ID)
+    return web_workspace

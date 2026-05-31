@@ -1,0 +1,116 @@
+{% extends "base.html" %}
+{% block title %}{{ entity.canonical_name }} &middot; amanuensis{% endblock %}
+{% block nav %}
+<a href="/" class="text-neutral-300 hover:text-neutral-50">&larr; dashboard</a>
+<a href="/entities" class="text-neutral-300 hover:text-neutral-50">entities</a>
+{% endblock %}
+{% block content %}
+<section class="space-y-6">
+  <header class="space-y-1">
+    <p class="text-xs uppercase tracking-wider text-neutral-500">entity</p>
+    <h1 class="text-2xl font-semibold tracking-tight text-neutral-50">{{ entity.canonical_name }}</h1>
+    {% if is_superseded %}
+    <p class="text-sm text-amber-400">
+      superseded &rarr;
+      <a
+        href="/entities/{{ latest.id }}"
+        class="underline decoration-amber-600 underline-offset-2 hover:decoration-amber-400"
+      >{{ latest.canonical_name }}</a>
+    </p>
+    {% endif %}
+  </header>
+
+  <section class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+    <div class="rounded border border-neutral-800 bg-neutral-900 p-3">
+      <p class="text-xs uppercase tracking-wider text-neutral-500">kind</p>
+      <p class="mt-1 text-sm text-neutral-100">{{ entity.kind }}</p>
+    </div>
+    <div class="rounded border border-neutral-800 bg-neutral-900 p-3">
+      <p class="text-xs uppercase tracking-wider text-neutral-500">id</p>
+      <p class="mt-1 font-mono text-xs text-neutral-200 break-all">{{ entity.id }}</p>
+    </div>
+    <div class="rounded border border-neutral-800 bg-neutral-900 p-3 sm:col-span-2">
+      <p class="text-xs uppercase tracking-wider text-neutral-500">aliases</p>
+      {% if entity.aliases %}
+      <ul class="mt-1 flex flex-wrap gap-2">
+        {% for alias in entity.aliases %}
+        <li class="rounded bg-neutral-800 px-2 py-0.5 text-sm text-neutral-200">{{ alias }}</li>
+        {% endfor %}
+      </ul>
+      {% else %}
+      <p class="mt-1 text-sm text-neutral-500">none</p>
+      {% endif %}
+    </div>
+  </section>
+
+  {% if entity.notes %}
+  <section class="rounded border border-neutral-800 bg-neutral-900 p-4">
+    <h2 class="text-lg font-semibold text-neutral-50">notes</h2>
+    <pre class="mt-2 whitespace-pre-wrap text-sm text-neutral-200">{{ entity.notes }}</pre>
+  </section>
+  {% endif %}
+
+  <section class="rounded border border-neutral-800 bg-neutral-900 p-4">
+    <h2 class="text-lg font-semibold text-neutral-50">provenance</h2>
+    <p class="mt-2 font-mono text-xs text-neutral-400 break-all">{{ entity.provenance_id }}</p>
+  </section>
+
+  <section class="rounded border border-neutral-800 bg-neutral-900 p-4">
+    <h2 class="text-lg font-semibold text-neutral-50">resolutions pointing here</h2>
+    {% if resolutions %}
+    <div class="mt-3 overflow-x-auto">
+      <table class="min-w-full divide-y divide-neutral-800 text-sm">
+        <thead class="text-left text-xs uppercase tracking-wider text-neutral-500">
+          <tr>
+            <th scope="col" class="py-1 pr-4">resolution id</th>
+            <th scope="col" class="py-1 pr-4">source</th>
+            <th scope="col" class="py-1 pr-4">atom</th>
+            <th scope="col" class="py-1 pr-4">operand</th>
+            <th scope="col" class="py-1 pr-4">confidence</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-neutral-800">
+          {% for r in resolutions %}
+          <tr>
+            <td class="py-1 pr-4">
+              <a
+                href="/resolutions/{{ r.id }}"
+                class="font-mono text-xs text-neutral-300 underline decoration-neutral-700 underline-offset-2 hover:decoration-neutral-300"
+              >{{ r.id }}</a>
+            </td>
+            <td class="py-1 pr-4 font-mono text-xs text-neutral-400">{{ r.source_id }}</td>
+            <td class="py-1 pr-4 font-mono text-xs text-neutral-400 break-all">{{ r.atom_id }}</td>
+            <td class="py-1 pr-4 text-xs text-neutral-400">{{ r.operand_index }}</td>
+            <td class="py-1 pr-4 text-xs text-neutral-400">{{ r.confidence }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <p class="mt-2 text-sm text-neutral-500">no resolutions point to this entity</p>
+    {% endif %}
+  </section>
+
+  {% if is_superseded %}
+  <section class="rounded border border-neutral-800 bg-neutral-900 p-4">
+    <h2 class="text-lg font-semibold text-neutral-50">supersede chain</h2>
+    <p class="mt-2 text-sm text-neutral-400">
+      this entity has been superseded. the terminal entity is
+      <a
+        href="/entities/{{ latest.id }}"
+        class="text-neutral-200 underline decoration-neutral-700 underline-offset-2 hover:decoration-neutral-300"
+      >{{ latest.canonical_name }}</a>
+      (<code class="font-mono text-xs">{{ latest.id }}</code>).
+    </p>
+  </section>
+  {% endif %}
+
+  <p class="text-sm">
+    <a
+      href="/entities"
+      class="text-neutral-300 underline decoration-neutral-700 underline-offset-2 hover:decoration-neutral-300"
+    >&larr; back to entity registry</a>
+  </p>
+</section>
+{% endblock %}

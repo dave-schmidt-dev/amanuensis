@@ -1,0 +1,94 @@
+{% extends "base.html" %}
+{% block title %}entities &middot; amanuensis{% endblock %}
+{% block nav %}
+<a href="/" class="text-neutral-300 hover:text-neutral-50">&larr; dashboard</a>
+{% endblock %}
+{% block content %}
+<section class="space-y-6">
+  <header class="space-y-1">
+    <p class="text-xs uppercase tracking-wider text-neutral-500">entities</p>
+    <h1 class="text-2xl font-semibold tracking-tight text-neutral-50">entity registry</h1>
+    <p class="text-sm text-neutral-400">
+      {{ filtered_count }} of {{ total }} entities
+      {% if kind or q %}
+      <span class="text-neutral-500">&mdash; filtered</span>
+      {% endif %}
+    </p>
+  </header>
+
+  <form
+    method="get"
+    action="/entities"
+    class="grid grid-cols-1 gap-3 rounded border border-neutral-800 bg-neutral-900 p-4 sm:grid-cols-2"
+  >
+    <label class="flex flex-col gap-1 text-xs">
+      <span class="uppercase tracking-wider text-neutral-500">kind</span>
+      <select
+        name="kind"
+        class="rounded border border-neutral-700 bg-neutral-950 px-2 py-1.5 text-sm text-neutral-100 focus:border-neutral-500 focus:outline-none"
+        onchange="this.form.submit()"
+      >
+        <option value="" {% if kind == "" %}selected{% endif %}>all</option>
+        {% for k in kinds %}
+        <option value="{{ k }}" {% if kind == k %}selected{% endif %}>{{ k }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label class="flex flex-col gap-1 text-xs">
+      <span class="uppercase tracking-wider text-neutral-500">search</span>
+      <input
+        type="text"
+        name="q"
+        value="{{ q }}"
+        placeholder="name or alias substring…"
+        class="rounded border border-neutral-700 bg-neutral-950 px-2 py-1.5 text-sm text-neutral-100 focus:border-neutral-500 focus:outline-none"
+      />
+    </label>
+  </form>
+
+  {% if entities %}
+  <div class="overflow-x-auto rounded border border-neutral-800">
+    <table class="min-w-full divide-y divide-neutral-800 text-sm">
+      <thead class="bg-neutral-900 text-left text-xs uppercase tracking-wider text-neutral-400">
+        <tr>
+          <th scope="col" class="px-4 py-2">canonical name</th>
+          <th scope="col" class="px-4 py-2">kind</th>
+          <th scope="col" class="px-4 py-2">aliases</th>
+          <th scope="col" class="px-4 py-2">id</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-neutral-800 bg-neutral-950">
+        {% for entity in entities %}
+        <tr class="hover:bg-neutral-900">
+          <td class="px-4 py-2">
+            <a
+              href="/entities/{{ entity.id }}"
+              class="text-neutral-100 underline decoration-neutral-700 underline-offset-2 hover:decoration-neutral-300"
+            >{{ entity.canonical_name }}</a>
+          </td>
+          <td class="px-4 py-2 text-neutral-400">{{ entity.kind }}</td>
+          <td class="px-4 py-2 text-neutral-400">
+            {% if entity.aliases %}
+            {{ entity.aliases | join(", ") }}
+            {% else %}
+            <span class="text-neutral-600">&mdash;</span>
+            {% endif %}
+          </td>
+          <td class="px-4 py-2">
+            <code class="font-mono text-xs text-neutral-500">{{ entity.id }}</code>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="rounded border border-dashed border-neutral-800 bg-neutral-900 p-6 text-center">
+    <p class="text-neutral-300">no entities found</p>
+    <p class="mt-1 text-xs text-neutral-500">
+      run the reconcile pipeline to populate the entity registry.
+    </p>
+  </div>
+  {% endif %}
+</section>
+{% endblock %}
