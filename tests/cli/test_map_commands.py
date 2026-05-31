@@ -598,3 +598,54 @@ def test_resolution_supersede_unknown_new_entity(tmp_path: Path) -> None:
     )
     assert res.exit_code == 1
     assert "not found" in (res.stdout + res.stderr).lower()
+
+
+# ---------------------------------------------------------------------------
+# T7.9: map vocabulary show tests
+# ---------------------------------------------------------------------------
+
+
+def test_vocabulary_show_no_snapshot_exits_1(tmp_path: Path) -> None:
+    workspace = _make_workspace(tmp_path)
+    res = runner.invoke(app, ["map", "vocabulary", "show", "--workspace", str(workspace)])
+    assert res.exit_code == 1
+    assert "not found" in (res.stdout + res.stderr).lower()
+
+
+def test_vocabulary_show_after_snapshot(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """After `amanuensis map` pins a snapshot, `vocabulary show` renders it."""
+    workspace = _make_workspace(tmp_path)
+    # Plant a distillation + skills, run map to pin snapshot.
+    (workspace / "distillations" / "src1" / "atoms").mkdir(parents=True)
+    (workspace / "distillations" / "src1" / "relations").mkdir(parents=True)
+    fake_home = tmp_path / "fake_home"
+    skills_dir = fake_home / ".claude" / "skills" / "amanuensis"
+    skills_dir.mkdir(parents=True)
+    (skills_dir / "map_resolve.md").write_text("---\nrole: map-resolve\n---\nbody")
+    (skills_dir / "map_audit.md").write_text("---\nrole: map-audit\n---\nbody")
+    monkeypatch.setenv("AMANUENSIS_HARNESS_HOME", str(fake_home))
+    pin_res = runner.invoke(app, ["map", "--workspace", str(workspace), "--non-interactive"])
+    assert pin_res.exit_code == 0
+    # Now show.
+    res = runner.invoke(app, ["map", "vocabulary", "show", "--workspace", str(workspace)])
+    assert res.exit_code == 0
+    assert "kinds" in res.stdout  # YAML key from EntityVocabulary
+    assert "version" in res.stdout
+
+
+def test_vocabulary_show_archived_not_found(tmp_path: Path) -> None:
+    workspace = _make_workspace(tmp_path)
+    res = runner.invoke(
+        app,
+        [
+            "map",
+            "vocabulary",
+            "show",
+            "--archived",
+            "0" * 16,
+            "--workspace",
+            str(workspace),
+        ],
+    )
+    assert res.exit_code == 1
+    assert "not found" in (res.stdout + res.stderr).lower()

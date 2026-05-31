@@ -1303,17 +1303,260 @@ def resolution_supersede_command(
 
 
 # ---------------------------------------------------------------------------
-# vocabulary sub-commands (stubs — T7.10)
+# vocabulary sub-commands (T7.9, T7.10)
 # ---------------------------------------------------------------------------
 
 
 @vocabulary_app.command("show")
-def vocabulary_show_command() -> None:
-    """Show the active entity-kind vocabulary (stub; T7.10)."""
-    typer.echo("TODO: show")
+@require_marker
+def vocabulary_show_command(
+    archived: Annotated[
+        str | None,
+        typer.Option(
+            "--archived",
+            help="Show an archived snapshot by its id (SHA-256 truncated to 16 hex chars).",
+        ),
+    ] = None,
+    workspace: Annotated[
+        Path | None,
+        typer.Option(
+            "--workspace",
+            "-w",
+            help="Workspace root (must contain amanuensis.yaml). Defaults to CWD.",
+        ),
+    ] = None,
+) -> None:
+    """Print the active entity-kind vocabulary snapshot (read-only; T7.9).
+
+    With --archived <id>, print the archived snapshot instead.
+    """
+    workspace_path = workspace_from_kwargs({"workspace": workspace})
+    substrate = Substrate(workspace_path)
+
+    if archived is not None:
+        # Print archived snapshot.
+        archive_path = substrate.archived_entity_vocabulary_path(archived)
+        if not archive_path.is_file():
+            typer.secho(
+                f"archived snapshot '{archived}' not found at {archive_path}",
+                err=True,
+            )
+            raise typer.Exit(code=1)
+        typer.echo(archive_path.read_text(encoding="utf-8"), nl=False)
+        return
+
+    # Print active snapshot.
+    snapshot_path = substrate.entity_vocabulary_snapshot_path()
+    if not snapshot_path.is_file():
+        typer.secho(
+            f"entity-vocabulary snapshot not found at {snapshot_path}; "
+            "run `amanuensis map` to pin one",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+    typer.echo(snapshot_path.read_text(encoding="utf-8"), nl=False)
 
 
 @vocabulary_app.command("snapshot")
-def vocabulary_snapshot_command() -> None:
-    """Snapshot the entity-kind vocabulary (stub; T7.10)."""
-    typer.echo("TODO: snapshot")
+@require_marker
+def vocabulary_snapshot_command(
+    extend: Annotated[
+        bool,
+        typer.Option(
+            "--extend",
+            help="Archive the current snapshot and write a new one from the template.",
+        ),
+    ] = False,
+    template: Annotated[
+        Path | None,
+        typer.Option(
+            "--template",
+            help="Path to the entity-vocabulary YAML template. Defaults to bundled generic.",
+        ),
+    ] = None,
+    dry_run: Annotated[
+        bool,
+        typer.Option(
+            "--dry-run",
+            help="Print what would be written without making any changes.",
+        ),
+    ] = False,
+    workspace: Annotated[
+        Path | None,
+        typer.Option(
+            "--workspace",
+            "-w",
+            help="Workspace root (must contain amanuensis.yaml). Defaults to CWD.",
+        ),
+    ] = None,
+) -> None:
+    """Pin or extend the entity-kind vocabulary snapshot (T7.10).
+
+    Without --extend: write the vocabulary from the template as the active
+    snapshot.  Fails if a snapshot already exists with different content
+    (use --extend to evolve it).
+
+    With --extend: archive the current snapshot and write the template as
+    the new active snapshot.
+
+    Supports --dry-run (no writes performed).
+    """
+    workspace_path = workspace_from_kwargs({"workspace": workspace})
+    substrate = Substrate(workspace_path)
+
+    # Resolve template path.
+    if template is not None:
+        template_path: Path = template
+    else:
+        template_path = (
+            Path(__file__).resolve().parents[3] / "vocabularies" / "generic" / "entity-kinds.yaml"
+        )
+
+    if not template_path.is_file():
+        typer.secho(
+            f"entity-vocabulary template not found at {template_path}",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+    # Load and validate the vocabulary.
+    try:
+        vocab = load_entity_vocabulary(template_path)
+    except EntityVocabularyError as exc:
+        fatal(f"entity-vocabulary template invalid: {exc}")
+        return  # unreachable; fatal raises
+
+    # Compute inputs hash (SHA-256 of canonical template bytes).
+    template_bytes = template_path.read_bytes()
+    inputs_hash = hashlib.sha256(template_bytes).hexdigest()
+
+    snapshot_path = substrate.entity_vocabulary_snapshot_path()
+
+    # ------------------------------------------------------------------
+    # Dry-run branch
+    # ------------------------------------------------------------------
+    if dry_run:
+        if not extend:
+            # Without --extend.
+            if snapshot_path.is_file():
+                existing_bytes = snapshot_path.read_bytes()
+                import yaml as _yaml
+
+                new_serialized = _yaml.safe_dump(
+                    vocab.model_dump(), sort_keys=False, default_flow_style=False
+                )
+                if existing_bytes == new_serialized.encode():
+                    typer.echo("snapshot already pinned with identical content; would be no-op")
+                else:
+                    typer.echo(
+                        "would FAIL: snapshot already pinned with different content; use --extend"
+                    )
+            else:
+                typer.echo(f"would write snapshot to {snapshot_path}")
+                import yaml as _yaml
+
+                typer.echo(
+                    _yaml.safe_dump(vocab.model_dump(), sort_keys=False, default_flow_style=False),
+                    nl=False,
+                )
+        else:
+            # With --extend.
+            if not snapshot_path.is_file():
+                typer.echo(
+                    "would FAIL: no snapshot to extend; "
+                    "use 'vocabulary snapshot' without --extend first"
+                )
+            else:
+                existing_bytes = snapshot_path.read_bytes()
+                archived_id_preview = hashlib.sha256(existing_bytes).hexdigest()[:16]
+                archive_path = substrate.archived_entity_vocabulary_path(archived_id_preview)
+                typer.echo(f"would archive current snapshot as {archived_id_preview}")
+                typer.echo(f"would write new snapshot to {snapshot_path}")
+                # Short diff summary: count of kinds before/after.
+                from amanuensis.vocabulary.entity_registry import load_entity_vocabulary as _lev
+
+                try:
+                    old_vocab = _lev(snapshot_path)
+                    old_count = len(old_vocab.kinds)
+                except EntityVocabularyError:
+                    old_count = 0
+                new_count = len(vocab.kinds)
+                typer.echo(f"kinds: {old_count} → {new_count}")
+                _ = archive_path  # suppress vulture
+        return
+
+    # ------------------------------------------------------------------
+    # Mutating branch: acquire workspace flock.
+    # ------------------------------------------------------------------
+    from amanuensis.fs._errors import MappingVocabularyAlreadyPinned
+
+    try:
+        with acquire_workspace_lock(workspace_path, timeout=5.0):
+            if not extend:
+                # Pin without extend.
+                try:
+                    substrate.snapshot_entity_vocabulary(vocab)
+                except MappingVocabularyAlreadyPinned as exc:
+                    typer.secho(
+                        "entity-vocabulary snapshot already pinned; use --extend to evolve it",
+                        err=True,
+                    )
+                    raise typer.Exit(code=1) from exc
+
+                actor = AgentAttribution(kind="human", identifier="cli", role="human_supervisor")
+                ReplayLog.for_mappings(workspace_path).append(
+                    actor=actor,
+                    activity="mapping-vocabulary-snapshot-pinned",
+                    inputs_hash=inputs_hash,
+                    outputs_hash=inputs_hash,
+                    cache_hit=False,
+                    substrate_changes=[
+                        str(snapshot_path.relative_to(workspace_path)),
+                    ],
+                    duration_seconds=0.0,
+                    _lock_held=True,
+                )
+                rel = snapshot_path.relative_to(workspace_path)
+                typer.echo(f"Pinned entity-vocabulary snapshot at {rel}")
+
+            else:
+                # Extend: archive current, write new.
+                try:
+                    archived_id = substrate.extend_entity_vocabulary_snapshot(vocab)
+                except Exception as exc:
+                    from amanuensis.fs._errors import SubstrateNotFound
+
+                    if isinstance(exc, SubstrateNotFound):
+                        typer.secho(
+                            "no snapshot to extend; "
+                            "use 'vocabulary snapshot' without --extend first",
+                            err=True,
+                        )
+                        raise typer.Exit(code=1) from exc
+                    raise
+
+                archive_path = substrate.archived_entity_vocabulary_path(archived_id)
+                actor = AgentAttribution(kind="human", identifier="cli", role="human_supervisor")
+                ReplayLog.for_mappings(workspace_path).append(
+                    actor=actor,
+                    activity="mapping-vocabulary-snapshot-extended",
+                    inputs_hash=inputs_hash,
+                    outputs_hash=inputs_hash,
+                    cache_hit=False,
+                    substrate_changes=[
+                        str(archive_path.relative_to(workspace_path)),
+                        str(snapshot_path.relative_to(workspace_path)),
+                    ],
+                    duration_seconds=0.0,
+                    _lock_held=True,
+                )
+                typer.echo(
+                    f"Extended entity-vocabulary snapshot; archived previous as {archived_id}"
+                )
+
+    except WorkspaceLockTimeout as exc:
+        typer.secho(
+            "workspace flock held by another process — wait or release .amanuensis-lock",
+            err=True,
+        )
+        raise typer.Exit(code=2) from exc
