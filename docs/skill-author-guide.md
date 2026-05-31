@@ -260,6 +260,89 @@ Notable points:
   warrants explicitly; do not silently absorb them into a pass/fail
   signal.
 
+## Examples — Resolver and Map Auditor (Phase 2a)
+
+### Resolver (`map_resolve.md`)
+
+Output contract, quoted from the skill:
+
+```markdown
+Emit a YAML file at
+`dispatch/outputs/map-resolve-<inputs_hash>/proposals.yaml`
+containing two lists: `entities` (new or alias Entity drafts) and
+`resolutions` (proposed joins).
+```
+
+Notable points:
+
+- The Resolver writes to a named output path rather than stdout. This
+  matches the dispatch driver's `move_to_outputs` contract (the driver
+  writes `dispatch/outputs/<role>-<inputs_hash>/output.yaml`); the
+  Resolver writes its file inside that subtree before the driver reads
+  back the result.
+- `kind` on every proposed entity MUST be a value present in the pinned
+  `mappings/entity-vocabulary-snapshot.yaml`
+  ([INV-12](../INVARIANTS.md#inv-12--mappings-is-the-home-for-all-cross-document-artifacts)).
+  This is the closed-vocabulary contract for the map phase, parallel to
+  INV-5 for the distill phase.
+- Supervisor-only kinds (marked in the vocabulary snapshot) are never
+  auto-resolved. The Resolver escalates them via a
+  `resolution-ambiguous` clarification. Skill authors adding new map
+  roles should respect the same supervisor-only flag.
+- The Resolver never writes to `mappings/` directly. Substrate writes
+  belong exclusively to the reconciliation gate
+  (`amanuensis.dispatch.reconcile`), which runs after the auditor
+  accepts a proposal.
+
+### Map Auditor (`map_audit.md`)
+
+Output contract, quoted from the skill:
+
+```markdown
+Write YAML to `dispatch/outputs/map-audit-<inputs_hash>/output.yaml`:
+
+accepted_entities: [<entity_id>, ...]
+accepted_resolutions: [<resolution_id>, ...]
+rejected_entities:
+  - candidate: <resolver's candidate>
+    reason: "kind 'foo' not in vocabulary snapshot"
+rejected_resolutions:
+  - candidate: <resolver's candidate>
+    reason: "operand-ref (source, atom, 4) has kind=literal, not entity"
+clarifications:
+  - kind: resolution-ambiguous
+    question: "..."
+    context_refs: [...]
+    options: [...]
+  - kind: resolution-disputed
+    question: "..."
+    context_refs: [...]
+```
+
+Notable points:
+
+- The Map Auditor introduces two clarification kinds —
+  `resolution-ambiguous` (two equally-good entity matches) and
+  `resolution-disputed` (supersede proposal touching a
+  supervisor-attributed resolution). These kinds are the map-phase
+  analogue of `warrant-defensibility-contested` in the distill phase:
+  the audit gate surfaces contested decisions to a human supervisor
+  rather than resolving them silently.
+- **Supersede-of-supervisor-decision (INV-13 boundary).** Any proposal
+  that would overwrite a resolution whose PROV `was_attributed_to.kind
+  == "human"` MUST emit a `resolution-disputed` clarification; the Map
+  Auditor never auto-accepts such a supersede. This is the immutability
+  contract from
+  [INV-13](../INVARIANTS.md#inv-13--substrate-records-are-immutable-once-written)
+  applied at the audit layer.
+- The auditor verifies `(source_id, atom_id, operand_index)` triple
+  existence against the substrate (INV-14 helper) and checks entity-kind
+  against the vocabulary snapshot (INV-12). Violations are rejections,
+  not clarifications.
+- Like the distill Auditor, the Map Auditor MUST NOT write outside its
+  assigned output directory. All substrate mutations flow through the
+  reconciliation gate.
+
 ## Example — a stub (`distill_contrarian.md`)
 
 A stub skill's frontmatter and body together describe both what the

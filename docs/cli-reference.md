@@ -299,6 +299,216 @@ amanuensis install-skills [--harness HARNESS]
   - `--harness {claude, codex, cursor, gemini, all}` (default: `all`).
 - **Example:** `amanuensis install-skills --harness claude`
 
+## amanuensis map
+
+Phase 2a entity resolution commands. `amanuensis map` runs the map
+warp-plan cycle (enqueues the map-resolve role); its sub-apps `entity`,
+`resolution`, and `vocabulary` provide read-only inspection and
+supervisor-correction verbs. All commands require the INV-1 marker.
+Mutating commands acquire the workspace flock
+([INV-4](../INVARIANTS.md#inv-4--determinism-boundary-is-named-gated-and-audited)).
+Entities and resolutions live under
+`mappings/`
+([INV-12](../INVARIANTS.md#inv-12--mappings-is-the-home-for-all-cross-document-artifacts)).
+
+### `map` (orchestrator)
+
+```
+amanuensis map [--role-set ROLES] [--non-interactive]
+```
+
+- **Classification:** mutating.
+- **Idempotency:** the enqueue step is append-only (each call creates a
+  new dispatch queue entry with its own inputs hash). Running the command
+  twice with the same substrate state writes two entries but downstream
+  dispatch deduplicates on inputs hash.
+- **Behavior:** (1) Pins the entity-vocabulary snapshot at
+  `mappings/entity-vocabulary-snapshot.yaml` if not already present.
+  (2) Computes an `inputs_hash` covering distillation atoms/relations,
+  the snapshot, and the role set. (3) Builds and enqueues a
+  `DispatchQueueEntry` for the `map-resolve` role. (4) Appends a
+  mappings replay-log entry. Acquires the workspace flock for steps 1–4.
+  Requires `map_resolve.md` and `map_audit.md` to be installed in the
+  active harness skills directory; fails with exit 2 if either is
+  missing. Fails with exit 1 if no distillations exist.
+- **Notable flags:**
+  - `--role-set ROLES` (default: `map-resolve,map-audit`) — comma-separated
+    list of roles to enqueue. Changing this is an advanced operation.
+  - `--non-interactive` — accepted for forward compatibility with a future
+    interactive mode; currently a no-op.
+- **Example:** `amanuensis map` then `amanuensis dispatch --once`
+
+### `map status`
+
+```
+amanuensis map status [--source-id ID] [--json]
+```
+
+- **Classification:** read-only.
+- **Idempotency:** re-running on the same substrate state produces
+  identical output and no state changes. No flock acquired (INV-4).
+- **Behavior:** Walks the workspace and prints per-distillation and
+  aggregate counts: `entity_operand_count` (operands with `kind=entity`),
+  `resolved_count` (those with an active resolution),
+  `unresolved_count`, `open_clarification_count` (open clarifications
+  whose kind is in `{resolution-disputed, resolution-ambiguous}`), and
+  `last_map_run_at` (newest mappings replay-log entry, or `"never"`).
+- **Notable flags:**
+  - `--source-id ID` — restrict output to a single distillation.
+  - `--json` — emit machine-parseable JSON (sorted keys, stable diffs).
+- **Example:** `amanuensis map status --json`
+
+### `map entity list`
+
+```
+amanuensis map entity list [--kind KIND]
+```
+
+- **Classification:** read-only.
+- **Idempotency:** re-running on the same substrate state produces
+  identical output and no state changes.
+- **Behavior:** Lists every canonical entity in `mappings/entities/`,
+  sorted by kind then canonical name. Prints
+  `<id>  kind=<k>  canonical=<name>  aliases=<count>` per entity.
+- **Notable flags:**
+  - `--kind KIND` — filter to entities of the given kind; the kind must
+    be in the active vocabulary snapshot or the command fails with exit 2.
+- **Example:** `amanuensis map entity list --kind person`
+
+### `map entity show`
+
+```
+amanuensis map entity show ENTITY_ID
+```
+
+- **Classification:** read-only.
+- **Idempotency:** re-running on the same substrate state produces
+  identical output and no state changes.
+- **Behavior:** Prints one entity's on-disk content (YAML frontmatter +
+  markdown body), then appends a "Resolutions pointing here" block and
+  a "Supersede chain" block. The supersede chain shows the full forward
+  chain from this entity id to the latest canonical entity.
+- **Notable flags:** none.
+- **Example:** `amanuensis map entity show e-3f1e9c2b...`
+
+### `map entity merge`
+
+```
+amanuensis map entity merge A_ID B_ID --canonical ENTITY_ID \
+                            --reason TEXT [--actor ID] [--dry-run] [--force]
+```
+
+- **Classification:** mutating.
+- **Idempotency:** append-only. Each call writes a new `EntitySupersede`
+  record and its paired provenance record. Running twice writes two
+  records (duplicate-merge guard is not applied; use `--force` to merge
+  an already-superseded entity).
+- **Behavior:** Writes an `EntitySupersede` record (prefixed `t-`) in
+  `mappings/supersedes/` pointing `A_ID` or `B_ID` (whichever is not
+  `--canonical`) at the surviving entity, plus a paired
+  `ProvenanceRecord` in `mappings/provenance/`. Acquires the workspace
+  flock for the duration of the write.
+- **Notable flags:**
+  - `--canonical ENTITY_ID` (required) — the entity id that survives the
+    merge; must already exist in `mappings/entities/`.
+  - `--reason TEXT` (required) — reason text recorded in the
+    `EntitySupersede` record.
+  - `--actor ID` (default: `cli`) — identifier recorded in the PROV
+    attribution.
+  - `--dry-run` — print what would be written without making any changes.
+  - `--force` — allow merging entities that are already superseded.
+- **Example:** `amanuensis map entity merge e-aabb... e-ccdd... --canonical e-aabb... --reason "duplicate"`
+
+### `map resolution show`
+
+```
+amanuensis map resolution show RESOLUTION_ID
+```
+
+- **Classification:** read-only.
+- **Idempotency:** re-running on the same substrate state produces
+  identical output and no state changes.
+- **Behavior:** Prints one resolution record's raw YAML, then appends a
+  "Supersede chain" block (all `ResolutionSupersede` records that
+  reference this id) and a "Latest for triple" block showing whether
+  this resolution is the currently active one for its
+  `(source_id, atom_id, operand_index)` triple.
+- **Notable flags:** none.
+- **Example:** `amanuensis map resolution show j-9a2f...`
+
+### `map resolution supersede`
+
+```
+amanuensis map resolution supersede OLD_ID --new-entity ENTITY_ID \
+            --reason TEXT [--actor ID] [--confidence LEVEL] [--dry-run]
+```
+
+- **Classification:** mutating.
+- **Idempotency:** one-shot on the active-triple constraint. The command
+  validates that `OLD_ID` is the latest resolution for its triple; if it
+  is already superseded the command fails cleanly. A successful run
+  writes one new `Resolution` + one `ResolutionSupersede` + two
+  `ProvenanceRecord` files.
+- **Behavior:** Writes a new `Resolution` (`j-` prefix) inheriting the
+  `(source_id, atom_id, operand_index)` triple from the old record but
+  pointing at `--new-entity`, then writes a `ResolutionSupersede` (`s-`
+  prefix) linking old → new. Acquires the workspace flock for the
+  duration of the write.
+- **Notable flags:**
+  - `--new-entity ENTITY_ID` (required) — entity id the corrected
+    resolution points at; must exist in `mappings/entities/`.
+  - `--reason TEXT` (required) — reason text recorded in the
+    `ResolutionSupersede`.
+  - `--actor ID` (default: `cli`) — PROV attribution identifier.
+  - `--confidence {high, medium, low}` (default: `high`) — confidence
+    level for the new resolution.
+  - `--dry-run` — print what would be written without making any changes.
+- **Example:** `amanuensis map resolution supersede j-9a2f... --new-entity e-aabb... --reason "wrong entity"`
+
+### `map vocabulary show`
+
+```
+amanuensis map vocabulary show [--archived ID]
+```
+
+- **Classification:** read-only.
+- **Idempotency:** re-running on the same substrate state produces
+  identical output and no state changes.
+- **Behavior:** Prints the active entity-kind vocabulary snapshot at
+  `mappings/entity-vocabulary-snapshot.yaml` to stdout. Fails with exit
+  1 if no snapshot has been pinned yet (run `amanuensis map` first).
+  With `--archived`, prints the archived snapshot identified by the
+  16-hex-char id instead.
+- **Notable flags:**
+  - `--archived ID` — print an archived snapshot by its truncated
+    SHA-256 id instead of the active one.
+- **Example:** `amanuensis map vocabulary show`
+
+### `map vocabulary snapshot`
+
+```
+amanuensis map vocabulary snapshot [--extend] [--template PATH] [--dry-run]
+```
+
+- **Classification:** mutating.
+- **Idempotency:** without `--extend`, fails if a snapshot with
+  different content already exists (protecting INV-12 pinning stability).
+  With `--extend`, archives the current snapshot and writes a new one;
+  each call advances the snapshot lineage.
+- **Behavior:** Reads the entity-vocabulary YAML from `--template` (or
+  the bundled generic template if not specified), validates it via
+  `EntityVocabulary`, and writes it as the active snapshot at
+  `mappings/entity-vocabulary-snapshot.yaml`. With `--extend`, archives
+  the current snapshot first (under `mappings/archived-vocabulary/`).
+  Acquires the workspace flock for the duration of the write.
+- **Notable flags:**
+  - `--extend` — archive the current snapshot and write the template as
+    the new active snapshot (evolves the vocabulary lineage).
+  - `--template PATH` — path to a custom entity-vocabulary YAML; defaults
+    to the bundled `vocabularies/generic/entity-kinds.yaml`.
+  - `--dry-run` — print what would happen without writing anything.
+- **Example:** `amanuensis map vocabulary snapshot --extend --template my-entity-kinds.yaml`
+
 ## Exit codes
 
 | Code | Meaning |

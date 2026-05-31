@@ -267,6 +267,16 @@ plan source is §5.
     failures/<role>-<seq>.yaml               (driver writes on retry exhaustion)
 
   cache/<input-hash>.yaml                    (LLM-call cache; content-addressable)
+
+  mappings/                                  (Phase 2a cross-document artifacts — INV-12)
+    entity-vocabulary-snapshot.yaml          (active entity-kind registry; pinned by `amanuensis map`)
+    entity-vocabulary-archive/<hash>.yaml    (prior snapshots; written by `map vocabulary snapshot --extend`)
+    entities/e-<hash>.md                     (canonical Entity records; frontmatter + notes body)
+    resolutions/j-<hash>.yaml                (Resolution records; pure YAML)
+    supersedes/t-<hash>.yaml                 (EntitySupersede records)
+    supersedes/s-<hash>.yaml                 (ResolutionSupersede records)
+    provenance/<prov-id>.yaml                (PROV-O records for mapping-phase artifacts)
+    replay-log/                              (mappings-scoped replay log)
 ```
 
 A few non-obvious points worth calling out here (full discussion in
@@ -298,9 +308,11 @@ The substrate is a shared mutable resource. The discipline:
 | Operation | Lock acquired? | Mechanism |
 |---|---|---|
 | Mutating CLI command (`init`, `ingest`, `distill`, `dispatch`, `clarification resolve`, `iteration add`, `vocabulary snapshot`) | Yes | `acquire_workspace_lock(workspace_root, timeout=5.0)` (M1.8) |
+| Mutating map CLI command (`map` orchestrator, `map entity merge`, `map resolution supersede`, `map vocabulary snapshot`) | Yes | Same flock, 5s timeout |
 | Web POST endpoint (resolve clarification, add iteration) | Yes | Same flock, 5s timeout, per-request |
 | Replay-log `seq` increment | Yes | Workspace flock held during atomic increment of `.next-seq` (M1.7) |
 | Read-only CLI command (`status`, `atom list`, `atom validate`, `clarification show`, `vocabulary show`, `export`) | No | Atomic-write-then-rename makes reads snapshot-safe |
+| Read-only map CLI command (`map status`, `map entity list`, `map entity show`, `map resolution show`, `map vocabulary show`) | No | Same |
 | Web `GET` endpoints | No | Same |
 | Cache write (`cache/<input-hash>.yaml`) | No | Idempotent by content addressing |
 
@@ -334,20 +346,34 @@ narrow public surface. Cross-module dependencies are a DAG; no cycles.
 
 | Module | Purpose | Depends on | Public surface |
 |---|---|---|---|
-| `amanuensis.schemas` | Canonical Pydantic models + content-addressable hashing | (leaf) | Twelve model classes; `compute_id` |
+| `amanuensis.schemas` | Canonical Pydantic models + content-addressable hashing | (leaf) | Sixteen model classes; `compute_id` |
+| `amanuensis.schemas.entity` | `Entity` — canonical cross-document entity | `schemas._shared` | `Entity` |
+| `amanuensis.schemas.resolution` | `Resolution` — entity-id join for one operand-ref triple | `schemas._shared` | `Resolution` |
+| `amanuensis.schemas.entity_supersede` | `EntitySupersede` — correction record for entity merges/renames | `schemas._shared` | `EntitySupersede` |
+| `amanuensis.schemas.resolution_supersede` | `ResolutionSupersede` — correction record for resolution updates | `schemas._shared` | `ResolutionSupersede` |
 | `amanuensis.fs` | Substrate filesystem (path conventions, atomic writes, workspace lock, replay log) | `schemas` | `Substrate`, `acquire_workspace_lock`, `ReplayLog`, typed errors |
 | `amanuensis.ingest` (M3.x) | Document → paragraph-indexed source mirror | `schemas`, `fs` | `ingest(pdf_path, source_id) -> SourceMirror` |
 | `amanuensis.vocabulary` (M2.x) | Closed predicate vocabulary registry + per-distillation snapshot loader | `schemas`, `fs` | `Vocabulary(snapshot_path).contains(predicate) -> bool` |
+| `amanuensis.vocabulary.entity_registry` | `EntityVocabulary` loader + snapshot semantics for mapping-phase kind registry | `schemas`, `fs` | `load_entity_vocabulary(path) -> EntityVocabulary`; snapshot pinning helpers |
 | `amanuensis.validators` (M2.x) | Pure-function validation gates | `schemas`, `fs`, `vocabulary` | `validate_atom(atom, substrate) -> ValidationResult`, one function per gate |
+| `amanuensis.validators.entity_kind_in_vocabulary` | Closed-vocabulary gate: rejects entities whose `kind` is absent from the active entity snapshot | `schemas`, `vocabulary.entity_registry` | `entity_kind_in_vocabulary(entity, substrate) -> ValidationResult` |
 | `amanuensis.llm` (M5.x) | LLM-call wrapper: cache + replay log + PROV-O record | `schemas`, `fs` | `cached_call(role, prompt, inputs) -> (output, provenance_record)` |
 | `amanuensis.dispatch` (M6.x) | Multi-agent queue / driver. **The only harness-aware module.** | `schemas`, `fs`, `llm` | `Dispatch(workspace).enqueue(role, prompt, inputs)`; `driver.run()` |
+| `amanuensis.dispatch.reconcile` | Reconciliation gate — merges role outputs into the substrate | `schemas`, `fs`, `validators` | `reconcile(workspace)`; Phase 2a: imports `_build_entity`, `_build_resolution` |
 | `amanuensis.skills` (M4.x) | Skill content (markdown files; bundled with package) | (none) | Files installed to harness skill directories |
 | `amanuensis.cli` (M4.x) | Typer command surface | All of the above | `amanuensis` console script |
+| `amanuensis.cli.map` | `amanuensis map ...` sub-app (9 verbs; Phase 2a) | `schemas`, `fs`, `vocabulary.entity_registry` | `map`, `map status`, `map entity {list,show,merge}`, `map resolution {show,supersede}`, `map vocabulary {show,snapshot}` |
 | `amanuensis.web` (M8.x) | FastAPI + HTMX + Cytoscape supervision UI | `schemas`, `fs`, `validators` | `amanuensis serve` |
+| `amanuensis.web.routes.entities` | Read-only entity browser routes | `schemas`, `fs` | `GET /entities`, `GET /entities/<id>` |
+| `amanuensis.web.routes.resolutions` | Read-only resolution browser routes | `schemas`, `fs` | `GET /resolutions`, `GET /resolutions/<id>` |
 | `amanuensis.export` (M9.x) | Static HTML export (Phase 1 stub; Phase 4 production) | `schemas`, `fs`, `web` (renderer reuse) | `amanuensis export` |
 
 Phase 1 status as of M1.9: `schemas` and `fs` are complete. The
-remaining modules are scheduled in M2–M9.
+remaining modules are scheduled in M2–M9. Phase 2a (Resolve) added
+`schemas.entity`, `schemas.resolution`, `schemas.entity_supersede`,
+`schemas.resolution_supersede`, `vocabulary.entity_registry`,
+`validators.entity_kind_in_vocabulary`, `cli.map`, and
+`web.routes.entities`/`web.routes.resolutions`.
 
 ---
 
@@ -427,7 +453,7 @@ Phase 1 deliberate scope cuts, not bugs. The list mirrors the
 
 - [`cli-reference.md`](./cli-reference.md) — per-command reference for
   the `amanuensis` console script (init / ingest / status / atom /
-  clarification / iteration / vocabulary / install-skills).
+  clarification / iteration / vocabulary / install-skills / map).
 - [`schema-reference.md`](./schema-reference.md) — per-model field
   documentation, canonical-form rules, content-addressable id
   algorithm, INVARIANTS enforcement points.
@@ -437,7 +463,7 @@ Phase 1 deliberate scope cuts, not bugs. The list mirrors the
   supervision surfaces (checkpoints, clarifications, iteration
   directives, delivery gate) and the canonical end-to-end run.
 - [`../INVARIANTS.md`](../INVARIANTS.md) — the invariants charter
-  (INV-1 through INV-10).
+  (INV-1 through INV-14).
 - [`../amanuensis.yaml`](../amanuensis.yaml) — the project marker and
   posture configuration.
 - `~/Documents/Projects/.plans/amanuensis/phase1-distill-foundation-2026-05-29.md` —

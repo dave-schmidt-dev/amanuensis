@@ -4,7 +4,8 @@
 
 This guide is for a human supervisor running a real distillation
 engagement on amanuensis. It assumes you have already read
-[`cli-reference.md`](./cli-reference.md) (the 13-command CLI surface)
+[`cli-reference.md`](./cli-reference.md) (the full CLI surface,
+including Phase 2a `amanuensis map` sub-app)
 and [`skill-author-guide.md`](./skill-author-guide.md) (the role
 contracts and dispatch queue protocol). In scope: the four supervision
 surfaces the system exposes, how they wire to the local web app, and a
@@ -45,9 +46,18 @@ is stable-sorted for diff-friendly comparison between checkpoints.
 
 ### 2. Clarifications (interactive vs filesystem)
 
-A clarification is raised when (a) an atom fails validation or (b) a
+A clarification is raised when (a) an atom fails validation, (b) a
 relation's warrant is flagged `warrant_defensibility: contested` by
-the Auditor (CR-7). Each clarification lives at
+the Auditor (CR-7), or (c) the Map Auditor encounters an ambiguous
+or disputed entity resolution. The clarification kinds in use are:
+
+| Kind | Raised by | Trigger |
+| --- | --- | --- |
+| `warrant-defensibility-contested` | Auditor (distill phase) | A rejection carries `warrant_defensibility: contested`. |
+| `resolution-ambiguous` | Map Auditor (map phase) | Two equally-good entity matches, or an entity kind that is `supervisor-only` in the vocabulary snapshot. |
+| `resolution-disputed` | Map Auditor (map phase) | A supersede proposal targets a resolution whose PROV `was_attributed_to.kind == "human"`. Never auto-accepted. |
+
+Each clarification lives at
 `distillations/<source-id>/clarifications/open/<id>.md` until
 resolved, then moves to `clarifications/resolved/`.
 
@@ -163,6 +173,8 @@ interchangeably without race risk.
 | `/distillations/<src>/relations` | Cytoscape relation graph. Uses the PM-6 HTMX swap pattern so graph state persists across HTMX swaps (filters, layout choice). |
 | `/clarifications` | Lists open clarifications + per-row resolve form (surface #2). |
 | `/iterations` | Lists existing directives + add form (surface #3). |
+| `/entities` | Entity browser: lists canonical entities with kind, canonical name, and alias count. Phase 2a. |
+| `/resolutions` | Resolution browser: lists active resolutions with triple, entity, and confidence. Phase 2a. |
 | `/replay-log` | Recent activity feed for audit — useful for cross-checking what the dispatch driver and the supervisor actually did. |
 | `/status` | Workspace health stats (a richer rendering of `amanuensis status`). |
 
@@ -218,9 +230,11 @@ blocks the dispatch command.
 
 Read-only commands (`status`, `atom list`, `atom show`, `atom
 validate`, `clarification list`, `iteration list`, `vocabulary list`,
-`vocabulary show`, `vocabulary snapshot`) do NOT acquire the flock —
-they are safe to run concurrently with any mutating operation, and
-their output is a snapshot of substrate state at read time.
+`vocabulary show`, `vocabulary snapshot`, `map status`, `map entity
+list`, `map entity show`, `map resolution show`, `map vocabulary
+show`) do NOT acquire the flock — they are safe to run concurrently
+with any mutating operation, and their output is a snapshot of
+substrate state at read time.
 
 ## Known Limitations
 

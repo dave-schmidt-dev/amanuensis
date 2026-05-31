@@ -12,7 +12,7 @@ filesystem layer (`src/amanuensis/fs/`) writes them to.
 The companion document [`architecture.md`](./architecture.md) describes
 the system as a whole; this document is the per-record reference.
 
-The five **content-addressable** types are:
+The five Phase 1 **content-addressable** types are:
 
 | Type | Module | Prefix | Volatile fields |
 | --- | --- | --- | --- |
@@ -21,6 +21,15 @@ The five **content-addressable** types are:
 | `ProvenanceRecord` | `schemas/provenance.py` | `p-` | `set()` |
 | `Clarification` | `schemas/clarification.py` | `c-` | `{status, resolved_at, resolved_by, resolution, raised_provenance_id, resolved_provenance_id}` |
 | `IterationDirective` | `schemas/iteration.py` | `i-` | `{applied_at, applied_by, applied_outcome, issued_provenance_id, applied_provenance_id}` |
+
+Phase 2a (Resolve) adds four more **content-addressable** types:
+
+| Type | Module | Prefix | Volatile fields |
+| --- | --- | --- | --- |
+| `Entity` | `schemas/entity.py` | `e-` | `{provenance_id}` |
+| `Resolution` | `schemas/resolution.py` | `j-` | `{provenance_id}` |
+| `EntitySupersede` | `schemas/entity_supersede.py` | `t-` | `{provenance_id}` |
+| `ResolutionSupersede` | `schemas/resolution_supersede.py` | `s-` | `{provenance_id}` |
 
 The remaining Phase 1 schemas — `ReplayLogEntry`, `Vocabulary`,
 `VocabularyEntry`, `OperandTypeSchema` — are NOT content-addressable.
@@ -36,9 +45,10 @@ which rejects naive timestamps with error type `timezone_aware`.
 
 ## Schema reference (per-model)
 
-The twelve Phase 1 model classes in dependency order. Each entry lists
-the model's purpose, its fields (required and optional), and validation
-rules beyond plain Pydantic typing.
+The twelve Phase 1 model classes plus four Phase 2a (Resolve) model
+classes, in dependency order. Each entry lists the model's purpose,
+its fields (required and optional), and validation rules beyond plain
+Pydantic typing.
 
 ### `AgentAttribution` (`schemas/_shared.py`)
 
@@ -217,6 +227,128 @@ Content-addressable.
 
 On-disk: `iterations/i-<hash>.md` (workspace-level, not under
 `distillations/`). Frontmatter + markdown body for `directive`.
+
+### `Entity` (`schemas/entity.py`)
+
+The canonical cross-document entity. Every `OperandRef` of `kind=entity`
+across the workspace resolves (via a `Resolution` record) to one `Entity`.
+Entities are immutable once written ([INV-13](../INVARIANTS.md#inv-13--entity-and-resolution-records-are-immutable-once-written));
+corrections go through `EntitySupersede`. Content-addressable.
+
+| Field | Type | Required | Notes |
+| --- | --- | --- | --- |
+| `id` | `str` | yes | `e-<16 hex chars>`. Content-addressable. |
+| `kind` | `str` | yes | MUST be the `id` of an entry in `mappings/entity-vocabulary-snapshot.yaml`. Closed-vocab gate is `entity_kind_in_vocabulary` validator ([INV-12](../INVARIANTS.md#inv-12--mappings-is-the-home-for-all-cross-document-artifacts)). Validator `_non_empty_kind` rejects blank strings. |
+| `canonical_name` | `str` | yes | Canonical surface form. Validator `_non_empty_canonical` rejects blank strings. |
+| `aliases` | `list[str]` | no (default `[]`) | Surface forms seen across the corpus. |
+| `notes` | `str \| None` | no (default `None`) | Supervisor-authored disambiguation text (markdown). |
+| `provenance_id` | `str` | yes | Volatile under canonical-form hashing; same rationale as `Atom.provenance_id`. |
+| `role_attributions` | `list[RoleAttribution]` | yes | |
+| `schema_version` | `int` | no (default `1`) | |
+
+**Volatile fields:** `{"provenance_id"}`.
+
+**Validators:** `_non_empty_canonical` (rejects blank `canonical_name`);
+`_non_empty_kind` (rejects blank `kind`).
+
+On-disk: `mappings/entities/e-<hash>.md` — YAML frontmatter for
+structured fields; markdown body for `notes` (if any).
+
+Example YAML frontmatter:
+
+```yaml
+id: e-3a9b12ff4c6d8e10
+kind: organization
+canonical_name: Acme Corp
+aliases:
+  - ACME Corporation
+  - Acme Inc
+notes: null
+provenance_id: p-7f2a9b...
+schema_version: 1
+```
+
+---
+
+### `Resolution` (`schemas/resolution.py`)
+
+One immutable join: `(source_id, atom_id, operand_index)` → `entity_id`.
+The unit of cross-document joinable evidence. Two non-superseded
+resolutions for the same triple cannot coexist
+([INV-14](../INVARIANTS.md#inv-14--resolution-records-key-off-the-normalized-triple)).
+Corrections go through `ResolutionSupersede`. Content-addressable.
+
+| Field | Type | Required | Notes |
+| --- | --- | --- | --- |
+| `id` | `str` | yes | `j-<16 hex chars>`. Prefix `j` = "join". |
+| `source_id` | `str` | yes | Identifies the distillation. Must name an existing distillation (INV-12). |
+| `atom_id` | `str` | yes | The atom that owns the operand. |
+| `operand_index` | `int` | yes | Zero-indexed into the atom's `operands` list. `ge=0`. Validator `resolution_triple_exists` (M2) certifies the index is in range. |
+| `entity_id` | `str` | yes | The canonical entity (`e-<hash>`) this operand resolves to. |
+| `confidence` | `Literal["high", "medium", "low"]` | yes | |
+| `basis` | `str` | yes | One-line rationale (no embedded newlines). Validator `_basis_one_line` rejects multi-line or blank strings. |
+| `provenance_id` | `str` | yes | Volatile under canonical-form hashing. |
+| `role_attributions` | `list[RoleAttribution]` | yes | |
+| `schema_version` | `int` | no (default `1`) | |
+
+**Volatile fields:** `{"provenance_id"}`.
+
+**Validators:** `_basis_one_line` (rejects `\n`/`\r` or blank `basis`).
+
+On-disk: `mappings/resolutions/j-<hash>.yaml` — pure YAML.
+
+---
+
+### `EntitySupersede` (`schemas/entity_supersede.py`)
+
+Records a supervisor correction at the entity level — a merge, split, or
+rename of canonical entities. The superseded entity record remains on
+disk (immutability); this record is the correction pointer. Content-addressable.
+
+| Field | Type | Required | Notes |
+| --- | --- | --- | --- |
+| `id` | `str` | yes | `t-<16 hex chars>`. Prefix `t` = "tracking". |
+| `kind` | `Literal["entity"]` | yes (default `"entity"`) | Discriminator distinguishing entity-level from resolution-level corrections. |
+| `superseded_entity_id` | `str` | yes | The entity id (`e-`) being replaced. |
+| `replacement_entity_id` | `str` | yes | The surviving canonical entity (`e-`). |
+| `reason` | `str` | yes | Non-empty reason for the correction. Validator `_reason_non_empty` rejects blank strings. |
+| `provenance_id` | `str` | yes | Volatile under canonical-form hashing. |
+| `role_attributions` | `list[RoleAttribution]` | yes | |
+| `schema_version` | `int` | no (default `1`) | |
+
+**Volatile fields:** `{"provenance_id"}`.
+
+**Validators:** `_reason_non_empty` (rejects blank `reason`).
+
+On-disk: `mappings/supersedes/t-<hash>.yaml` — pure YAML.
+
+---
+
+### `ResolutionSupersede` (`schemas/resolution_supersede.py`)
+
+Records a supervisor correction at the resolution level. Carries no
+semantic content beyond the old → new pointer; the corrected resolution
+is a separate new `Resolution` record. Walking the supersede chain yields
+the current resolution for a given triple. Content-addressable.
+
+| Field | Type | Required | Notes |
+| --- | --- | --- | --- |
+| `id` | `str` | yes | `s-<16 hex chars>`. Prefix `s` = "supersede". |
+| `kind` | `Literal["resolution"]` | yes (default `"resolution"`) | Discriminator; distinguishes from `EntitySupersede`. |
+| `superseded_resolution_id` | `str` | yes | The resolution id (`j-`) being replaced. |
+| `replacement_resolution_id` | `str` | yes | The new resolution id (`j-`) that takes its place. |
+| `reason` | `str` | yes | Non-empty reason. Validator `_reason_non_empty` rejects blank strings. |
+| `provenance_id` | `str` | yes | Volatile under canonical-form hashing. |
+| `role_attributions` | `list[RoleAttribution]` | yes | |
+| `schema_version` | `int` | no (default `1`) | |
+
+**Volatile fields:** `{"provenance_id"}`.
+
+**Validators:** `_reason_non_empty` (rejects blank `reason`).
+
+On-disk: `mappings/supersedes/s-<hash>.yaml` — pure YAML.
+
+---
 
 ### `ReplayLogEntry` (`schemas/replay_log.py`)
 
@@ -465,6 +597,10 @@ Given a Pydantic model instance:
 | `ProvenanceRecord` | `set()` | A provenance record **is** the lifecycle event. Every field other than `id` is identity content. |
 | `Clarification` | `{"status", "resolved_at", "resolved_by", "resolution", "raised_provenance_id", "resolved_provenance_id"}` | The clarification's identity is its question and raise context. The `open` → `resolved` transition is recorded via the paired provenance pair (raised + resolved); the artifact itself is the same artifact across the transition. The provenance pointers are PROV-O Entity → Activity, same volatility argument as Atom. |
 | `IterationDirective` | `{"applied_at", "applied_by", "applied_outcome", "issued_provenance_id", "applied_provenance_id"}` | The directive's identity is its instruction and issue context. The `issued` → `applied` transition is recorded via the paired provenance pair (issued + applied); same argument as Clarification. |
+| `Entity` | `{"provenance_id"}` | Same rationale as Atom. Entity identity is its kind + canonical_name + aliases; the provenance pointer is observational. |
+| `Resolution` | `{"provenance_id"}` | Resolution identity is the triple + entity target + confidence + basis. Same PROV-O direction argument as Atom. |
+| `EntitySupersede` | `{"provenance_id"}` | Supersede identity is the old → new pointer + reason. Same argument as Atom. |
+| `ResolutionSupersede` | `{"provenance_id"}` | Same rationale. |
 
 The "lifecycle-completion" volatility on `Clarification` and
 `IterationDirective` is the spec's intent: resolving a clarification
