@@ -468,3 +468,59 @@ def test_empty_state_when_mappings_empty(
     )
     text = out.read_text(encoding="utf-8")
     assert "No mappings yet" in text
+
+
+# --- T9.3: Inline resolution annotation tests ------------------------
+
+
+def test_inline_annotation_when_resolved(
+    resolved_atom_workspace: Path,
+    tmp_path: Path,
+) -> None:
+    """Resolved entity operand renders as <a href="#entity-..."> link."""
+    substrate = Substrate(resolved_atom_workspace)
+    out = tmp_path / "resolved.html"
+    export_static_html(
+        substrate=substrate,
+        source_id="export-m9-src",
+        output_path=out,
+        include_mappings=True,
+    )
+    text = out.read_text(encoding="utf-8")
+    assert 'class="resolved-entity"' in text
+    assert 'href="#entity-' in text
+
+
+def test_no_inline_annotation_with_flag_off(
+    resolved_atom_workspace: Path,
+    tmp_path: Path,
+) -> None:
+    """With include_mappings=False, resolved operand is NOT wrapped in <a>."""
+    substrate = Substrate(resolved_atom_workspace)
+    out = tmp_path / "no-mappings.html"
+    export_static_html(
+        substrate=substrate,
+        source_id="export-m9-src",
+        output_path=out,
+        include_mappings=False,
+    )
+    text = out.read_text(encoding="utf-8")
+    assert 'class="resolved-entity"' not in text
+
+
+def test_unresolved_operand_renders_plain_span(
+    unresolved_atom_workspace: Path,
+    tmp_path: Path,
+) -> None:
+    """Unresolved kind=entity operand renders as <span class="unresolved-entity">."""
+    substrate = Substrate(unresolved_atom_workspace)
+    out = tmp_path / "unresolved.html"
+    export_static_html(
+        substrate=substrate,
+        source_id="export-m9-src",
+        output_path=out,
+        include_mappings=True,
+    )
+    text = out.read_text(encoding="utf-8")
+    assert 'class="unresolved-entity"' in text
+    assert 'class="resolved-entity"' not in text
