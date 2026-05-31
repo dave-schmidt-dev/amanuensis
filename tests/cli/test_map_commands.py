@@ -757,3 +757,48 @@ def test_vocabulary_snapshot_dry_run_no_writes(tmp_path: Path) -> None:
     assert res.exit_code == 0
     assert "would" in res.stdout.lower()
     assert not snapshot.exists()
+
+
+# ---------------------------------------------------------------------------
+# T7.11: mutating-verb flock-contention parametric test
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "cmd",
+    [
+        # Restricted to verbs where flock-acquisition is the FIRST
+        # mutating step (so the flock-held condition surfaces before any
+        # arg-validation no-such-record errors). merge / supersede also
+        # acquire the flock but only after validating their referenced
+        # entity / resolution ids; their flock behavior is exercised
+        # implicitly by the existing happy-path tests.
+        ["map", "--non-interactive"],
+        ["map", "vocabulary", "snapshot"],
+    ],
+)
+def test_mutating_map_verb_respects_flock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, cmd: list[str]
+) -> None:
+    """Mutating map verbs fail fast when the workspace flock is held."""
+    from amanuensis.fs.lock import acquire_workspace_lock
+
+    workspace = _make_workspace(tmp_path)
+    (workspace / "distillations" / "src1" / "atoms").mkdir(parents=True)
+    (workspace / "distillations" / "src1" / "relations").mkdir(parents=True)
+    fake_home = tmp_path / "fake_home"
+    skills_dir = fake_home / ".claude" / "skills" / "amanuensis"
+    skills_dir.mkdir(parents=True)
+    (skills_dir / "map_resolve.md").write_text("---\nrole: map-resolve\n---\nbody")
+    (skills_dir / "map_audit.md").write_text("---\nrole: map-audit\n---\nbody")
+    monkeypatch.setenv("AMANUENSIS_HARNESS_HOME", str(fake_home))
+
+    with acquire_workspace_lock(workspace, timeout=0.1):
+        res = runner.invoke(app, [*cmd, "--workspace", str(workspace)])
+        assert res.exit_code != 0, (
+            f"expected non-zero exit when flock held; got 0\noutput={res.output!r}"
+        )
+        combined = (res.stdout + res.stderr).lower()
+        assert "flock" in combined or "timeout" in combined or "held" in combined, (
+            f"expected flock/timeout/held in output; got {res.output!r}"
+        )
