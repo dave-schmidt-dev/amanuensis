@@ -1,3 +1,4 @@
+# pyright: reportPrivateUsage=false
 """Gate test for INV-3 (Provenance by construction).
 
 Quoting INVARIANTS.md INV-3 verbatim:
@@ -14,10 +15,23 @@ Walks a hand-built fixture substrate; for every atom, runs the M2.4
 negative cases (missing PROV file, mismatched entity_id) demonstrate
 that the gate catches INV-3 violations rather than silently passing.
 
+Phase 2a extension (IA-4, T10.4)
+---------------------------------
+Four parametrized cases extend the gate to ``mappings/`` artifacts:
+
+- entity with a valid provenance record passes.
+- entity whose provenance_id file is missing fails.
+- resolution with a valid provenance record passes.
+- resolution whose provenance_id file is missing fails.
+
+The mappings-layer provenance lives at
+``mappings/provenance/p-<hash>.yaml`` (``substrate.mappings_provenance_path``),
+not in ``distillations/<src>/provenance/``. The inline walker
+``_check_mappings_provenance`` covers this path.
+
 Scope boundary
 --------------
-M2.5 scopes this gate to atoms — atoms are the only entity type with an
-end-to-end substrate ingest path today. INV-3 extends to relations,
+M2.5 scopes the atom walk to atoms only. INV-3 extends to relations,
 clarification raised/resolved events, and iteration issued/applied
 events.
 
@@ -41,9 +55,17 @@ from typing import Any
 import pytest
 
 from amanuensis.fs import Substrate
-from amanuensis.schemas import AgentAttribution, Atom, ProvenanceRecord, compute_id
+from amanuensis.fs._atomic import atomic_write_text
+from amanuensis.fs._serialize import parse_provenance_yaml, serialize_yaml
+from amanuensis.schemas import AgentAttribution, Atom, ProvenanceRecord, RoleAttribution, compute_id
 from amanuensis.validators import ValidationResult, provenance_completeness
 from tests.invariants._types import MatchedAtomFactory
+from tests.invariants.conftest import (
+    _MAPPINGS_ATOM_ID,
+    _MAPPINGS_SOURCE_ID,
+    _build_entity,
+    _build_resolution,
+)
 
 SOURCE_ID = "src-fixture-001"
 
@@ -167,3 +189,127 @@ def _rebuild_atom_with_provenance_id(atom: Atom, provenance_id: str) -> Atom:
     payload = atom.model_dump()
     payload["provenance_id"] = provenance_id
     return Atom.model_validate(payload)
+
+
+# ---------------------------------------------------------------------------
+# Phase 2a extension — mappings/ provenance completeness (IA-4, T10.4)
+# ---------------------------------------------------------------------------
+
+
+def _check_mappings_provenance(
+    substrate: Substrate,
+    artifact_id: str,
+    provenance_id: str,
+) -> tuple[bool, str]:
+    """Check that a mappings-layer artifact has a valid provenance record.
+
+    Returns ``(passed, reason)`` — mirrors the shape of
+    ``ValidationResult`` without importing it for this inline walker.
+
+    A record is valid when:
+    - The provenance file exists at ``mappings/provenance/<prov_id>.yaml``.
+    - It parses without error.
+    - Its ``entity_id`` matches ``artifact_id``.
+    """
+    prov_path = substrate.mappings_provenance_path(provenance_id)
+    if not prov_path.is_file():
+        return (
+            False,
+            f"INV-3 violation: mappings provenance file missing for "
+            f"{artifact_id!r} (expected {prov_path})",
+        )
+    try:
+        prov = parse_provenance_yaml(prov_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        return (
+            False,
+            f"INV-3 violation: mappings provenance for {artifact_id!r} failed to parse: {exc}",
+        )
+    if prov.entity_id != artifact_id:
+        return (
+            False,
+            f"INV-3 violation: mappings provenance entity_id={prov.entity_id!r} "
+            f"does not match artifact id={artifact_id!r}",
+        )
+    return True, ""
+
+
+@pytest.mark.parametrize(
+    "artifact_type,with_prov,expected_pass",
+    [
+        ("entity", True, True),
+        ("entity", False, False),
+        ("resolution", True, True),
+        ("resolution", False, False),
+    ],
+    ids=[
+        "entity-valid-prov",
+        "entity-missing-prov",
+        "resolution-valid-prov",
+        "resolution-missing-prov",
+    ],
+)
+@pytest.mark.invariants
+def test_inv3_mappings_provenance_completeness(
+    tmp_path: Path,
+    role_attribution: object,
+    agent: object,
+    artifact_type: str,
+    with_prov: bool,
+    expected_pass: bool,
+) -> None:
+    """INV-3 gate extended to mappings/ entities and resolutions (Phase 2a IA-4).
+
+    For each artifact type (entity, resolution) and provenance state
+    (present, absent), asserts that the ``_check_mappings_provenance``
+    walker returns the expected pass/fail result.
+    """
+    marker = tmp_path / "amanuensis.yaml"
+    marker.write_text(
+        "schema_version: 1\nproject_name: inv3-mappings-prov\n",
+        encoding="utf-8",
+    )
+    s = Substrate(tmp_path)
+
+    agent_obj = AgentAttribution(
+        kind="llm",
+        identifier="claude-opus-4-7",
+        role="map-resolve",
+    )
+    ra = RoleAttribution(
+        agent=agent_obj,
+        activity="proposed",
+        at=datetime(2026, 5, 31, 12, 0, 0, tzinfo=UTC),
+    )
+
+    entity, entity_prov = _build_entity(ra, agent_obj)
+
+    if artifact_type == "entity":
+        if with_prov:
+            atomic_write_text(
+                s.mappings_provenance_path(entity_prov.id), serialize_yaml(entity_prov)
+            )
+        s.add_entity(entity)
+        passed, reason = _check_mappings_provenance(s, entity.id, entity.provenance_id)
+    else:
+        # resolution: entity prov is always written so add_entity succeeds.
+        atomic_write_text(s.mappings_provenance_path(entity_prov.id), serialize_yaml(entity_prov))
+        s.add_entity(entity)
+
+        resolution, res_prov = _build_resolution(
+            ra,
+            agent_obj,
+            source_id=_MAPPINGS_SOURCE_ID,
+            atom_id=_MAPPINGS_ATOM_ID,
+            entity_id=entity.id,
+        )
+        if with_prov:
+            atomic_write_text(s.mappings_provenance_path(res_prov.id), serialize_yaml(res_prov))
+        s.add_resolution(resolution)
+        passed, reason = _check_mappings_provenance(s, resolution.id, resolution.provenance_id)
+
+    assert passed == expected_pass, (
+        f"artifact_type={artifact_type!r} with_prov={with_prov}: "
+        f"expected passed={expected_pass!r} but got passed={passed!r} "
+        f"(reason: {reason!r})"
+    )
