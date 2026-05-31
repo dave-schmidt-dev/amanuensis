@@ -47,28 +47,30 @@ names. Surface forms: **"ACME Corp"**, **"BetaCo"** (no qualifier), **"Counsel f
 
 ## Expected canonical entities after surface-form deduplication
 
-The map-resolve outputs are written so that:
+Each distillation plants 3 atoms (one entity-kind obligor operand per atom), giving 9 atom
+operand-refs across 3 sources. The map-resolve outputs are synthesized to deduplicate:
 
 - "ACME Corp" and "ACME Corporation" collapse to **one canonical entity** (`canonical_name: "ACME Corp"`).
 - "BetaCo Ltd", "BetaCo Ltd.", and "BetaCo" collapse to **one canonical entity** (`canonical_name: "BetaCo Ltd"`).
-- Each document-specific name becomes its own entity.
+- Three document-specific names each become their own entity.
 
-The 9 canonical entities are:
+The 5 canonical entities are:
 
-| # | `canonical_name`       | Surface forms merged                               |
-|---|------------------------|----------------------------------------------------|
-| 1 | ACME Corp              | "ACME Corp", "ACME Corporation"                    |
-| 2 | BetaCo Ltd             | "BetaCo Ltd", "BetaCo Ltd.", "BetaCo"              |
-| 3 | Contract Draft 1       | "Contract Draft 1"                                 |
-| 4 | Signing 1              | "Signing 1"                                        |
-| 5 | Contract Draft 2       | "Contract Draft 2"                                 |
-| 6 | Signing 2              | "Signing 2"                                        |
-| 7 | Counsel for ACME       | "Counsel for ACME"                                 |
-| 8 | Settlement Instrument  | "Settlement Instrument"                            |
-| 9 | Settlement Event       | "Settlement Event"                                 |
+| # | `canonical_name`  | Surface forms merged                          | Spans sources        |
+|---|-------------------|-----------------------------------------------|----------------------|
+| 1 | ACME Corp         | "ACME Corp", "ACME Corporation"               | all 3 distillations  |
+| 2 | BetaCo Ltd        | "BetaCo Ltd", "BetaCo Ltd.", "BetaCo"         | all 3 distillations  |
+| 3 | Contract Draft 1  | "Contract Draft 1"                            | contract-draft-1     |
+| 4 | Contract Draft 2  | "Contract Draft 2"                            | contract-draft-2     |
+| 5 | Counsel for ACME  | "Counsel for ACME"                            | settlement-instrument|
 
-The ACME Corp entity appears in atoms from all three distillations, exercising the
-**cross-document resolution** property (T11.2 assertion 5).
+The 9 atom operand-refs map to 5 canonical entities:
+- contract-draft-1 atoms: ACME Corp (x1), BetaCo Ltd (x1), Contract Draft 1 (x1)
+- contract-draft-2 atoms: ACME Corp (x1), BetaCo Ltd (x1), Contract Draft 2 (x1)
+- settlement-instrument atoms: ACME Corp (x1), BetaCo Ltd (x1), Counsel for ACME (x1)
+
+The ACME Corp entity has resolutions from atoms across **all 3 distillations**, exercising the
+**cross-document resolution** property (T11.2 assertion 5). BetaCo Ltd likewise spans all 3.
 
 ---
 

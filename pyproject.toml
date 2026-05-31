@@ -95,6 +95,7 @@ addopts = "-ra --strict-markers --strict-config -n 8"
 markers = [
     "invariants: tests that enforce INVARIANTS.md gates",
     "e2e: end-to-end tests (slow)",
+    "integration: integration tests that exercise multiple components end-to-end",
 ]
 
 [tool.vulture]

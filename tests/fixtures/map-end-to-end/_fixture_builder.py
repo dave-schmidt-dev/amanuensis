@@ -4,14 +4,14 @@ Invoked from integration tests or as a CLI smoke-check::
 
     uv run python tests/fixtures/map-end-to-end/_fixture_builder.py <workspace-path>
 
-Plants 3 distillations into the workspace:
+Plants 3 distillations into the workspace (3 atoms each, 9 total):
 
 1. ``contract-draft-1`` — atoms referencing "ACME Corp", "BetaCo Ltd",
-   "Contract Draft 1", "Signing 1".
+   "Contract Draft 1" as entity-kind obligor operands.
 2. ``contract-draft-2`` — atoms referencing "ACME Corporation" (alias
-   variation), "BetaCo Ltd.", "Contract Draft 2", "Signing 2".
+   variation), "BetaCo Ltd.", "Contract Draft 2".
 3. ``settlement-instrument`` — atoms referencing "ACME Corp", "BetaCo",
-   "Counsel for ACME", "Settlement Instrument", "Settlement Event".
+   "Counsel for ACME".
 
 Design rationale
 ----------------
@@ -28,7 +28,7 @@ cannot drift from the production format because it is written by the same
 code that the real ingest pipeline uses.
 
 See ``SOURCES.md`` in this directory for the full design rationale and the
-9 expected canonical entities produced by the mapping pipeline.
+5 expected canonical entities produced by the mapping pipeline.
 
 Mirrors the patterns in ``tests/e2e/_fixture_builder.py``:
 deterministic ids, structured Atom/Provenance models, content-addressable
@@ -508,12 +508,11 @@ def build_map_end_to_end_workspace(workspace: Path) -> Path:
     ``contract-draft-1``, ``contract-draft-2``, and
     ``settlement-instrument`` under ``distillations/``.
 
-    Each distillation gets:
-    - A vocabulary snapshot (``asserts_obligation`` predicate).
-    - 3 paragraphs under ``source-mirror/paragraphs/``.
-    - 3 atoms under ``atoms/`` (one entity-kind operand per atom).
-    - Provenance records for each atom under ``provenance/``.
-    - A ``source-mirror/manifest.yaml``.
+    Each distillation gets a vocabulary snapshot (``asserts_obligation``
+    predicate), 3 paragraphs, 3 atoms each with one entity-kind obligor
+    operand, provenance records, and a source-mirror manifest.  The 9 atom
+    operand surface forms collapse to 5 canonical entities after map-resolve
+    deduplication (see ``SOURCES.md``).
 
     Args:
         workspace: Path to the workspace root directory.  The directory
