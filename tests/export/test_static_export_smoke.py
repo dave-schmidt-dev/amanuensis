@@ -524,3 +524,49 @@ def test_unresolved_operand_renders_plain_span(
     text = out.read_text(encoding="utf-8")
     assert 'class="unresolved-entity"' in text
     assert 'class="resolved-entity"' not in text
+
+
+# --- T9.4: Render-purity (byte-identical re-runs) --------------------
+
+
+@pytest.mark.parametrize(
+    "include_mappings,fixture",
+    [
+        (True, "populated_mappings_workspace"),
+        (True, "empty_mappings_workspace"),
+        (False, "populated_mappings_workspace"),
+    ],
+)
+def test_export_render_pure(
+    include_mappings: bool,
+    fixture: str,
+    tmp_path: Path,
+    request: pytest.FixtureRequest,
+) -> None:
+    """Two consecutive exports with a frozen timestamp produce byte-identical output."""
+    workspace: Path = request.getfixturevalue(fixture)
+    substrate = Substrate(workspace)
+    frozen = datetime(2026, 1, 1, 0, 0, 0, tzinfo=UTC)
+
+    out1 = tmp_path / "run1.html"
+    out2 = tmp_path / "run2.html"
+
+    export_static_html(
+        substrate=substrate,
+        source_id="export-m9-src",
+        output_path=out1,
+        include_mappings=include_mappings,
+        now=frozen,
+    )
+    export_static_html(
+        substrate=substrate,
+        source_id="export-m9-src",
+        output_path=out2,
+        include_mappings=include_mappings,
+        now=frozen,
+    )
+
+    assert out1.read_bytes() == out2.read_bytes(), (
+        f"Export is not pure: byte content differs between two runs "
+        f"(include_mappings={include_mappings}, fixture={fixture!r})"
+    )
