@@ -19,10 +19,14 @@ from amanuensis.schemas import (
     AgentAttribution,
     Atom,
     Clarification,
+    Entity,
+    EntitySupersede,
     IterationDirective,
     OperandRef,
     ProvenanceRecord,
     Relation,
+    Resolution,
+    ResolutionSupersede,
     RoleAttribution,
     compute_id,
 )
@@ -230,3 +234,125 @@ def iteration(human_agent: AgentAttribution) -> IterationDirective:
         "schema_version": 1,
     }
     return _iteration_with_hash(payload)
+
+
+# --- Phase 2a model builders -----------------------------------------
+
+
+def _entity_with_hash(payload: dict[str, Any]) -> Entity:
+    payload["id"] = "e-" + "0" * 16
+    draft = Entity(**payload)
+    payload["id"] = compute_id(draft)
+    return Entity(**payload)
+
+
+def make_entity(
+    role_attribution: RoleAttribution,
+    *,
+    canonical_name: str = "ACME Corp.",
+    kind: str = "party",
+    aliases: list[str] | None = None,
+    notes: str | None = None,
+) -> Entity:
+    """Build an Entity fixture with correct content-addressable id."""
+    payload: dict[str, Any] = {
+        "kind": kind,
+        "canonical_name": canonical_name,
+        "aliases": aliases if aliases is not None else ["ACME", "Acme Corporation"],
+        "notes": notes,
+        "provenance_id": "p-fixture00000010",
+        "role_attributions": [role_attribution],
+        "schema_version": 1,
+    }
+    return _entity_with_hash(payload)
+
+
+@pytest.fixture
+def entity(role_attribution: RoleAttribution) -> Entity:
+    return make_entity(role_attribution)
+
+
+def _resolution_with_hash(payload: dict[str, Any]) -> Resolution:
+    payload["id"] = "j-" + "0" * 16
+    draft = Resolution(**payload)
+    payload["id"] = compute_id(draft)
+    return Resolution(**payload)
+
+
+def make_resolution(
+    role_attribution: RoleAttribution,
+    entity: Entity,
+    *,
+    source_id: str = SOURCE_ID,
+    atom_id: str = "a-fixture0001000",
+    operand_index: int = 0,
+    confidence: str = "high",
+) -> Resolution:
+    """Build a Resolution fixture with correct content-addressable id."""
+    payload: dict[str, Any] = {
+        "source_id": source_id,
+        "atom_id": atom_id,
+        "operand_index": operand_index,
+        "entity_id": entity.id,
+        "confidence": confidence,
+        "basis": "Exact name match against canonical entity.",
+        "provenance_id": "p-fixture00000011",
+        "role_attributions": [role_attribution],
+        "schema_version": 1,
+    }
+    return _resolution_with_hash(payload)
+
+
+@pytest.fixture
+def resolution(role_attribution: RoleAttribution, entity: Entity) -> Resolution:
+    return make_resolution(role_attribution, entity)
+
+
+def _resolution_supersede_with_hash(payload: dict[str, Any]) -> ResolutionSupersede:
+    payload["id"] = "s-" + "0" * 16
+    draft = ResolutionSupersede(**payload)
+    payload["id"] = compute_id(draft)
+    return ResolutionSupersede(**payload)
+
+
+def make_resolution_supersede(
+    role_attribution: RoleAttribution,
+    old_resolution: Resolution,
+    new_resolution: Resolution,
+) -> ResolutionSupersede:
+    """Build a ResolutionSupersede fixture with correct id."""
+    payload: dict[str, Any] = {
+        "kind": "resolution",
+        "superseded_resolution_id": old_resolution.id,
+        "replacement_resolution_id": new_resolution.id,
+        "reason": "Supervisor corrected entity mapping.",
+        "provenance_id": "p-fixture00000012",
+        "role_attributions": [role_attribution],
+        "schema_version": 1,
+    }
+    return _resolution_supersede_with_hash(payload)
+
+
+def _entity_supersede_with_hash(payload: dict[str, Any]) -> EntitySupersede:
+    payload["id"] = "t-" + "0" * 16
+    draft = EntitySupersede(**payload)
+    payload["id"] = compute_id(draft)
+    return EntitySupersede(**payload)
+
+
+def make_entity_supersede(
+    role_attribution: RoleAttribution,
+    old_entity: Entity,
+    new_entity: Entity,
+) -> EntitySupersede:
+    """Build an EntitySupersede fixture with correct id."""
+    payload: dict[str, Any] = {
+        "kind": "entity",
+        "superseded_entity_id": old_entity.id,
+        "replacement_entity_id": new_entity.id,
+        "reason": "Supervisor merged duplicate entities.",
+        "provenance_id": "p-fixture00000013",
+        "role_attributions": [role_attribution],
+        "schema_version": 1,
+    }
+    return _entity_supersede_with_hash(payload)

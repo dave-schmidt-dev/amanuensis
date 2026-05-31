@@ -50,7 +50,7 @@ from __future__ import annotations
 import re
 from collections.abc import Iterable
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 if TYPE_CHECKING:
     from amanuensis.vocabulary.entity_registry import EntityVocabulary
@@ -60,9 +60,13 @@ import yaml
 from amanuensis.schemas import (
     Atom,
     Clarification,
+    Entity,
+    EntitySupersede,
     IterationDirective,
     ProvenanceRecord,
     Relation,
+    Resolution,
+    ResolutionSupersede,
     SourceMirrorManifest,
     Vocabulary,
     compute_id,
@@ -71,19 +75,31 @@ from amanuensis.schemas import (
 from ._atomic import atomic_write_text
 from ._errors import (
     MappingVocabularyAlreadyPinned,
+    MutationOfImmutableRecord,
+    ResolutionDuplicateTriple,
     SubstrateIdMismatch,
     SubstrateInvalidId,
     SubstrateMarkerMissing,
     SubstrateNotFound,
     SubstrateSnapshotConflict,
     SubstrateSnapshotCorrupt,
+    SupersedeChainTooDeep,
+    SupersedeCycleDetected,
 )
 from ._serialize import (
     parse_atom_md,
+    parse_entity_md,
+    parse_entity_supersede_yaml,
     parse_provenance_yaml,
+    parse_resolution_supersede_yaml,
+    parse_resolution_yaml,
     serialize_atom_md,
     serialize_clarification_md,
+    serialize_entity_md,
+    serialize_entity_supersede_yaml,
     serialize_iteration_md,
+    serialize_resolution_supersede_yaml,
+    serialize_resolution_yaml,
     serialize_yaml,
 )
 
@@ -258,7 +274,11 @@ class Substrate:
         | ProvenanceRecord
         | Clarification
         | IterationDirective
-        | SourceMirrorManifest,
+        | SourceMirrorManifest
+        | Entity
+        | Resolution
+        | ResolutionSupersede
+        | EntitySupersede,
     ) -> None:
         """Refuse to write a model whose declared id != its hash."""
         expected = compute_id(model)
@@ -520,3 +540,509 @@ class Substrate:
             if ".tmp." in name:
                 continue
             yield parse_atom_md(path.read_text(encoding="utf-8"))
+
+    # --- T3.2: mappings/ path resolvers ----------------------------------
+
+    @property
+    def mappings_root(self) -> Path:
+        """Canonical root for all mappings artifacts."""
+        return self.root / "mappings"
+
+    def entity_path(self, entity_id: str) -> Path:
+        """Canonical path for a single Entity file.
+
+        Pure path computation; no FS access.
+        """
+        _validate_id_component(entity_id, label="entity_id")
+        return self.mappings_root / "entities" / f"{entity_id}.md"
+
+    def resolution_path(self, resolution_id: str) -> Path:
+        """Canonical path for a single Resolution file.
+
+        Pure path computation; no FS access.
+        """
+        _validate_id_component(resolution_id, label="resolution_id")
+        return self.mappings_root / "resolutions" / f"{resolution_id}.yaml"
+
+    def supersede_path(self, supersede_id: str) -> Path:
+        """Canonical path for a supersede record (s- or t- prefix).
+
+        Both ResolutionSupersede (s-) and EntitySupersede (t-) live in
+        the same ``supersedes/`` directory, distinguished by id prefix.
+        Pure path computation; no FS access.
+        """
+        _validate_id_component(supersede_id, label="supersede_id")
+        return self.mappings_root / "supersedes" / f"{supersede_id}.yaml"
+
+    def mappings_provenance_path(self, provenance_id: str) -> Path:
+        """Canonical path for a mappings-layer provenance record.
+
+        Pure path computation; no FS access.
+        """
+        _validate_id_component(provenance_id, label="provenance_id")
+        return self.mappings_root / "provenance" / f"{provenance_id}.yaml"
+
+    # --- T3.3: Entity add / get / list -----------------------------------
+
+    def add_entity(self, entity: Entity) -> None:
+        """Write an Entity atomically.
+
+        Validates ``entity.id == compute_id(entity)``. If the canonical
+        path already exists:
+
+        - Reads and parses the on-disk record.
+        - Drops volatile fields from both (``Entity._VOLATILE_FIELDS``).
+        - If the canonical-form dicts are equal: no-op (idempotent).
+        - If they differ: raises ``MutationOfImmutableRecord``.
+
+        This preserves INV-13 (entities are immutable) while allowing
+        safe replay of identical records (e.g. during warp cycles).
+        """
+        self._require_id_matches(entity)
+        path = self.entity_path(entity.id)
+        if path.is_file():
+            existing = parse_entity_md(path.read_text(encoding="utf-8"))
+            volatile = Entity._VOLATILE_FIELDS | frozenset({"id"})  # pyright: ignore[reportPrivateUsage]
+            new_dump = {
+                k: v for k, v in entity.model_dump(mode="python").items() if k not in volatile
+            }
+            old_dump = {
+                k: v for k, v in existing.model_dump(mode="python").items() if k not in volatile
+            }
+            if new_dump == old_dump:
+                return  # idempotent
+            raise MutationOfImmutableRecord(
+                f"Entity at {path} already exists with different non-volatile content; "
+                "refusing to overwrite (INV-13)"
+            )
+        atomic_write_text(path, serialize_entity_md(entity))
+
+    def get_entity(self, entity_id: str) -> Entity:
+        """Read and return an Entity by its content-addressable id."""
+        path = self.entity_path(entity_id)
+        if not path.is_file():
+            raise SubstrateNotFound(f"entity not found at {path}")
+        return parse_entity_md(path.read_text(encoding="utf-8"))
+
+    def list_entities(self) -> Iterable[Entity]:
+        """Yield all Entity records in the workspace.
+
+        Sorted lexicographically by filename for determinism. Skips
+        ``.tmp.*`` writer leftovers.
+        """
+        entities_dir = self.mappings_root / "entities"
+        if not entities_dir.is_dir():
+            return
+        for path in sorted(entities_dir.iterdir()):
+            if not path.is_file():
+                continue
+            if not path.name.endswith(".md"):
+                continue
+            if ".tmp." in path.name:
+                continue
+            yield parse_entity_md(path.read_text(encoding="utf-8"))
+
+    # --- T3.4: Resolution add / get / list -------------------------------
+
+    def add_resolution(self, r: Resolution) -> None:
+        """Write a Resolution atomically.
+
+        Validates ``r.id == compute_id(r)``. Raises
+        ``ResolutionDuplicateTriple`` if a non-superseded Resolution for
+        the same ``(source_id, atom_id, operand_index)`` triple already
+        exists (INV-14).
+        """
+        self._require_id_matches(r)
+        # Duplicate-triple guard: call latest_resolution_for to find any
+        # active (non-superseded) resolution for this triple. If one
+        # exists, reject.
+        existing = self.latest_resolution_for(r.source_id, r.atom_id, r.operand_index)
+        if existing is not None and existing.id != r.id:
+            raise ResolutionDuplicateTriple(
+                f"A non-superseded resolution ({existing.id!r}) already exists "
+                f"for triple ({r.source_id!r}, {r.atom_id!r}, {r.operand_index}); "
+                "INV-14 prohibits a second active resolution for the same triple"
+            )
+        path = self.resolution_path(r.id)
+        atomic_write_text(path, serialize_resolution_yaml(r))
+
+    def get_resolution(self, resolution_id: str) -> Resolution:
+        """Read and return a Resolution by its content-addressable id."""
+        path = self.resolution_path(resolution_id)
+        if not path.is_file():
+            raise SubstrateNotFound(f"resolution not found at {path}")
+        return parse_resolution_yaml(path.read_text(encoding="utf-8"))
+
+    def list_resolutions(
+        self,
+        *,
+        source_id: str | None = None,
+        where_entity_id: str | None = None,
+    ) -> Iterable[Resolution]:
+        """Yield Resolution records, optionally filtered.
+
+        Args:
+            source_id: If given, only yield resolutions whose
+                ``source_id`` field matches.
+            where_entity_id: If given, only yield resolutions whose
+                ``entity_id`` field matches.
+        """
+        resolutions_dir = self.mappings_root / "resolutions"
+        if not resolutions_dir.is_dir():
+            return
+        for path in sorted(resolutions_dir.iterdir()):
+            if not path.is_file():
+                continue
+            if not path.name.endswith(".yaml"):
+                continue
+            if ".tmp." in path.name:
+                continue
+            r = parse_resolution_yaml(path.read_text(encoding="utf-8"))
+            if source_id is not None and r.source_id != source_id:
+                continue
+            if where_entity_id is not None and r.entity_id != where_entity_id:
+                continue
+            yield r
+
+    # --- T3.5: Supersede add / get / list --------------------------------
+
+    def add_resolution_supersede(self, rs: ResolutionSupersede) -> None:
+        """Write a ResolutionSupersede record atomically."""
+        self._require_id_matches(rs)
+        path = self.supersede_path(rs.id)
+        atomic_write_text(path, serialize_resolution_supersede_yaml(rs))
+
+    def get_resolution_supersede(self, supersede_id: str) -> ResolutionSupersede:
+        """Read and return a ResolutionSupersede by its id."""
+        path = self.supersede_path(supersede_id)
+        if not path.is_file():
+            raise SubstrateNotFound(f"resolution supersede not found at {path}")
+        return parse_resolution_supersede_yaml(path.read_text(encoding="utf-8"))
+
+    def add_entity_supersede(self, es: EntitySupersede) -> None:
+        """Write an EntitySupersede record atomically."""
+        self._require_id_matches(es)
+        path = self.supersede_path(es.id)
+        atomic_write_text(path, serialize_entity_supersede_yaml(es))
+
+    def get_entity_supersede(self, supersede_id: str) -> EntitySupersede:
+        """Read and return an EntitySupersede by its id."""
+        path = self.supersede_path(supersede_id)
+        if not path.is_file():
+            raise SubstrateNotFound(f"entity supersede not found at {path}")
+        return parse_entity_supersede_yaml(path.read_text(encoding="utf-8"))
+
+    def list_supersedes(
+        self,
+        *,
+        kind: Literal["resolution", "entity"] | None = None,
+    ) -> Iterable[ResolutionSupersede | EntitySupersede]:
+        """Yield supersede records from the mixed ``supersedes/`` directory.
+
+        Distinguishes record type by id prefix:
+        - ``s-`` prefix → ``ResolutionSupersede``
+        - ``t-`` prefix → ``EntitySupersede``
+
+        Args:
+            kind: If ``"resolution"``, yield only ResolutionSupersede.
+                If ``"entity"``, yield only EntitySupersede.
+                If ``None``, yield all.
+        """
+        supersedes_dir = self.mappings_root / "supersedes"
+        if not supersedes_dir.is_dir():
+            return
+        for path in sorted(supersedes_dir.iterdir()):
+            if not path.is_file():
+                continue
+            if not path.name.endswith(".yaml"):
+                continue
+            if ".tmp." in path.name:
+                continue
+            stem = path.stem  # filename without .yaml
+            if stem.startswith("s-"):
+                if kind == "entity":
+                    continue
+                yield parse_resolution_supersede_yaml(path.read_text(encoding="utf-8"))
+            elif stem.startswith("t-"):
+                if kind == "resolution":
+                    continue
+                yield parse_entity_supersede_yaml(path.read_text(encoding="utf-8"))
+            # Unknown prefix: skip silently (forward-compat)
+
+    # --- T3.6: supersede-chain walkers with cycle guard ------------------
+
+    def latest_entity_for(
+        self,
+        entity_id: str,
+        max_depth: int = 256,
+    ) -> Entity:
+        """Walk the EntitySupersede chain and return the terminal Entity.
+
+        Starting from ``entity_id``, follows EntitySupersede records
+        (``superseded_entity_id`` → ``replacement_entity_id``) until no
+        further supersede exists for the current id.
+
+        Args:
+            entity_id: Starting entity id (prefix ``e-``).
+            max_depth: Maximum chain depth before raising
+                ``SupersedeChainTooDeep``.
+
+        Returns:
+            The terminal (latest non-superseded) ``Entity``.
+
+        Raises:
+            SubstrateNotFound: if any entity in the chain does not exist.
+            SupersedeCycleDetected: if the chain contains a cycle.
+            SupersedeChainTooDeep: if the chain exceeds ``max_depth``.
+        """
+        visited: set[str] = set()
+        current_id = entity_id
+        depth = 0
+        # Build a lookup: superseded_entity_id → replacement_entity_id
+        # We scan all entity supersedes once up front, then walk.
+        supersede_map: dict[str, str] = {}
+        for record in self.list_supersedes(kind="entity"):
+            if isinstance(record, EntitySupersede):
+                supersede_map[record.superseded_entity_id] = record.replacement_entity_id
+        while True:
+            if current_id in visited:
+                raise SupersedeCycleDetected(f"Supersede cycle detected at entity {current_id!r}")
+            visited.add(current_id)
+            if depth > max_depth:
+                raise SupersedeChainTooDeep(
+                    f"Supersede chain exceeded max_depth={max_depth} (started from {entity_id!r})"
+                )
+            next_id = supersede_map.get(current_id)
+            if next_id is None:
+                # Terminal — return the actual entity.
+                return self.get_entity(current_id)
+            current_id = next_id
+            depth += 1
+
+    def latest_resolution_for(
+        self,
+        source_id: str,
+        atom_id: str,
+        operand_index: int,
+        max_depth: int = 256,
+    ) -> Resolution | None:
+        """Find the latest non-superseded Resolution for a triple.
+
+        Scans all resolutions for the given ``(source_id, atom_id,
+        operand_index)`` triple, then follows ResolutionSupersede chains
+        to find the terminal (non-superseded) resolution. Returns ``None``
+        if no resolution for the triple exists.
+
+        Args:
+            source_id: Source document id.
+            atom_id: Atom id.
+            operand_index: Zero-indexed operand position.
+            max_depth: Maximum supersede-chain depth.
+
+        Returns:
+            The terminal ``Resolution`` or ``None`` if the triple has no
+            resolution.
+
+        Raises:
+            SupersedeCycleDetected: if the supersede chain contains a cycle.
+            SupersedeChainTooDeep: if the chain exceeds ``max_depth``.
+        """
+        # Build supersede map: superseded_resolution_id → replacement_resolution_id
+        supersede_map: dict[str, str] = {}
+        for record in self.list_supersedes(kind="resolution"):
+            if isinstance(record, ResolutionSupersede):
+                supersede_map[record.superseded_resolution_id] = record.replacement_resolution_id
+
+        # Collect all resolutions for this triple.
+        candidates = [
+            r
+            for r in self.list_resolutions(source_id=source_id)
+            if r.atom_id == atom_id and r.operand_index == operand_index
+        ]
+        if not candidates:
+            return None
+
+        # Superseded resolution ids (those that appear as a key in supersede_map)
+        superseded_ids: set[str] = set(supersede_map.keys())
+
+        # Walk from any candidate that is NOT superseded as the entry point.
+        # In a well-formed chain, at most one root resolution exists.
+        roots = [c for c in candidates if c.id not in superseded_ids]
+        if not roots:
+            # All candidates are superseded; find the terminal by walking.
+            # Start from the "youngest" replacement.
+            start = candidates[0]
+        else:
+            start = roots[0]
+
+        # Walk the supersede chain from start.id.
+        current_id = start.id
+        visited: set[str] = set()
+        depth = 0
+        while True:
+            if current_id in visited:
+                raise SupersedeCycleDetected(
+                    f"Supersede cycle detected at resolution {current_id!r}"
+                )
+            visited.add(current_id)
+            if depth > max_depth:
+                raise SupersedeChainTooDeep(
+                    f"Supersede chain exceeded max_depth={max_depth} "
+                    f"(started from triple ({source_id!r}, {atom_id!r}, "
+                    f"{operand_index}))"
+                )
+            next_id = supersede_map.get(current_id)
+            if next_id is None:
+                # Terminal — check if a resolution with this id is on disk.
+                try:
+                    return self.get_resolution(current_id)
+                except SubstrateNotFound:
+                    return None
+            current_id = next_id
+            depth += 1
+
+    # --- T3.7: Phase-1-promised enumerators ------------------------------
+
+    def list_distillations(self) -> Iterable[str]:
+        """Yield source_ids of all distillations in the workspace.
+
+        Scans the ``distillations/`` directory and yields the name of
+        each subdirectory (which is the source_id). Sorted
+        lexicographically for determinism.
+        """
+        distillations_dir = self.root / "distillations"
+        if not distillations_dir.is_dir():
+            return
+        for path in sorted(distillations_dir.iterdir()):
+            if path.is_dir():
+                yield path.name
+
+    def list_relations(self, source_id: str) -> Iterable[Relation]:
+        """Yield all Relation records for a given source_id.
+
+        Scans ``distillations/<source_id>/relations/`` and parses each
+        ``.yaml`` file. Sorted lexicographically by filename.
+        """
+        relations_dir = self._distillation_root(source_id) / "relations"
+        if not relations_dir.is_dir():
+            return
+        for path in sorted(relations_dir.iterdir()):
+            if not path.is_file():
+                continue
+            if not path.name.endswith(".yaml"):
+                continue
+            if ".tmp." in path.name:
+                continue
+            from ._serialize import parse_relation_yaml  # avoid re-import cycle risk
+
+            yield parse_relation_yaml(path.read_text(encoding="utf-8"))
+
+    def list_clarifications(
+        self,
+        *,
+        status: Literal["open", "resolved"] | None = None,
+        kind: str | None = None,
+    ) -> Iterable[Clarification]:
+        """Yield Clarification records across all distillations.
+
+        Scans ``distillations/*/clarifications/{open,resolved}/`` for
+        ``c-*.md`` files. Filters by ``status`` and/or ``kind`` if
+        provided.
+
+        Args:
+            status: ``"open"``, ``"resolved"``, or ``None`` for both.
+            kind: Clarification kind string or ``None`` for all kinds.
+        """
+        from ._serialize import parse_clarification_md
+
+        distillations_dir = self.root / "distillations"
+        if not distillations_dir.is_dir():
+            return
+
+        buckets: list[str]
+        if status == "open":
+            buckets = ["open"]
+        elif status == "resolved":
+            buckets = ["resolved"]
+        else:
+            buckets = ["open", "resolved"]
+
+        for src_dir in sorted(distillations_dir.iterdir()):
+            if not src_dir.is_dir():
+                continue
+            for bucket in buckets:
+                bucket_dir = src_dir / "clarifications" / bucket
+                if not bucket_dir.is_dir():
+                    continue
+                for path in sorted(bucket_dir.iterdir()):
+                    if not path.is_file():
+                        continue
+                    if not path.name.endswith(".md"):
+                        continue
+                    if ".tmp." in path.name:
+                        continue
+                    clarification = parse_clarification_md(path.read_text(encoding="utf-8"))
+                    if kind is not None and clarification.kind != kind:
+                        continue
+                    yield clarification
+
+    # --- T3.8: ensure_mappings_readme (CV-4) -----------------------------
+
+    _MAPPINGS_README_MARKER: ClassVar[str] = "<!-- amanuensis-generated: do not edit -->"
+
+    _MAPPINGS_SUBDIR_DESCRIPTIONS: ClassVar[dict[str, str]] = {
+        "entities": (
+            "Canonical cross-document entities. "
+            "Each file is ``e-<hash>.md`` (YAML frontmatter + optional notes body)."
+        ),
+        "resolutions": (
+            "Resolution records joining operand-refs to canonical entities. "
+            "Each file is ``j-<hash>.yaml``."
+        ),
+        "supersedes": (
+            "Supersede records (corrections). "
+            "``s-<hash>.yaml`` = ResolutionSupersede; "
+            "``t-<hash>.yaml`` = EntitySupersede. "
+            "Both kinds live in this directory."
+        ),
+        "provenance": ("Mappings-layer provenance records. Each file is ``p-<hash>.yaml``."),
+        "vocabulary-history": (
+            "Archived entity-vocabulary snapshots. "
+            "Each file is ``<archived-id>.yaml`` where the id is the "
+            "SHA-256 of the superseded snapshot bytes (first 16 hex chars)."
+        ),
+    }
+
+    def ensure_mappings_readme(self) -> None:
+        """Write README files for the ``mappings/`` directory tree.
+
+        Writes ``mappings/README.md`` and a README.md in each of the
+        five standard subdirectories. Content is deterministic (byte-
+        identical on every call), satisfying CV-4's idempotency
+        requirement.
+
+        Existing files are overwritten only if content would change;
+        atomic_write_text ensures readers never see torn content.
+        """
+        marker = self._MAPPINGS_README_MARKER
+
+        # Parent README
+        parent_readme = (
+            f"{marker}\n\n"
+            "# mappings/\n\n"
+            "Workspace-level entity mappings produced by Phase 2a.\n\n"
+            "## Subdirectories\n\n"
+            "| Directory | Contents |\n"
+            "| --- | --- |\n"
+        )
+        for subdir, desc in self._MAPPINGS_SUBDIR_DESCRIPTIONS.items():
+            parent_readme += f"| `{subdir}/` | {desc} |\n"
+
+        parent_path = self.mappings_root / "README.md"
+        atomic_write_text(parent_path, parent_readme)
+
+        # Per-subdirectory READMEs
+        for subdir, desc in self._MAPPINGS_SUBDIR_DESCRIPTIONS.items():
+            content = f"{marker}\n\n# mappings/{subdir}/\n\n{desc}\n"
+            subdir_path = self.mappings_root / subdir / "README.md"
+            atomic_write_text(subdir_path, content)

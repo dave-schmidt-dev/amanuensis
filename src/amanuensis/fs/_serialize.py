@@ -31,10 +31,14 @@ from pydantic import BaseModel
 from amanuensis.schemas import (
     Atom,
     Clarification,
+    Entity,
+    EntitySupersede,
     IterationDirective,
     ParagraphEntry,
     ProvenanceRecord,
     Relation,
+    Resolution,
+    ResolutionSupersede,
 )
 
 _FRONTMATTER_DELIM = "---"
@@ -225,3 +229,58 @@ def parse_paragraph_md(text: str) -> tuple[dict[str, Any], str]:
     if not isinstance(body, str):
         raise ValueError(f"paragraph body must be str, got {type(body).__name__}")
     return payload, body
+
+
+# --- Phase 2a mappings serializers ------------------------------------
+
+
+def serialize_entity_md(entity: Entity) -> str:
+    """Serialize an Entity as YAML frontmatter + optional notes body.
+
+    ``notes`` is the human-readable markdown body; all other fields go in
+    frontmatter. When ``notes`` is ``None`` the body is written as an
+    empty string (so the file is still valid frontmatter-bearing markdown).
+    """
+    payload = entity.model_dump(mode="python")
+    # notes is optional; pop it out as the body (may be None → "")
+    notes = payload.pop("notes", None) or ""
+    return _emit_md(payload, notes)
+
+
+def parse_entity_md(text: str) -> Entity:
+    """Parse a frontmatter-bearing entity .md file back into an Entity."""
+    payload = _parse_md(text, "notes")
+    # notes may come back as empty string from the body; coerce "" → None
+    if payload.get("notes") == "":
+        payload["notes"] = None
+    return Entity(**payload)
+
+
+def serialize_resolution_yaml(r: Resolution) -> str:
+    """Serialize a Resolution to plain YAML (no body)."""
+    return _safe_dump(r.model_dump(mode="python"))
+
+
+def parse_resolution_yaml(text: str) -> Resolution:
+    """Parse a plain-YAML resolution file into a Resolution."""
+    return Resolution(**_safe_load(text))
+
+
+def serialize_resolution_supersede_yaml(rs: ResolutionSupersede) -> str:
+    """Serialize a ResolutionSupersede to plain YAML."""
+    return _safe_dump(rs.model_dump(mode="python"))
+
+
+def parse_resolution_supersede_yaml(text: str) -> ResolutionSupersede:
+    """Parse a plain-YAML resolution-supersede file."""
+    return ResolutionSupersede(**_safe_load(text))
+
+
+def serialize_entity_supersede_yaml(es: EntitySupersede) -> str:
+    """Serialize an EntitySupersede to plain YAML."""
+    return _safe_dump(es.model_dump(mode="python"))
+
+
+def parse_entity_supersede_yaml(text: str) -> EntitySupersede:
+    """Parse a plain-YAML entity-supersede file."""
+    return EntitySupersede(**_safe_load(text))
