@@ -1410,3 +1410,53 @@ Format: dated entries, newest first. Bug entries cite the area touched:
   next push will no longer fail at the sync step. | files:
   .gitignore, uv.lock, .github/workflows/ci.yml, TASKS.md,
   HISTORY.md
+
+- **Phase 2a (Resolve) spec drafted.** First sub-project of Phase
+  2 (Map). INV-9's three deliverables decomposed into 2a (Resolve
+  = entity resolution), 2b (Connect = cross-doc edges), 2c
+  (Hierarchize = probandum trees). Architecture B (Symmetric
+  Pattern): two new roles (`:map:resolve` + `:map:audit`)
+  mirroring Phase 1's extractor+auditor split; workspace-level
+  `mappings/` namespace with immutable Entity + Resolution
+  records; supersede records preserve immutability under
+  supervisor corrections; per-mapping entity-kind vocabulary
+  snapshot mirrors INV-10. Establishes three new invariants
+  (INV-12/13/14) and lands two Phase-1-promised gates (INV-9
+  intra-doc-only, INV-2 no-harness-files). Spec at
+  `docs/superpowers/specs/2026-05-31-phase2a-resolve-design.md`.
+  Warp-tier plan + external-review cycle queued.
+  | files: docs/superpowers/specs/2026-05-31-phase2a-resolve-design.md
+
+- **[bug] Two CLI `--help` tests broke when CI got past
+  uv-sync.** `test_reconcile_cli_help_exits_zero` and
+  `test_install_skills_help_hides_harness_target` assert
+  substrings on Rich-rendered help output (e.g. `"--workspace"
+  in result.stdout`). GitHub Actions sets `FORCE_COLOR=1` by
+  default, which causes Rich to inject ANSI codes between the
+  characters of styled flag names (`-\x1b[...]-workspace\x1b[0m`).
+  The substring check then fails. Hidden behind the previous
+  uv.lock-missing CI failure until that cleared. Remediation:
+  strip ANSI via `click.unstyle()` before the substring check in
+  both tests. Verified with `FORCE_COLOR=1` locally. Lesson: tests
+  that assert on rendered terminal output must specify their
+  rendering environment, not depend on whatever the terminal's
+  COLUMNS / FORCE_COLOR happens to be. | files:
+  tests/dispatch/test_reconciliation.py,
+  tests/cli/test_install_skills.py
+
+- **CI removed; verification is now local-only.** Per
+  CLAUDE.md's pre-commit / pre-push split discipline and the
+  ANSI-bug post-mortem above, the GitHub Actions workflow was
+  deleted in favor of all-local verification. Pre-commit (fast):
+  ruff lint+format, vulture, INV-1+INV-2 marker gates, basic
+  hygiene. Pre-push (heavy): pyright strict + full pytest suite.
+  Edits: (1) deleted `.github/workflows/ci.yml` (entire
+  `.github/` dir gone); (2) updated `.pre-commit-config.yaml`
+  comments that mentioned "CI when present"; (3) updated
+  `tests/e2e/README.md` "every CI build" → "every pre-push".
+  Trade-off explicitly accepted: no independent ubuntu-clean-room
+  verification; all checks run on the supervisor's machine.
+  Acceptable for solo-supervisor use; revisit if/when multi-
+  supervisor coordination lands. | files:
+  .github/workflows/ci.yml (deleted), .pre-commit-config.yaml,
+  tests/e2e/README.md, HISTORY.md

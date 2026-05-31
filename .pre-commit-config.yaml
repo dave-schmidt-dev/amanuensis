@@ -1,7 +1,7 @@
 # Pre-commit hooks — fast checks at commit time (lint + dead-code +
 # basic file hygiene + INV-1/INV-2 marker gates). The heavier suite
 # (pyright strict + pytest) runs at the `pre-push` stage to keep
-# commit-time latency low; both also run in CI when present.
+# commit-time latency low. All verification is local; there is no CI.
 #
 # Install both stages with:
 #   uv run pre-commit install --hook-type pre-commit --hook-type pre-push
@@ -80,8 +80,8 @@ repos:
 
       # Run the full pytest suite. Currently ~7s for ~250 tests; will
       # grow as M5+ wrapper tests + M6+ integration tests + M7 + M11
-      # land. If this gets slow, split into a fast-mark and gate the
-      # slow tier in CI rather than weakening this hook.
+      # land. If this gets slow, split into a fast-mark and run the
+      # slow tier on demand rather than weakening this hook.
       - id: pytest
         name: pytest (full suite)
         entry: >-

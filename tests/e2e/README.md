@@ -78,7 +78,7 @@ spec):
 2. **Build time.** Substrate does one atomic file write per atom +
    per provenance + per relation. 1000/3000 takes ~60s; 250/750
    takes ~10s. The globalSetup budget matters more than the absolute
-   stress numbers when this lane runs on every CI build.
+   stress numbers when this lane runs on every pre-push.
 3. **Soft-cap fallback was deferred.** M8.4 ships the structural
    separation (`#cy` stable, `#cy-data` swappable) but NOT a
    view-by-section fallback. There's nothing for an over-the-cap
