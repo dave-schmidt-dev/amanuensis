@@ -4,9 +4,12 @@ Per-project task and work-in-progress tracking across sessions and agents.
 
 Status key: `pending` | `in progress` | `done` | `blocked`.
 
-Active plan: `~/Documents/Projects/.plans/amanuensis/phase1-distill-foundation-2026-05-29.md`
-Active tasks: `~/Documents/Projects/.plans/amanuensis/phase1-distill-foundation-2026-05-29-tasks.md`
-Synthesis record: `~/Documents/Projects/.plans/amanuensis/phase1-distill-foundation-2026-05-29-synthesis.md`
+Active plan: `~/Documents/Projects/.plans/amanuensis/phase2a-resolve-2026-05-31.md`
+Active tasks: `~/Documents/Projects/.plans/amanuensis/phase2a-resolve-2026-05-31-tasks.md`
+Synthesis record: `~/Documents/Projects/.plans/amanuensis/phase2a-resolve-2026-05-31-synthesis.md`
+Spec: `docs/superpowers/specs/2026-05-31-phase2a-resolve-design.md` (committed)
+
+Prior plan: `~/Documents/Projects/.plans/amanuensis/phase1-distill-foundation-2026-05-29.md` (shipped)
 
 ---
 
@@ -28,15 +31,25 @@ Synthesis record: `~/Documents/Projects/.plans/amanuensis/phase1-distill-foundat
 
 ## Upcoming phases
 
-- [pending] Phase 2 (Map) — full brainstorm cycle required before
-  planning. Standing pattern: brainstorm → plan → synthesis → 56-task
-  breakdown → fresh implementation session, mirroring the Phase 1
-  cycle. Phase 2 scope (per INV-9): cross-document entity resolution,
-  support/attack edges spanning documents, probandum hierarchies
-  spanning sources. Inputs to the brainstorm: Phase 1 ship's open
-  follow-ups (see HISTORY 2026-05-30), the standing INV-2/INV-8
-  gate gaps, and any real-engagement findings if Phase 1 has been
-  exercised on a live matter.
+- [in progress] **Phase 2a (Resolve) — PLAN COMPLETE; ready for
+  implementation.** Phase 2 was decomposed into three sub-projects
+  (2a Resolve / 2b Connect / 2c Hierarchize); only 2a is planned.
+  Warp-tier cycle completed 2026-05-31: spec → plan draft (subagent)
+  → self-contrarian (3 OW + 4 PW + 3 WR) → 3 parallel external
+  reviewers (codex contrarian + agy auditor + claude constructive;
+  22 findings; 18 ACCEPT + 2 ACKNOWLEDGE + 2 REJECT) → refinement
+  subagent applied accepts → fresh-eyes premortem (cursor-agent +
+  Kimi K2.5; 15 items: 6 MITIGATE + 9 ACKNOWLEDGE) → premortem
+  mitigations applied → 82-task TDD breakdown. Final plan: 3,229
+  lines + 82 tasks. Implementation timeline: 14-17 days single /
+  8-11 days subagent-driven. Next action: subagent-driven execution
+  per CLAUDE.md convention.
+- [pending] Phase 2b (Connect) — cross-doc support/attack edges built
+  on Phase 2a's resolved entities. Full brainstorm cycle required;
+  blocked on 2a implementation.
+- [pending] Phase 2c (Hierarchize) — probandum hierarchies built on
+  Phase 2b's cross-doc edges. Full brainstorm cycle required; blocked
+  on 2b implementation.
 - [pending] Phase 3 (Extend) — full brainstorm cycle (blocked on
   Phase 2 implementation).
 - [pending] Phase 4 (Synthesize) — packaging into agent-usable
@@ -50,4 +63,9 @@ Synthesis record: `~/Documents/Projects/.plans/amanuensis/phase1-distill-foundat
   without rewrite.
 - [done] Lockfile commit — `uv.lock` committed 2026-05-31;
   `.gitignore` entry removed; inline CI-workflow notice removed.
-  CI's `uv sync --frozen` now has the lockfile it needs.
+  Standing task closed (CI subsequently removed entirely; see
+  HISTORY 2026-05-31).
+- [done] CI removed — verification is now local-only via
+  pre-commit (fast: ruff, vulture, INV-1+INV-2 markers, hygiene)
+  + pre-push (heavy: pyright strict + full pytest suite).
+  GitHub Actions workflow deleted 2026-05-31.
