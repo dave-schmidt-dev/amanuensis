@@ -99,5 +99,24 @@ class WorkspaceLockTimeout(SubstrateError):
     """
 
 
+class MutationOfImmutableRecord(SubstrateError):
+    """Attempted to overwrite an existing substrate record with content
+    that hashes to the same id but differs in non-volatile fields."""
+
+
+class ResolutionDuplicateTriple(SubstrateError):
+    """Attempted to add a second non-superseded Resolution for the same
+    (source_id, atom_id, operand_index) triple."""
+
+
+class SupersedeCycleDetected(SubstrateError):
+    """Walking a supersede chain encountered an id that was already
+    visited."""
+
+
+class SupersedeChainTooDeep(SubstrateError):
+    """Walking a supersede chain exceeded the configured max_depth."""
+
+
 class MappingVocabularyAlreadyPinned(Exception):
     """Overwrite of an existing entity-vocabulary snapshot with different content."""

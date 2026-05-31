@@ -19,6 +19,8 @@ addressable-path checks in ``Substrate.add_*``.
 """
 
 from ._errors import (
+    MutationOfImmutableRecord,
+    ResolutionDuplicateTriple,
     SourceMirrorExists,
     SubstrateError,
     SubstrateIdMismatch,
@@ -27,6 +29,8 @@ from ._errors import (
     SubstrateNotFound,
     SubstrateSnapshotConflict,
     SubstrateSnapshotCorrupt,
+    SupersedeChainTooDeep,
+    SupersedeCycleDetected,
     WorkspaceLockTimeout,
 )
 from .lock import DEFAULT_TIMEOUT_SECONDS, LOCK_FILENAME, acquire_workspace_lock
@@ -36,7 +40,9 @@ from .substrate import Substrate
 __all__ = [
     "DEFAULT_TIMEOUT_SECONDS",
     "LOCK_FILENAME",
+    "MutationOfImmutableRecord",
     "ReplayLog",
+    "ResolutionDuplicateTriple",
     "SourceMirrorExists",
     "Substrate",
     "SubstrateError",
@@ -46,6 +52,8 @@ __all__ = [
     "SubstrateNotFound",
     "SubstrateSnapshotConflict",
     "SubstrateSnapshotCorrupt",
+    "SupersedeChainTooDeep",
+    "SupersedeCycleDetected",
     "WorkspaceLockTimeout",
     "acquire_workspace_lock",
 ]
