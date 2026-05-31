@@ -47,6 +47,8 @@ class AgentAttribution(BaseModel):
         "constructive",
         "premortem",
         "human_supervisor",
+        "map-resolve",
+        "map-audit",
     ]
 
 
