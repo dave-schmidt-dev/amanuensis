@@ -40,13 +40,25 @@ from amanuensis.schemas import (
 # so a fixture defined in ``tests/cli/conftest.py`` is invisible to
 # ``tests/invariants/`` by default; re-exporting the names here makes
 # them resolvable as parameter-name lookups in this directory's tests.
-from tests.cli.conftest import (  # noqa: F401  (re-exported as pytest fixtures)
+from tests.cli.conftest import (
     cli_substrate,
     cli_workspace,
     planted_atom,
     planted_clarification,
 )
 from tests.invariants._types import MatchedAtomFactory
+
+# Explicit re-export ledger so pyright treats the imports above as
+# consumed. The fixtures are discovered by pytest by NAME (not by
+# import), so the import alone is what makes them visible to tests
+# under `tests/invariants/`; `__all__` signals intent to static
+# analysis without changing pytest's discovery behavior.
+__all__ = [
+    "cli_substrate",
+    "cli_workspace",
+    "planted_atom",
+    "planted_clarification",
+]
 
 SOURCE_ID = "src-fixture-001"
 
