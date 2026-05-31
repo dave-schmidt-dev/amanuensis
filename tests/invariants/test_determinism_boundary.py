@@ -184,6 +184,23 @@ _READ_ONLY_COMMANDS: list[tuple[str, ArgvFactory]] = [
         "install-skills",
         lambda ws, _aid: ["install-skills", "--workspace", str(ws)],
     ),
+    # Phase 2a M7 read-only map verbs (T7.13). map vocabulary show + map
+    # resolution show are excluded here because they require a pinned
+    # snapshot / planted resolution that the cli_workspace fixture does
+    # not provide; INV-4 purity for those is exercised via their own
+    # happy-path tests in tests/cli/test_map_commands.py.
+    (
+        "map status",
+        lambda ws, _aid: ["map", "status", "--workspace", str(ws)],
+    ),
+    (
+        "map status --json",
+        lambda ws, _aid: ["map", "status", "--json", "--workspace", str(ws)],
+    ),
+    (
+        "map entity list",
+        lambda ws, _aid: ["map", "entity", "list", "--workspace", str(ws)],
+    ),
 ]
 
 
