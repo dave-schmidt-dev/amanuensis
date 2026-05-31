@@ -46,6 +46,7 @@ dev = [
     "pyright>=1.1.380",
     "vulture>=2.11",
     "hypothesis",
+    "pytest-xdist>=3.8.0",
 ]
 
 [tool.uv]
@@ -89,7 +90,7 @@ reportUnknownVariableType = "none"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-ra --strict-markers --strict-config"
+addopts = "-ra --strict-markers --strict-config -n 8"
 markers = [
     "invariants: tests that enforce INVARIANTS.md gates",
     "e2e: end-to-end tests (slow)",
