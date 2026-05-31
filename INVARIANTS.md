@@ -226,3 +226,69 @@ Status legend: `active` (gate enforced) | `near-threshold` (warn) | `waived` (ex
   from a contributing-violation (CV-5) to an invariant because the rest of
   the dispatch architecture (queue protocol, reconciliation gate, replay
   log) presumes role writes are scoped.
+
+## INV-12 — `mappings/` is the home for all cross-document artifacts
+
+- **Status:** active (gated)
+- **Established:** 2026-05-31 (Phase 2a M10)
+- **Property:** No cross-source artifact (`Entity` record, `Resolution` record,
+  cross-doc relation [Phase 2b], probandum hierarchy [Phase 2c]) is permitted
+  outside `mappings/`. Per-distillation directories under `distillations/`
+  remain strictly intra-document. A relation filed under `distillations/<src>/`
+  whose endpoint atoms belong to a different source is a violation. A
+  `Resolution` record whose `source_id` names a non-existent distillation is
+  a violation.
+- **Gate test:** `tests/invariants/test_mappings_namespace_scoped.py` — three
+  cases: (1) a clean workspace with entity, resolution, and matching distillation
+  passes; (2) a relation filed under `src1` whose `from_atom_id` belongs to `src2`
+  is caught by a cross-source atom-to-source index walk; (3) a resolution whose
+  `source_id` has no matching distillation directory is caught as an orphan
+  resolution.
+- **Rationale:** Keeps the boundary between intra-document Phase 1 work and
+  cross-document Phase 2 work structurally enforced at the filesystem level.
+  Prevents Phase 1 roles from accidentally writing cross-source artifacts into
+  per-distillation directories where INV-3 provenance scoping and INV-9 intra-doc
+  guarantees would be violated.
+
+## INV-13 — Entity and Resolution records are immutable once written
+
+- **Status:** active (gated)
+- **Established:** 2026-05-31 (Phase 2a M10)
+- **Property:** Once written, `Entity` and `Resolution` records are not rewritten
+  in place. Corrections are carried by `EntitySupersede` and `ResolutionSupersede`
+  records, each with their own PROV-O record. Attempting to write a record whose
+  content-addressable id already exists on disk with different non-volatile content
+  raises `MutationOfImmutableRecord`. Idempotent re-writes (identical content) are
+  silently accepted.
+- **Gate test:** `tests/invariants/test_mappings_immutability.py` — four cases:
+  (1) `add_entity` is idempotent for identical content; (2) `add_entity` raises
+  `MutationOfImmutableRecord` when on-disk content diverges from incoming content
+  at the same id; (3) `add_resolution` is idempotent for identical content;
+  (4) a `ResolutionSupersede` chain allows corrections without triggering the
+  immutability guard, and `latest_resolution_for` returns the replacement.
+- **Rationale:** Content-addressable immutability is the basis for PROV-O audit
+  trails (INV-3). If records could be silently overwritten, provenance attribution
+  would be unreliable and replay would produce different results from the original
+  run, violating INV-4 (determinism).
+
+## INV-14 — Resolution records key off the normalized triple
+
+- **Status:** active (gated)
+- **Established:** 2026-05-31 (Phase 2a M10)
+- **Property:** A `Resolution` record's identity is determined by what it resolves
+  (the triple `(source_id, atom_id, operand_index)`) plus what it resolves to (the
+  entity). Two non-superseded resolutions for the same triple cannot coexist.
+  Attempting to add a second non-superseded resolution for an already-resolved
+  triple raises `ResolutionDuplicateTriple`. Once a supersede record exists pointing
+  from the first resolution to a replacement, `latest_resolution_for` returns `None`
+  (chain terminal not yet written) and the replacement may be added without raising.
+- **Gate test:** `tests/invariants/test_resolution_uniqueness.py` — three cases:
+  (1) a single resolution for a triple is accepted and queryable via
+  `latest_resolution_for`; (2) a second distinct non-superseded resolution for the
+  same triple raises `ResolutionDuplicateTriple`; (3) after superseding v1 to v2
+  without v2 on disk, `latest_resolution_for` returns `None` and `add_resolution(v2)`
+  succeeds.
+- **Rationale:** Without uniqueness enforcement, the reconciliation phase could
+  accumulate conflicting resolutions silently. The supersede protocol provides a
+  structured correction path while the duplicate guard makes concurrent or
+  replayed writes safe.
