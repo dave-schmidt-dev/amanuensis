@@ -19,7 +19,7 @@ runner = CliRunner()
 # legible in failure output.
 _FAKE_BINARY = "/usr/local/bin/__fake-harness__"
 
-# The six bundled skill filenames that M7.1 ships and that M7.6 installs.
+# The eight bundled skill filenames that M7.1+M5 (Phase 2a) ships and that M7.6 installs.
 # Kept in sync with ``src/amanuensis/skills/``; if the source-of-truth set
 # changes, this list is the canonical place to update tests.
 _BUNDLED_SKILLS = {
@@ -29,6 +29,8 @@ _BUNDLED_SKILLS = {
     "distill_contrarian.md",
     "distill_extract.md",
     "distill_premortem.md",
+    "map_audit.md",
+    "map_resolve.md",
 }
 
 
@@ -127,7 +129,7 @@ def test_install_skills_requires_marker(tmp_path: Path) -> None:
 # --- M7.6: actual file installation behaviour --------------------------
 
 
-def test_install_skills_copies_all_six_skills_for_detected_harness(
+def test_install_skills_copies_all_bundled_skills_for_detected_harness(
     cli_workspace: Path,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

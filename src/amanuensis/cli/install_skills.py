@@ -170,7 +170,7 @@ def install_skills_command(
 ) -> None:
     """Install bundled skill files into every detected harness's skills dir.
 
-    For each detected harness, copies the six bundled skill files into
+    For each detected harness, copies the bundled skill files into
     ``<home>/<harness-suffix>/amanuensis/``. Existing files with
     matching bytes are left untouched; differing files are overwritten
     (re-run to pick up updates). ``--dry-run`` previews actions only.
