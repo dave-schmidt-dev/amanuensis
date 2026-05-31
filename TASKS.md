@@ -31,18 +31,23 @@ Prior plan: `~/Documents/Projects/.plans/amanuensis/phase1-distill-foundation-20
 
 ## Upcoming phases
 
-- [in progress] **Phase 2a (Resolve) — M1 SHIPPED 2026-05-31;
-  M2–M11 remain (70 tasks).** Plan: warp-tier cycle completed
-  2026-05-31 (spec → plan draft → self-contrarian → 3 parallel
-  external reviewers; 22 findings, 18 ACCEPT + 2 ACK + 2 REJECT →
-  refinement → premortem → 82-task TDD breakdown). M1 (12 tasks,
-  schema foundation) shipped under subagent-driven discipline with
-  parallel waves: T1.1; T1.2–T1.5 + T1.6–T1.8 parallel; T1.9 +
-  T1.10 + T1.12 parallel; T1.11 sequential after T1.10. Combined
-  spec+code-quality reviewer per task in parallel; 8 commits.
-  Implementation timeline: 14–17 days single / 8–11 days
-  subagent-driven (M1 alone ≈ 1 session). Next action: M2
-  (Entity-kind vocabulary, 5 tasks).
+- [in progress] **Phase 2a (Resolve) — M1+M2+M3 SHIPPED 2026-05-31;
+  M4–M11 remain (54 tasks).** M1 (12 tasks, schema foundation) +
+  M2 (5 tasks, entity-kind vocabulary) + M3 (11 tasks, substrate
+  API extensions) = 28 of 82 tasks done in 11 commits + 3 docs.
+  Heavy parallelism via subagent waves; combined spec+code-quality
+  reviewer per task. Real defects caught in review and fixed
+  inline: T1.8 hash-corrupting v1 `kind` injection in
+  `_serialize.py`; T1.10 frontmatter `find("---")` mid-content
+  bug; M3 implementer's `from conftest import` (conftest is
+  auto-loaded, not directly importable) — fixed to
+  `from tests.fs.conftest import`. M3 also surfaced an
+  orchestration lesson: dispatching source-modifying subagents in
+  parallel with a `git push` (whose pre-push hook runs the full
+  ~7min suite) trips the "files-modified-during-hook" check.
+  Pushed M1; M2+M3 unpushed (8 commits) pending next push window.
+  Next action: continue with M4 (Phase-1-promised invariant gates,
+  3 tasks) in fresh session per `handoff.md`.
 - [pending] Phase 2b (Connect) — cross-doc support/attack edges built
   on Phase 2a's resolved entities. Full brainstorm cycle required;
   blocked on 2a implementation.

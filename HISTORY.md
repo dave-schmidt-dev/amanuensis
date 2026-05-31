@@ -1397,6 +1397,82 @@ Format: dated entries, newest first. Bug entries cite the area touched:
 
 ## 2026-05-31
 
+- **Phase 2a (Resolve) M3 — Substrate API extensions SHIPPED.** All 11
+  M3 tasks (T3.1-T3.11) shipped in 3 commits (T3.1 typed exceptions;
+  T3.2-T3.8 substrate extensions batched; T3.9-T3.11 ReplayLog dual-path
+  refactor). Substrate now has `mappings_root` path resolver + path
+  helpers for entities/resolutions/supersedes/provenance; add/get/list
+  methods for the 4 new content-addressable types with on-disk
+  immutability guard (`MutationOfImmutableRecord`); supersede-chain
+  walkers (`latest_entity_for`, `latest_resolution_for`) with visited-set
+  cycle guard (`SupersedeCycleDetected`) and depth cap
+  (`SupersedeChainTooDeep`); Phase-1-promised enumerators
+  (`list_distillations`, `list_relations`, `list_clarifications` with
+  status+kind filters); `ensure_mappings_readme()` for the marker
+  README hierarchy. `ReplayLog` constructor refactored to accept
+  `kind: Literal["distillation", "mapping"]` with `for_source(...)` /
+  `for_mappings(...)` classmethods, and a centralized
+  `_resolve_replay_log_root` helper. Concurrent-writers test
+  parametrized over both scopes. Orchestration finding: dispatched
+  M3 implementers IN PARALLEL with the M2 push (which runs the full
+  suite via pre-push hook ~7min) — the pre-push framework's
+  "files-modified-during-hook" check caught the working-tree
+  pollution and aborted the M2 push (even though the 636-test full
+  suite passed). Lesson: don't dispatch source-modifying subagents
+  during a push; either wait for push completion or batch multiple
+  phases between pushes. Other M3 review findings fixed inline:
+  (a) 5 new test files used `from conftest import ...` which fails
+  because conftest is auto-loaded by pytest, not directly importable —
+  fixed to `from tests.fs.conftest import ...` (sed); (b) the
+  substrate implementer renamed `_mappings_root` → `mappings_root`
+  in substrate.py but not in tests — fixed (sed); (c) test that
+  forged a "mutant" Entity with mismatched id+content was caught
+  by `SubstrateIdMismatch` (id-hash guard fires first); rewrote the
+  test to forge ON DISK so `MutationOfImmutableRecord` actually
+  fires. 196 tests/fs/ pass, pyright src+tests clean. | files:
+  src/amanuensis/fs/{substrate,_serialize,_errors,__init__,replay_log}.py,
+  src/amanuensis/llm/replay_log.py,
+  tests/fs/{conftest,test_phase2a_errors_importable,
+  test_substrate_mappings_paths,test_substrate_entity_io,
+  test_substrate_resolution_io,test_substrate_supersedes,
+  test_supersede_chain,test_substrate_enumerators,
+  test_ensure_mappings_readme,test_replay_log_dual_path,
+  test_replay_log_concurrent}.py,
+  tests/invariants/test_determinism_boundary.py,
+  tests/llm/test_replay_and_prov.py
+
+- **Phase 2a (Resolve) M2 — Entity-kind vocabulary SHIPPED.** All 5
+  M2 tasks (T2.1-T2.5) shipped in 5 atomic commits. T2.1 authored
+  the 9-kind generic entity-kinds.yaml template (party / person /
+  organization / instrument / event / statute / case-citation /
+  jurisdiction / concept), T2.2 added a pure-YAML structural gate
+  test (PM-5), T2.3 implemented the `EntityVocabulary` Pydantic
+  loader with `EntityVocabularyError` wrapping yaml/pydantic
+  failures + duplicate-id validator + min_length=1 on
+  resolution_rules, T2.4 added the `entity_kind_in_vocabulary`
+  validator (hard-error path raises `EntityKindNotInSnapshot`),
+  T2.5 added 5 `Substrate.snapshot_entity_vocabulary` methods +
+  path resolvers + the `MappingVocabularyAlreadyPinned` exception.
+  Mirrors Phase 1's predicate-vocabulary snapshot pattern (INV-10);
+  byte-equality idempotency on no-op; archive-then-write semantics
+  on `extend_*`. T2.2 written inline by orchestrator (saved a
+  subagent dispatch on the 3-assertion gate test). T2.5 made a
+  small scope-creep addition to `pyproject.toml`:
+  `pythonpath = ["."]` under `[tool.pytest.ini_options]` so the
+  `scripts.*` package is importable from tests (alternative would
+  have been a `conftest.py` `sys.path` hack — config-driven is
+  cleaner). M2 push gating ran the full suite (636 passed in 407s)
+  but the pre-push hook aborted due to M3 implementer activity
+  racing in parallel (see M3 entry for the orchestration lesson).
+  | files: vocabularies/generic/entity-kinds.yaml,
+  tests/vocabularies/test_entity_kinds_template_loadable.py,
+  src/amanuensis/vocabulary/entity_registry.py,
+  tests/vocabulary/test_entity_registry.py,
+  src/amanuensis/validators/entity_kind_in_vocabulary.py,
+  tests/validators/test_entity_kind_vocabulary.py,
+  src/amanuensis/fs/{substrate,_errors}.py,
+  tests/fs/test_entity_vocabulary_snapshot.py, pyproject.toml
+
 - **Phase 2a (Resolve) M1 — Schema foundation SHIPPED.** All 12 M1
   tasks (T1.1–T1.12) executed under subagent-driven discipline with
   parallel waves: Wave 0 (T1.1 prefix registration), Wave 1 (T1.2–T1.5
