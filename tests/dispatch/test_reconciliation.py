@@ -240,6 +240,7 @@ def test_reconcile_idempotent(tmp_path: Path) -> None:
 
 def test_reconcile_cli_help_exits_zero(tmp_path: Path) -> None:
     """``amanuensis reconcile --help`` succeeds and lists the --workspace flag."""
+    from click import unstyle
     from typer.testing import CliRunner
 
     from amanuensis.cli import app
@@ -249,7 +250,9 @@ def test_reconcile_cli_help_exits_zero(tmp_path: Path) -> None:
     assert result.exit_code == 0, (
         f"reconcile --help failed (exit={result.exit_code})\nstdout: {result.stdout}"
     )
-    assert "--workspace" in result.stdout
+    # Strip ANSI: Rich styles each character span separately under FORCE_COLOR
+    # (set by GitHub Actions), which would break a naive substring check.
+    assert "--workspace" in unstyle(result.stdout)
 
 
 def test_reconcile_cli_empty_workspace_exits_zero(tmp_path: Path) -> None:

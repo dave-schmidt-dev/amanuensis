@@ -278,7 +278,12 @@ def test_install_skills_help_hides_harness_target(
     cli_workspace: Path,
 ) -> None:
     """``--help`` advertises ``--dry-run`` but hides the test seam ``--harness-target``."""
+    from click import unstyle
+
     result = runner.invoke(app, ["install-skills", "--help"])
     assert result.exit_code == 0, result.stdout
-    assert "--dry-run" in result.stdout
-    assert "--harness-target" not in result.stdout
+    # Strip ANSI: Rich styles each character span separately under FORCE_COLOR
+    # (set by GitHub Actions), which would break a naive substring check.
+    plain = unstyle(result.stdout)
+    assert "--dry-run" in plain
+    assert "--harness-target" not in plain
