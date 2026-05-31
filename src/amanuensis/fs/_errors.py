@@ -97,3 +97,7 @@ class WorkspaceLockTimeout(SubstrateError):
     via CLI / web error output (e.g. "another amanuensis process may be
     running").
     """
+
+
+class MappingVocabularyAlreadyPinned(Exception):
+    """Overwrite of an existing entity-vocabulary snapshot with different content."""

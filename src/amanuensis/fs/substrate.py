@@ -50,7 +50,10 @@ from __future__ import annotations
 import re
 from collections.abc import Iterable
 from pathlib import Path
-from typing import Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar
+
+if TYPE_CHECKING:
+    from amanuensis.vocabulary.entity_registry import EntityVocabulary
 
 import yaml
 
@@ -67,6 +70,7 @@ from amanuensis.schemas import (
 
 from ._atomic import atomic_write_text
 from ._errors import (
+    MappingVocabularyAlreadyPinned,
     SubstrateIdMismatch,
     SubstrateInvalidId,
     SubstrateMarkerMissing,
@@ -236,6 +240,15 @@ class Substrate:
         """Canonical path for a distillation's source-mirror manifest."""
         return self.source_mirror_root(source_id) / "manifest.yaml"
 
+    def entity_vocabulary_snapshot_path(self) -> Path:
+        """Return the path to the active entity-vocabulary snapshot."""
+        return self.root / "mappings" / "entity-vocabulary-snapshot.yaml"
+
+    def archived_entity_vocabulary_path(self, archived_id: str) -> Path:
+        """Return the path to an archived entity-vocabulary snapshot, keyed by its hash id."""
+        _validate_id_component(archived_id, label="archived_id")
+        return self.root / "mappings" / "entity-vocabulary-archive" / f"{archived_id}.yaml"
+
     # --- Identity check ----------------------------------------------
 
     @staticmethod
@@ -402,6 +415,70 @@ class Substrate:
             raise SubstrateSnapshotCorrupt(
                 f"vocabulary snapshot at {path} could not be loaded: {exc}"
             ) from exc
+
+    # --- Entity-vocabulary snapshot (Phase 2a M2) --------------------
+
+    def snapshot_entity_vocabulary(self, vocabulary: EntityVocabulary) -> None:
+        """Write the entity-vocabulary snapshot.
+
+        Idempotent: if a snapshot file already exists with byte-identical
+        content, this is a no-op (preserves write-once semantics from INV-10).
+        If a snapshot exists with DIFFERENT content, raises
+        ``MappingVocabularyAlreadyPinned`` (callers must use
+        ``extend_entity_vocabulary_snapshot`` to evolve).
+
+        The serialized form is ``yaml.safe_dump(vocabulary.model_dump(),
+        sort_keys=False, default_flow_style=False)``.
+        """
+        path = self.entity_vocabulary_snapshot_path()
+        serialized = yaml.safe_dump(
+            vocabulary.model_dump(), sort_keys=False, default_flow_style=False
+        )
+        if path.is_file():
+            existing_bytes = path.read_bytes()
+            if existing_bytes == serialized.encode():
+                return
+            raise MappingVocabularyAlreadyPinned(
+                f"entity-vocabulary snapshot at {path} already exists with different content; "
+                "use extend_entity_vocabulary_snapshot to evolve"
+            )
+        atomic_write_text(path, serialized)
+
+    def get_entity_vocabulary_snapshot(self) -> EntityVocabulary:
+        """Read and return the active snapshot. Raise SubstrateNotFound if absent."""
+        path = self.entity_vocabulary_snapshot_path()
+        if not path.is_file():
+            raise SubstrateNotFound(f"entity-vocabulary snapshot not found at {path}")
+        # Lazy import to avoid circular dependency at module load.
+        from amanuensis.vocabulary.entity_registry import load_entity_vocabulary
+
+        return load_entity_vocabulary(path)
+
+    def extend_entity_vocabulary_snapshot(self, new_vocabulary: EntityVocabulary) -> str:
+        """Archive the current snapshot, write the new one. Returns the archived id.
+
+        The archived id is the SHA-256 hex digest of the OLD snapshot's bytes
+        (truncated to 16 hex chars, no prefix). Archives the current snapshot
+        to ``mappings/entity-vocabulary-archive/<archived-id>.yaml`` then
+        atomically writes the new snapshot.
+        """
+        import hashlib
+
+        path = self.entity_vocabulary_snapshot_path()
+        if not path.is_file():
+            raise SubstrateNotFound(
+                f"entity-vocabulary snapshot not found at {path}; "
+                "call snapshot_entity_vocabulary first"
+            )
+        old_bytes = path.read_bytes()
+        archived_id = hashlib.sha256(old_bytes).hexdigest()[:16]
+        archive_path = self.archived_entity_vocabulary_path(archived_id)
+        atomic_write_text(archive_path, old_bytes.decode())
+        serialized = yaml.safe_dump(
+            new_vocabulary.model_dump(), sort_keys=False, default_flow_style=False
+        )
+        atomic_write_text(path, serialized)
+        return archived_id
 
     # --- Read methods -------------------------------------------------
 
