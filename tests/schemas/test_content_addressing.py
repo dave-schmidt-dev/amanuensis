@@ -50,7 +50,7 @@ from amanuensis.schemas import (
     VocabularyEntry,
     compute_id,
 )
-from amanuensis.schemas._hashing import _to_canonical
+from amanuensis.schemas._hashing import _KIND_PREFIX, _to_canonical
 
 # --- 1. Determinism ----------------------------------------------------
 
@@ -460,3 +460,13 @@ def test_canonical_form_float_to_repr_string() -> None:
     canonical = _to_canonical(1.5)
     assert canonical == "1.5"
     assert isinstance(canonical, str)
+
+
+# --- Phase 2a: Entity Resolution kind-prefix registration ----------------
+
+
+def test_phase2a_kind_prefixes_registered() -> None:
+    assert _KIND_PREFIX["Entity"] == "e-"
+    assert _KIND_PREFIX["Resolution"] == "j-"
+    assert _KIND_PREFIX["ResolutionSupersede"] == "s-"
+    assert _KIND_PREFIX["EntitySupersede"] == "t-"

@@ -88,6 +88,10 @@ _KIND_PREFIX: dict[str, str] = {
     "Clarification": "c-",
     "IterationDirective": "i-",
     "SourceMirrorManifest": "m-",
+    "Entity": "e-",
+    "Resolution": "j-",
+    "ResolutionSupersede": "s-",
+    "EntitySupersede": "t-",
 }
 
 # Universally-volatile field (always dropped from canonical form, on
