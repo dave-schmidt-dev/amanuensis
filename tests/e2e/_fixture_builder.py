@@ -43,6 +43,7 @@ from amanuensis.fs._serialize import serialize_paragraph_md
 from amanuensis.schemas import (
     AgentAttribution,
     Atom,
+    Clarification,
     OperandRef,
     OperandTypeSchema,
     ParagraphEntry,
@@ -363,6 +364,68 @@ def _plant_stress(substrate: Substrate) -> None:
         substrate.add_relation(STRESS_SOURCE_ID, relation)
 
 
+def _plant_resolution_ambiguous_clarification(substrate: Substrate, source_id: str) -> None:
+    """Plant one open ``resolution-ambiguous`` clarification under ``source_id``.
+
+    Mirrors the ``_plant_clarification`` helper in ``tests/web/conftest.py``
+    but uses ``kind="resolution-ambiguous"`` so the Phase 2a T11.3 Playwright
+    spec can assert the kind badge renders and the resolve form works.
+
+    The clarification is anchored to the smoke atom (looked up from the
+    substrate) so that ``context_refs`` contains a real atom id. The
+    provenance round-trip follows the same content-addressable pattern as
+    every other planted artifact in this builder.
+    """
+    raising_agent = AgentAttribution(kind="llm", identifier="auditor-e2e", role="auditor")
+
+    # Build raised provenance record first (entity_id will be the clarification
+    # id — we need a stub to bootstrap the compute_id round-trip).
+    prov_payload: dict[str, Any] = {
+        "id": "p-" + "0" * 16,
+        "entity_type": "clarification-raised",
+        "entity_id": "c-" + "0" * 16,  # stub — replaced below
+        "activity": "audit_v1",
+        "activity_started_at": _now(),
+        "activity_ended_at": _now(),
+        "used_entity_ids": [source_id],
+        "was_attributed_to": raising_agent,
+        "was_influenced_by": [],
+        "schema_version": 1,
+    }
+    prov_draft = ProvenanceRecord(**prov_payload)
+    prov_id = compute_id(prov_draft)
+    prov_payload["id"] = prov_id
+    prov = ProvenanceRecord(**prov_payload)
+
+    clar_payload: dict[str, Any] = {
+        "id": "c-" + "0" * 16,
+        "status": "open",
+        "kind": "resolution-ambiguous",
+        "raised_at": _now(),
+        "raised_by": raising_agent,
+        "raised_by_activity": "audit_v1",
+        "context_refs": [],
+        "question": (
+            "Two operands match entity 'ACME Corp.' with equal confidence — "
+            "which resolution should take precedence?"
+        ),
+        "options": ["merge proposed into existing", "keep both as separate entities"],
+        "resolved_at": None,
+        "resolved_by": None,
+        "resolution": None,
+        "raised_provenance_id": prov_id,
+        "resolved_provenance_id": None,
+        "schema_version": 2,
+    }
+    clar_draft = Clarification(**clar_payload)
+    clar_id = compute_id(clar_draft)
+    clar_payload["id"] = clar_id
+    clar = Clarification(**clar_payload)
+
+    substrate.add_provenance(source_id, prov)
+    substrate.add_clarification(source_id, clar)
+
+
 def build(workspace: Path) -> None:
     """Plant both fixture distillations under ``workspace`` (idempotent-ish).
 
@@ -376,6 +439,9 @@ def build(workspace: Path) -> None:
     substrate = Substrate(workspace)
     _plant_smoke(substrate)
     _plant_stress(substrate)
+    # Plant one open resolution-ambiguous clarification so the T11.3
+    # Playwright spec has exactly one such clarification to navigate.
+    _plant_resolution_ambiguous_clarification(substrate, SMOKE_SOURCE_ID)
 
 
 def main() -> None:
