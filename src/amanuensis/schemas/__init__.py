@@ -26,10 +26,14 @@ from ._hashing import compute_id
 from ._shared import AgentAttribution, OperandRef, RoleAttribution
 from .atom import Atom
 from .clarification import Clarification
+from .entity import Entity
+from .entity_supersede import EntitySupersede
 from .iteration import IterationDirective
 from .provenance import ProvenanceRecord
 from .relation import Relation
 from .replay_log import ReplayLogEntry
+from .resolution import Resolution
+from .resolution_supersede import ResolutionSupersede
 from .source_mirror import ParagraphEntry, SourceMirrorManifest
 from .vocabulary import OperandTypeSchema, Vocabulary, VocabularyEntry
 
@@ -37,6 +41,8 @@ __all__ = [
     "AgentAttribution",
     "Atom",
     "Clarification",
+    "Entity",
+    "EntitySupersede",
     "IterationDirective",
     "OperandRef",
     "OperandTypeSchema",
@@ -44,6 +50,8 @@ __all__ = [
     "ProvenanceRecord",
     "Relation",
     "ReplayLogEntry",
+    "Resolution",
+    "ResolutionSupersede",
     "RoleAttribution",
     "SourceMirrorManifest",
     "Vocabulary",

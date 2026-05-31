@@ -128,7 +128,8 @@ def compute_id(model: BaseModel) -> str:
         raise ValueError(
             f"{cls_name} is not a content-addressable substrate type; "
             f"compute_id() only accepts Atom, Relation, ProvenanceRecord, "
-            f"Clarification, IterationDirective, SourceMirrorManifest"
+            f"Clarification, IterationDirective, SourceMirrorManifest, "
+            f"Entity, Resolution, ResolutionSupersede, EntitySupersede"
         )
     _empty: frozenset[str] = frozenset()
     per_class_raw: Any = getattr(cls, "_VOLATILE_FIELDS", _empty)
