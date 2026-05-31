@@ -1,11 +1,13 @@
+# pyright: reportUnusedFunction=false
 """Shared fixtures for ``tests/invariants/`` gate tests.
 
-The gate tests in this directory exercise INV-3, INV-5, INV-9, INV-10,
-and INV-2 on hand-built fixture substrates (NOT the M2.1 PDFs — those
-are vocabulary-design fixtures, not substrate state). The factories
-below mirror the patterns in ``tests/validators/conftest.py`` but are
-re-declared here so this directory's tests do not implicitly depend on
-collection order of ``tests/validators/conftest.py``.
+The gate tests in this directory exercise INV-2, INV-3, INV-5, INV-9,
+INV-10, INV-12, INV-13, and INV-14 on hand-built fixture substrates
+(NOT the M2.1 PDFs — those are vocabulary-design fixtures, not substrate
+state). The factories below mirror the patterns in
+``tests/validators/conftest.py`` but are re-declared here so this
+directory's tests do not implicitly depend on collection order of
+``tests/validators/conftest.py``.
 
 The ``vocabulary_subset`` fixture builds a 3-entry hand-rolled
 Vocabulary used by the INV-5 "snapshot vs global" gate test: we want a
@@ -18,18 +20,24 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal, cast
 
 import pytest
 
 from amanuensis.fs import Substrate
+from amanuensis.fs._atomic import atomic_write_text
+from amanuensis.fs._serialize import serialize_yaml
 from amanuensis.schemas import (
     AgentAttribution,
     Atom,
+    Entity,
+    EntitySupersede,
     OperandRef,
     OperandTypeSchema,
     ProvenanceRecord,
     Relation,
+    Resolution,
+    ResolutionSupersede,
     RoleAttribution,
     Vocabulary,
     VocabularyEntry,
@@ -443,3 +451,290 @@ def vocabulary_subset() -> Vocabulary:
             ),
         ],
     )
+
+
+# ---------------------------------------------------------------------------
+# Phase 2a helpers — Entity / Resolution / Supersede builders
+# ---------------------------------------------------------------------------
+
+_STABLE_AT = datetime(2026, 5, 31, 12, 0, 0, tzinfo=UTC)
+
+
+def _build_mappings_provenance(
+    agent: AgentAttribution,
+    *,
+    entity_id: str,
+    entity_type: str,
+) -> ProvenanceRecord:
+    """Build a ProvenanceRecord for a mappings-layer artifact.
+
+    Uses a fixed timestamp so content hashes are stable across test runs.
+    """
+    payload: dict[str, Any] = {
+        "id": "p-" + "0" * 16,
+        "entity_type": entity_type,
+        "entity_id": entity_id,
+        "activity": "map-resolve",
+        "activity_started_at": _STABLE_AT,
+        "activity_ended_at": _STABLE_AT,
+        "used_entity_ids": [],
+        "was_attributed_to": agent,
+        "was_influenced_by": [],
+        "schema_version": 1,
+    }
+    draft = ProvenanceRecord(**payload)
+    payload["id"] = compute_id(draft)
+    return ProvenanceRecord(**payload)
+
+
+def _build_entity(
+    role_attribution: RoleAttribution,
+    agent: AgentAttribution,
+    *,
+    canonical_name: str = "ACME Corp",
+    kind: str = "organization",
+    aliases: list[str] | None = None,
+) -> tuple[Entity, ProvenanceRecord]:
+    """Build an Entity + matching ProvenanceRecord.
+
+    Returns (entity, prov) where entity.provenance_id == prov.id and
+    prov.entity_id == entity.id.
+    """
+    if aliases is None:
+        aliases = []
+    entity_draft = Entity(
+        id="e-" + "0" * 16,
+        kind=kind,
+        canonical_name=canonical_name,
+        aliases=aliases,
+        notes=None,
+        provenance_id="p-" + "0" * 16,
+        role_attributions=[role_attribution],
+        schema_version=1,
+    )
+    entity_id = compute_id(entity_draft)
+    prov = _build_mappings_provenance(agent, entity_id=entity_id, entity_type="entity")
+    entity = Entity(
+        id=entity_id,
+        kind=kind,
+        canonical_name=canonical_name,
+        aliases=aliases,
+        notes=None,
+        provenance_id=prov.id,
+        role_attributions=[role_attribution],
+        schema_version=1,
+    )
+    return entity, prov
+
+
+def _build_resolution(
+    role_attribution: RoleAttribution,
+    agent: AgentAttribution,
+    *,
+    source_id: str,
+    atom_id: str,
+    entity_id: str,
+    operand_index: int = 0,
+    confidence: str = "high",
+    basis: str = "name match",
+) -> tuple[Resolution, ProvenanceRecord]:
+    """Build a Resolution + matching ProvenanceRecord."""
+    confidence_lit = cast("Literal['high', 'medium', 'low']", confidence)
+    res_draft = Resolution(
+        id="j-" + "0" * 16,
+        source_id=source_id,
+        atom_id=atom_id,
+        operand_index=operand_index,
+        entity_id=entity_id,
+        confidence=confidence_lit,
+        basis=basis,
+        provenance_id="p-" + "0" * 16,
+        role_attributions=[role_attribution],
+        schema_version=1,
+    )
+    resolution_id = compute_id(res_draft)
+    prov = _build_mappings_provenance(agent, entity_id=resolution_id, entity_type="resolution")
+    resolution = Resolution(
+        id=resolution_id,
+        source_id=source_id,
+        atom_id=atom_id,
+        operand_index=operand_index,
+        entity_id=entity_id,
+        confidence=confidence_lit,
+        basis=basis,
+        provenance_id=prov.id,
+        role_attributions=[role_attribution],
+        schema_version=1,
+    )
+    return resolution, prov
+
+
+def _build_resolution_supersede(
+    role_attribution: RoleAttribution,
+    agent: AgentAttribution,
+    *,
+    superseded_resolution_id: str,
+    replacement_resolution_id: str,
+    reason: str = "supervisor correction",
+) -> tuple[ResolutionSupersede, ProvenanceRecord]:
+    """Build a ResolutionSupersede + matching ProvenanceRecord."""
+    rs_draft = ResolutionSupersede(
+        id="s-" + "0" * 16,
+        superseded_resolution_id=superseded_resolution_id,
+        replacement_resolution_id=replacement_resolution_id,
+        reason=reason,
+        provenance_id="p-" + "0" * 16,
+        role_attributions=[role_attribution],
+        schema_version=1,
+    )
+    rs_id = compute_id(rs_draft)
+    prov = _build_mappings_provenance(agent, entity_id=rs_id, entity_type="resolution-supersede")
+    rs = ResolutionSupersede(
+        id=rs_id,
+        superseded_resolution_id=superseded_resolution_id,
+        replacement_resolution_id=replacement_resolution_id,
+        reason=reason,
+        provenance_id=prov.id,
+        role_attributions=[role_attribution],
+        schema_version=1,
+    )
+    return rs, prov
+
+
+def _build_entity_supersede(
+    role_attribution: RoleAttribution,
+    agent: AgentAttribution,
+    *,
+    superseded_entity_id: str,
+    replacement_entity_id: str,
+    reason: str = "supervisor merge",
+) -> tuple[EntitySupersede, ProvenanceRecord]:
+    """Build an EntitySupersede + matching ProvenanceRecord."""
+    es_draft = EntitySupersede(
+        id="t-" + "0" * 16,
+        superseded_entity_id=superseded_entity_id,
+        replacement_entity_id=replacement_entity_id,
+        reason=reason,
+        provenance_id="p-" + "0" * 16,
+        role_attributions=[role_attribution],
+        schema_version=1,
+    )
+    es_id = compute_id(es_draft)
+    prov = _build_mappings_provenance(agent, entity_id=es_id, entity_type="entity-supersede")
+    es = EntitySupersede(
+        id=es_id,
+        superseded_entity_id=superseded_entity_id,
+        replacement_entity_id=replacement_entity_id,
+        reason=reason,
+        provenance_id=prov.id,
+        role_attributions=[role_attribution],
+        schema_version=1,
+    )
+    return es, prov
+
+
+# ---------------------------------------------------------------------------
+# Phase 2a fixture: populated_mappings_workspace (INV-12 / INV-13 / INV-3)
+# ---------------------------------------------------------------------------
+
+_MAPPINGS_SOURCE_ID = "src-mappings-001"
+_MAPPINGS_ATOM_ID = "a-" + "deadbeef" * 2
+
+
+@pytest.fixture
+def populated_mappings_workspace(
+    tmp_path: Path,
+    role_attribution: RoleAttribution,
+    agent: AgentAttribution,
+) -> Path:
+    """Workspace with one distillation, one entity, and one resolution.
+
+    The distillation entry exists so ``list_distillations()`` returns the
+    source_id. The entity and resolution are written via the canonical
+    Substrate methods (so all content-addressable constraints hold).
+    Provenance records are written to ``mappings/provenance/``.
+    """
+    marker = tmp_path / "amanuensis.yaml"
+    marker.write_text(
+        "schema_version: 1\nproject_name: inv12-mappings\n",
+        encoding="utf-8",
+    )
+    substrate = Substrate(tmp_path)
+
+    # Create the distillation directory so list_distillations() returns it.
+    dist_dir = tmp_path / "distillations" / _MAPPINGS_SOURCE_ID
+    dist_dir.mkdir(parents=True, exist_ok=True)
+
+    entity, entity_prov = _build_entity(role_attribution, agent)
+    resolution, res_prov = _build_resolution(
+        role_attribution,
+        agent,
+        source_id=_MAPPINGS_SOURCE_ID,
+        atom_id=_MAPPINGS_ATOM_ID,
+        entity_id=entity.id,
+    )
+
+    # Write provenance to mappings/provenance/.
+    for prov in (entity_prov, res_prov):
+        prov_path = substrate.mappings_provenance_path(prov.id)
+        atomic_write_text(prov_path, serialize_yaml(prov))
+
+    substrate.add_entity(entity)
+    substrate.add_resolution(resolution)
+
+    return tmp_path
+
+
+# ---------------------------------------------------------------------------
+# Phase 2a fixture: cross_doc_violation_workspace (INV-12 — endpoint mismatch)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def cross_doc_violation_workspace(
+    tmp_path: Path,
+    role_attribution: RoleAttribution,
+    agent: AgentAttribution,
+) -> Path:
+    """Workspace where a relation under src1 claims a from_atom_id from src2.
+
+    Plants two distillations; builds an atom in each. Then writes a
+    relation under src1's directory whose ``from_atom_id`` belongs to
+    src2 (bypassing the add_relation guard). This violates the
+    intra-doc-only invariant (INV-9) and is the namespace-scope variant
+    the INV-12 gate test walks.
+    """
+    marker = tmp_path / "amanuensis.yaml"
+    marker.write_text(
+        "schema_version: 1\nproject_name: inv12-xdoc-violation\n",
+        encoding="utf-8",
+    )
+    substrate = Substrate(tmp_path)
+
+    src1 = "src-inv12-v01"
+    src2 = "src-inv12-v02"
+
+    atom_a, prov_a = _matched_atom_and_provenance(
+        role_attribution, agent, source_id=src1, char_span=(0, 42)
+    )
+    atom_b, prov_b = _matched_atom_and_provenance(
+        role_attribution, agent, source_id=src2, char_span=(100, 142)
+    )
+    for prov, src in ((prov_a, src1), (prov_b, src2)):
+        substrate.add_provenance(src, prov)
+    for atom, src in ((atom_a, src1), (atom_b, src2)):
+        substrate.add_atom(src, atom)
+
+    # Build a relation claimed under src1 but whose from_atom belongs to src2.
+    bad_relation = _build_relation(
+        role_attribution,
+        source_id=src1,
+        from_atom_id=atom_b.id,  # atom_b belongs to src2 — mismatch
+        to_atom_id=atom_a.id,
+    )
+    relation_dir = tmp_path / "distillations" / src1 / "relations"
+    relation_dir.mkdir(parents=True, exist_ok=True)
+    (relation_dir / f"{bad_relation.id}.yaml").write_text(
+        serialize_yaml(bad_relation), encoding="utf-8"
+    )
+    return tmp_path
