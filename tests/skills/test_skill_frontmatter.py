@@ -36,6 +36,17 @@ REQUIRED_FIELDS: tuple[str, ...] = (
     "cli_commands_invoked",
 )
 
+VALID_ROLES: tuple[str, ...] = (
+    "orchestrator",
+    "extractor",
+    "auditor",
+    "contrarian",
+    "constructive",
+    "premortem",
+    "map-resolve",
+    "map-audit",
+)
+
 
 def _iter_skill_files() -> Iterator[Path]:
     yield from sorted(SKILLS_DIR.glob("*.md"))
@@ -121,3 +132,11 @@ def test_at_least_three_stub_skills_exist() -> None:
     fms = _all_frontmatters()
     stubs = [fm for fm in fms if fm.get("stub") is True]
     assert len(stubs) >= 3, f"expected at least 3 stub skills, found {len(stubs)}"
+
+
+@pytest.mark.parametrize("skill_path", list(_iter_skill_files()), ids=lambda p: p.name)
+def test_skill_role_in_valid_set(skill_path: Path) -> None:
+    text = skill_path.read_text(encoding="utf-8")
+    fm, _ = split_frontmatter(text)
+    role = fm.get("role")
+    assert role in VALID_ROLES, f"{skill_path.name}: role={role!r} not in VALID_ROLES"
