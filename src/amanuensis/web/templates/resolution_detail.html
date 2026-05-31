@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% block title %}{{ resolution.id }} &middot; amanuensis{% endblock %}
+{% block nav %}
+<a href="/" class="text-neutral-300 hover:text-neutral-50">&larr; dashboard</a>
+<a href="/entities" class="text-neutral-300 hover:text-neutral-50">entities</a>
+{% endblock %}
+{% block content %}
+<section class="space-y-6">
+  <header class="space-y-1">
+    <p class="text-xs uppercase tracking-wider text-neutral-500">resolution</p>
+    <h1 class="font-mono text-xl font-semibold tracking-tight text-neutral-50 break-all">{{ resolution.id }}</h1>
+    {% if is_superseded and latest %}
+    <p class="text-sm text-amber-400">
+      superseded &rarr;
+      <a
+        href="/resolutions/{{ latest.id }}"
+        class="font-mono underline decoration-amber-600 underline-offset-2 hover:decoration-amber-400"
+      >{{ latest.id }}</a>
+    </p>
+    {% endif %}
+  </header>
+
+  <section class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+    <div class="rounded border border-neutral-800 bg-neutral-900 p-3">
+      <p class="text-xs uppercase tracking-wider text-neutral-500">source id</p>
+      <p class="mt-1 font-mono text-sm text-neutral-100">{{ resolution.source_id }}</p>
+    </div>
+    <div class="rounded border border-neutral-800 bg-neutral-900 p-3">
+      <p class="text-xs uppercase tracking-wider text-neutral-500">atom id</p>
+      <p class="mt-1 font-mono text-xs text-neutral-200 break-all">{{ resolution.atom_id }}</p>
+    </div>
+    <div class="rounded border border-neutral-800 bg-neutral-900 p-3">
+      <p class="text-xs uppercase tracking-wider text-neutral-500">operand index</p>
+      <p class="mt-1 text-sm text-neutral-100">{{ resolution.operand_index }}</p>
+    </div>
+    <div class="rounded border border-neutral-800 bg-neutral-900 p-3">
+      <p class="text-xs uppercase tracking-wider text-neutral-500">confidence</p>
+      <p class="mt-1 text-sm text-neutral-100">{{ resolution.confidence }}</p>
+    </div>
+    <div class="rounded border border-neutral-800 bg-neutral-900 p-3 sm:col-span-2">
+      <p class="text-xs uppercase tracking-wider text-neutral-500">entity</p>
+      <p class="mt-1">
+        <a
+          href="/entities/{{ resolution.entity_id }}"
+          class="font-mono text-sm text-neutral-200 underline decoration-neutral-700 underline-offset-2 hover:decoration-neutral-300"
+        >{{ resolution.entity_id }}</a>
+      </p>
+    </div>
+    <div class="rounded border border-neutral-800 bg-neutral-900 p-3 sm:col-span-2">
+      <p class="text-xs uppercase tracking-wider text-neutral-500">basis</p>
+      <p class="mt-1 text-sm text-neutral-200">{{ resolution.basis }}</p>
+    </div>
+  </section>
+
+  <section class="rounded border border-neutral-800 bg-neutral-900 p-4">
+    <h2 class="text-lg font-semibold text-neutral-50">provenance</h2>
+    <p class="mt-2 font-mono text-xs text-neutral-400 break-all">{{ resolution.provenance_id }}</p>
+  </section>
+
+  {% if is_superseded and latest %}
+  <section class="rounded border border-neutral-800 bg-neutral-900 p-4">
+    <h2 class="text-lg font-semibold text-neutral-50">supersede chain</h2>
+    <p class="mt-2 text-sm text-neutral-400">
+      this resolution has been superseded. the terminal resolution for this triple is
+      <a
+        href="/resolutions/{{ latest.id }}"
+        class="font-mono text-neutral-200 underline decoration-neutral-700 underline-offset-2 hover:decoration-neutral-300"
+      >{{ latest.id }}</a>.
+    </p>
+  </section>
+  {% endif %}
+
+  <p class="text-sm">
+    <a
+      href="/entities/{{ resolution.entity_id }}"
+      class="text-neutral-300 underline decoration-neutral-700 underline-offset-2 hover:decoration-neutral-300"
+    >&larr; back to entity</a>
+  </p>
+</section>
+{% endblock %}
