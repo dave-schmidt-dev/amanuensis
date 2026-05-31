@@ -5,7 +5,7 @@ Commands
 - ``amanuensis map [OPTIONS]`` (orchestrator callback) — run the full
   map warp-plan cycle; enqueues the map-resolve role.  T7.2.
 - ``amanuensis map status`` — read-only workspace summary.  T7.4.
-- ``amanuensis map entity {list,show,merge}`` — entity CRUD; T7.5-T7.7 stubs.
+- ``amanuensis map entity {list,show,merge}`` — entity CRUD; T7.5-T7.6.
 - ``amanuensis map resolution {show,supersede}`` — resolution inspection; T7.8-T7.9 stubs.
 - ``amanuensis map vocabulary {show,snapshot}`` — vocabulary registry; T7.10 stubs.
 
@@ -31,8 +31,16 @@ import typer
 
 from amanuensis.dispatch.queue import enqueue
 from amanuensis.fs import ReplayLog, Substrate, WorkspaceLockTimeout, acquire_workspace_lock
+from amanuensis.fs._atomic import atomic_write_text
+from amanuensis.fs._serialize import serialize_yaml
 from amanuensis.llm.queue import DispatchQueueEntry
-from amanuensis.schemas import AgentAttribution
+from amanuensis.schemas import (
+    AgentAttribution,
+    EntitySupersede,
+    ProvenanceRecord,
+    RoleAttribution,
+    compute_id,
+)
 from amanuensis.vocabulary.entity_registry import EntityVocabularyError, load_entity_vocabulary
 
 from ._common import load_workspace_config
@@ -633,26 +641,341 @@ def status_command(
 
 
 # ---------------------------------------------------------------------------
-# entity sub-commands (stubs — T7.5-T7.7)
+# entity sub-commands (T7.5, T7.6)
 # ---------------------------------------------------------------------------
 
 
 @entity_app.command("list")
-def entity_list_command() -> None:
-    """List canonical entities (stub; T7.5)."""
-    typer.echo("TODO: list")
+@require_marker
+def entity_list_command(
+    kind: Annotated[
+        str | None,
+        typer.Option(
+            "--kind",
+            help="Filter to entities of the given kind (must be in active vocabulary snapshot).",
+        ),
+    ] = None,
+    workspace: Annotated[
+        Path | None,
+        typer.Option(
+            "--workspace",
+            "-w",
+            help="Workspace root (must contain amanuensis.yaml). Defaults to CWD.",
+        ),
+    ] = None,
+) -> None:
+    """List canonical entities in the workspace (read-only; T7.5)."""
+    workspace_path = workspace_from_kwargs({"workspace": workspace})
+    substrate = Substrate(workspace_path)
+
+    # Validate --kind against active vocabulary snapshot if given.
+    if kind is not None:
+        from amanuensis.fs._errors import SubstrateNotFound
+
+        try:
+            vocab = substrate.get_entity_vocabulary_snapshot()
+        except SubstrateNotFound:
+            vocab = None
+        valid_kinds: set[str] = {k.id for k in vocab.kinds} if vocab is not None else set()
+        if vocab is not None and kind not in valid_kinds:
+            typer.secho(
+                f"kind '{kind}' not in active vocabulary snapshot; "
+                "run `amanuensis map vocabulary show` to see kinds",
+                err=True,
+            )
+            raise typer.Exit(code=2)
+
+    entities = sorted(
+        substrate.list_entities(),
+        key=lambda e: (e.kind, e.canonical_name),
+    )
+    for entity in entities:
+        if kind is not None and entity.kind != kind:
+            continue
+        typer.echo(
+            f"{entity.id}  kind={entity.kind}  "
+            f"canonical={entity.canonical_name}  aliases={len(entity.aliases)}"
+        )
 
 
 @entity_app.command("show")
-def entity_show_command() -> None:
-    """Show a canonical entity (stub; T7.6)."""
-    typer.echo("TODO: show")
+@require_marker
+def entity_show_command(
+    entity_id: Annotated[
+        str,
+        typer.Argument(help="Entity id (e.g. e-<hash>)."),
+    ],
+    workspace: Annotated[
+        Path | None,
+        typer.Option(
+            "--workspace",
+            "-w",
+            help="Workspace root (must contain amanuensis.yaml). Defaults to CWD.",
+        ),
+    ] = None,
+) -> None:
+    """Print a canonical entity's frontmatter + resolutions + supersede chain (read-only; T7.5)."""
+    workspace_path = workspace_from_kwargs({"workspace": workspace})
+    substrate = Substrate(workspace_path)
+
+    path = substrate.entity_path(entity_id)
+    if not path.is_file():
+        typer.secho(
+            f"entity '{entity_id}' not found in mappings/entities/",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+    # Print raw on-disk content (frontmatter + markdown body).
+    typer.echo(path.read_text(encoding="utf-8"), nl=False)
+
+    # Resolutions pointing here.
+    typer.echo("\n## Resolutions pointing here")
+    resolution_count = 0
+    for r in substrate.list_resolutions(where_entity_id=entity_id):
+        short = r.id[2:10] if len(r.id) > 2 else r.id
+        typer.echo(
+            f"j-{short}  source={r.source_id}  atom={r.atom_id}  "
+            f"operand={r.operand_index}  confidence={r.confidence}"
+        )
+        resolution_count += 1
+    if resolution_count == 0:
+        typer.echo("(none)")
+
+    # Supersede chain.
+    typer.echo("\n## Supersede chain")
+    from amanuensis.fs._errors import (
+        SubstrateNotFound,
+        SupersedeChainTooDeep,
+        SupersedeCycleDetected,
+    )
+
+    try:
+        latest = substrate.latest_entity_for(entity_id)
+    except (SubstrateNotFound, SupersedeCycleDetected, SupersedeChainTooDeep) as exc:
+        typer.echo(f"(error walking chain: {exc})")
+        return
+
+    if latest.id == entity_id:
+        typer.echo("(latest in chain)")
+    else:
+        typer.echo(f"superseded by {latest.id}")
+        # Walk intermediate hops: find each EntitySupersede where
+        # superseded_entity_id == current, chain forward.
+        current = entity_id
+        while current != latest.id:
+            found_next = False
+            for record in substrate.list_supersedes(kind="entity"):
+                if isinstance(record, EntitySupersede) and record.superseded_entity_id == current:
+                    typer.echo(f"  {current} -> {record.replacement_entity_id}")
+                    current = record.replacement_entity_id
+                    found_next = True
+                    break
+            if not found_next:
+                break
 
 
 @entity_app.command("merge")
-def entity_merge_command() -> None:
-    """Merge two entities (stub; T7.7)."""
-    typer.echo("TODO: merge")
+@require_marker
+def entity_merge_command(
+    a_id: Annotated[
+        str,
+        typer.Argument(help="First entity id to merge."),
+    ],
+    b_id: Annotated[
+        str,
+        typer.Argument(help="Second entity id to merge."),
+    ],
+    canonical: Annotated[
+        str,
+        typer.Option(
+            "--canonical",
+            help="The entity id that becomes the canonical (surviving) entity.",
+        ),
+    ],
+    reason: Annotated[
+        str,
+        typer.Option(
+            "--reason",
+            help="Reason for the merge (recorded in EntitySupersede).",
+        ),
+    ],
+    actor: Annotated[
+        str,
+        typer.Option(
+            "--actor",
+            help="Identifier of the human performing the merge.",
+        ),
+    ] = "cli",
+    dry_run: Annotated[
+        bool,
+        typer.Option(
+            "--dry-run",
+            help="Print what would be written without making any changes.",
+        ),
+    ] = False,
+    force: Annotated[
+        bool,
+        typer.Option(
+            "--force",
+            help="Allow merging entities that are already superseded.",
+        ),
+    ] = False,
+    workspace: Annotated[
+        Path | None,
+        typer.Option(
+            "--workspace",
+            "-w",
+            help="Workspace root (must contain amanuensis.yaml). Defaults to CWD.",
+        ),
+    ] = None,
+) -> None:
+    """Merge two entities, writing an EntitySupersede record (T7.6).
+
+    Acquires workspace flock for the duration of the write.
+    Supports --dry-run (no writes) and --force (allow already-superseded).
+    """
+    workspace_path = workspace_from_kwargs({"workspace": workspace})
+    substrate = Substrate(workspace_path)
+
+    from amanuensis.fs._errors import SubstrateNotFound
+
+    # --- Validate all three entity ids exist ---------------------------
+    for eid, label in [(a_id, "first"), (b_id, "second"), (canonical, "--canonical")]:
+        if not substrate.entity_path(eid).is_file():
+            if label == "--canonical":
+                typer.secho(
+                    f"--canonical '{canonical}' is not in mappings/entities/",
+                    err=True,
+                )
+            else:
+                typer.secho(
+                    f"entity '{eid}' not found in mappings/entities/",
+                    err=True,
+                )
+            raise typer.Exit(code=1)
+
+    # --- Validate neither is already superseded (unless --force) -------
+    if not force:
+        for eid in (a_id, b_id):
+            try:
+                latest = substrate.latest_entity_for(eid)
+            except SubstrateNotFound:
+                latest = None
+            if latest is not None and latest.id != eid:
+                typer.secho(
+                    f"entity '{eid}' is already superseded by '{latest.id}'; "
+                    "merge the latest entity in the chain "
+                    f"(use `amanuensis map entity show {eid}`)",
+                    err=True,
+                )
+                raise typer.Exit(code=1)
+
+    # --- Build EntitySupersede record(s) for whichever ids != canonical -
+    now = datetime.now(UTC)
+    agent = AgentAttribution(kind="human", identifier=actor, role="human_supervisor")
+    role_attr = RoleAttribution(agent=agent, activity="merged", at=now)
+
+    to_supersede: list[str] = [eid for eid in (a_id, b_id) if eid != canonical]
+
+    supersedes_to_write: list[EntitySupersede] = []
+    provs_to_write: list[ProvenanceRecord] = []
+
+    for superseded_id in to_supersede:
+        es_draft = EntitySupersede(
+            id="t-" + "0" * 16,
+            kind="entity",
+            superseded_entity_id=superseded_id,
+            replacement_entity_id=canonical,
+            reason=reason,
+            provenance_id="p-" + "0" * 16,
+            role_attributions=[role_attr],
+            schema_version=1,
+        )
+        es_id = compute_id(es_draft)
+
+        prov_draft = ProvenanceRecord(
+            id="p-" + "0" * 16,
+            entity_type="entity-supersede",
+            entity_id=es_id,
+            activity="entity-merge",
+            activity_started_at=now,
+            activity_ended_at=now,
+            used_entity_ids=[],
+            was_attributed_to=agent,
+            was_influenced_by=[],
+            schema_version=1,
+        )
+        prov_id = compute_id(prov_draft)
+        prov = prov_draft.model_copy(update={"id": prov_id})
+        es = es_draft.model_copy(update={"id": es_id, "provenance_id": prov_id})
+        supersedes_to_write.append(es)
+        provs_to_write.append(prov)
+
+    # --- Dry-run: print what would be written --------------------------
+    if dry_run:
+        typer.echo("[dry-run] No writes will be made.")
+        for es, prov in zip(supersedes_to_write, provs_to_write, strict=True):
+            typer.echo(f"Would write EntitySupersede: {es.id}")
+            typer.echo(f"  superseded_entity_id: {es.superseded_entity_id}")
+            typer.echo(f"  replacement_entity_id: {es.replacement_entity_id}")
+            typer.echo(f"  reason: {es.reason}")
+            typer.echo(f"Would write ProvenanceRecord: {prov.id}")
+        typer.echo(f"Resulting canonical chain: {canonical}")
+        return
+
+    # --- Mutating path: acquire flock and write ------------------------
+    try:
+        with acquire_workspace_lock(workspace_path, timeout=5.0):
+            substrate_changes: list[str] = []
+
+            for es, prov in zip(supersedes_to_write, provs_to_write, strict=True):
+                # Write prov first, then the EntitySupersede.
+                prov_path = substrate.mappings_provenance_path(prov.id)
+                atomic_write_text(prov_path, serialize_yaml(prov))
+                substrate_changes.append(str(prov_path.relative_to(workspace_path)))
+
+                substrate.add_entity_supersede(es)
+                es_path = substrate.supersede_path(es.id)
+                substrate_changes.append(str(es_path.relative_to(workspace_path)))
+
+            # Compute inputs hash for the replay-log entry.
+            inputs_payload = json.dumps(
+                {
+                    "a_id": a_id,
+                    "b_id": b_id,
+                    "canonical_id": canonical,
+                    "reason": reason,
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+            inputs_hash = hashlib.sha256(inputs_payload).hexdigest()
+
+            actor_attr = AgentAttribution(kind="human", identifier=actor, role="human_supervisor")
+            ReplayLog.for_mappings(workspace_path).append(
+                actor=actor_attr,
+                activity="entity-merge",
+                inputs_hash=inputs_hash,
+                outputs_hash=inputs_hash,
+                cache_hit=False,
+                substrate_changes=substrate_changes,
+                duration_seconds=0.0,
+                _lock_held=True,
+            )
+
+    except WorkspaceLockTimeout as exc:
+        typer.secho(
+            "workspace flock held by another process — wait or release .amanuensis-lock",
+            err=True,
+        )
+        raise typer.Exit(code=2) from exc
+
+    for es in supersedes_to_write:
+        typer.echo(
+            f"Merged entity '{es.superseded_entity_id}' -> '{canonical}'. "
+            f"EntitySupersede id: {es.id}"
+        )
 
 
 # ---------------------------------------------------------------------------

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 from typer.testing import CliRunner
@@ -183,3 +184,172 @@ def test_map_present_skills_proceed(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     monkeypatch.setenv("AMANUENSIS_HARNESS_HOME", str(fake_home))
     res = runner.invoke(app, ["map", "--workspace", str(workspace), "--non-interactive"])
     assert res.exit_code == 0, f"stdout={res.stdout!r} stderr={res.stderr!r}"
+
+
+# ---------------------------------------------------------------------------
+# T7.5: map entity list + show tests
+# ---------------------------------------------------------------------------
+
+
+def _plant_entities(workspace: Path) -> list[str]:
+    """Plant two test entities and return their ids."""
+    from datetime import UTC, datetime
+
+    from amanuensis.dispatch.reconcile import _build_entity  # pyright: ignore[reportPrivateUsage]
+    from amanuensis.fs import Substrate
+    from amanuensis.fs._atomic import atomic_write_text
+    from amanuensis.fs._serialize import serialize_yaml
+
+    substrate = Substrate(workspace)
+    now = datetime.now(UTC)
+    ids: list[str] = []
+    raw_list: list[dict[str, Any]] = [
+        {"kind": "organization", "canonical_name": "ACME Corp", "aliases": ["Acme"]},
+        {"kind": "person", "canonical_name": "Alice Smith", "aliases": []},
+    ]
+    for raw in raw_list:
+        entity, prov = _build_entity(raw, activity="map-resolve", inputs_hash="x" * 64, now=now)
+        atomic_write_text(substrate.mappings_provenance_path(prov.id), serialize_yaml(prov))
+        substrate.add_entity(entity)
+        ids.append(entity.id)
+    return ids
+
+
+def test_map_entity_list_empty(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    workspace = _make_workspace(tmp_path)
+    res = runner.invoke(app, ["map", "entity", "list", "--workspace", str(workspace)])
+    assert res.exit_code == 0
+    assert res.stdout.strip() == ""  # empty list = empty output
+
+
+def test_map_entity_list_with_entities(tmp_path: Path) -> None:
+    workspace = _make_workspace(tmp_path)
+    _plant_entities(workspace)
+    res = runner.invoke(app, ["map", "entity", "list", "--workspace", str(workspace)])
+    assert res.exit_code == 0
+    assert "ACME Corp" in res.stdout
+    assert "Alice Smith" in res.stdout
+    # Sorted by (kind, canonical_name) — "organization" > "person" alphabetically,
+    # so organization comes before person.
+    org_pos = res.stdout.find("ACME Corp")
+    per_pos = res.stdout.find("Alice Smith")
+    assert org_pos < per_pos  # organization comes before person
+
+
+def test_map_entity_show_not_found(tmp_path: Path) -> None:
+    workspace = _make_workspace(tmp_path)
+    res = runner.invoke(
+        app,
+        ["map", "entity", "show", "e-" + "9" * 16, "--workspace", str(workspace)],
+    )
+    assert res.exit_code == 1
+    assert "not found" in (res.stdout + res.stderr).lower()
+
+
+def test_map_entity_show_found(tmp_path: Path) -> None:
+    workspace = _make_workspace(tmp_path)
+    ids = _plant_entities(workspace)
+    entity_id = ids[0]
+    res = runner.invoke(
+        app,
+        ["map", "entity", "show", entity_id, "--workspace", str(workspace)],
+    )
+    assert res.exit_code == 0
+    assert "ACME Corp" in res.stdout
+    assert "Resolutions pointing here" in res.stdout
+    assert "Supersede chain" in res.stdout
+
+
+# ---------------------------------------------------------------------------
+# T7.6: map entity merge tests
+# ---------------------------------------------------------------------------
+
+
+def _plant_org_entities(workspace: Path) -> list[str]:
+    """Plant two org entities and return their ids."""
+    from datetime import UTC, datetime
+
+    from amanuensis.dispatch.reconcile import _build_entity  # pyright: ignore[reportPrivateUsage]
+    from amanuensis.fs import Substrate
+    from amanuensis.fs._atomic import atomic_write_text
+    from amanuensis.fs._serialize import serialize_yaml
+
+    substrate = Substrate(workspace)
+    now = datetime.now(UTC)
+    ids: list[str] = []
+    raw_list: list[dict[str, Any]] = [
+        {"kind": "organization", "canonical_name": "ACME Corp", "aliases": []},
+        {"kind": "organization", "canonical_name": "Acme Inc", "aliases": []},
+    ]
+    for raw in raw_list:
+        entity, prov = _build_entity(raw, activity="map-resolve", inputs_hash="y" * 64, now=now)
+        atomic_write_text(substrate.mappings_provenance_path(prov.id), serialize_yaml(prov))
+        substrate.add_entity(entity)
+        ids.append(entity.id)
+    return ids
+
+
+def test_entity_merge_writes_supersede(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    workspace = _make_workspace(tmp_path)
+    a_id, b_id = _plant_org_entities(workspace)
+    res = runner.invoke(
+        app,
+        [
+            "map",
+            "entity",
+            "merge",
+            a_id,
+            b_id,
+            "--canonical",
+            a_id,
+            "--reason",
+            "duplicate org records",
+            "--workspace",
+            str(workspace),
+        ],
+    )
+    assert res.exit_code == 0, f"stdout={res.stdout!r} stderr={res.stderr!r}"
+    # One EntitySupersede should exist now.
+    sup_dir = workspace / "mappings" / "supersedes"
+    sup_files = list(sup_dir.glob("t-*.yaml"))
+    assert len(sup_files) == 1, f"expected 1 EntitySupersede, got {sup_files!r}"
+
+
+def test_entity_merge_dry_run_no_writes(tmp_path: Path) -> None:
+    workspace = _make_workspace(tmp_path)
+    a_id, b_id = _plant_org_entities(workspace)
+    before_files = (
+        set((workspace / "mappings" / "supersedes").glob("*"))
+        if (workspace / "mappings" / "supersedes").is_dir()
+        else set()
+    )
+    res = runner.invoke(
+        app,
+        [
+            "map",
+            "entity",
+            "merge",
+            a_id,
+            b_id,
+            "--canonical",
+            a_id,
+            "--reason",
+            "x",
+            "--dry-run",
+            "--workspace",
+            str(workspace),
+        ],
+    )
+    assert res.exit_code == 0
+    assert "dry-run" in res.stdout.lower() or "would write" in res.stdout.lower()
+    after_files = (
+        set((workspace / "mappings" / "supersedes").glob("*"))
+        if (workspace / "mappings" / "supersedes").is_dir()
+        else set()
+    )
+    assert before_files == after_files
+
+
+def test_entity_merge_rejects_already_superseded(tmp_path: Path) -> None:
+    """Already-superseded entity rejected without --force."""
+    pytest.skip("TODO: 3-entity scaffold helper needed")
