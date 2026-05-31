@@ -39,7 +39,7 @@ from typing import Annotated, Any
 
 import yaml
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import ValidationError
 
 from amanuensis.fs import Substrate, SubstrateInvalidId
@@ -173,6 +173,8 @@ async def relation_graph(
     # ``</script>`` sequence, which our atom/relation ids and short
     # labels cannot produce.
     payload_json = json.dumps(payload, ensure_ascii=False, sort_keys=True)
+    atom_entity_index = _build_atom_entity_index(substrate, source_id)
+    atom_entity_index_json = json.dumps(atom_entity_index, ensure_ascii=False, sort_keys=True)
 
     templates = request.app.state.templates
     return templates.TemplateResponse(  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType,reportReturnType]
@@ -183,5 +185,58 @@ async def relation_graph(
             "node_count": len(atoms),
             "edge_count": len(relations),
             "cy_data_json": payload_json,
+            "atom_entity_index_json": atom_entity_index_json,
         },
+    )
+
+
+def _build_atom_entity_index(substrate: Substrate, source_id: str) -> dict[str, list[str]]:
+    """Build the atom→entity-ids index for the hover-by-entity feature.
+
+    For each Resolution under ``source_id``, the entity_id is resolved
+    through the EntitySupersede chain via ``latest_entity_for`` so the
+    returned ids are CANONICAL (CV-9). Deduplicates per-list. Keys are
+    sorted for deterministic output; lists preserve insertion order after
+    dedup (first occurrence wins).
+
+    Atoms with no resolutions are absent from the returned dict.
+    """
+    index: dict[str, list[str]] = {}
+    for resolution in substrate.list_resolutions(source_id=source_id):
+        atom_id = resolution.atom_id
+        try:
+            canonical_entity = substrate.latest_entity_for(resolution.entity_id)
+            entity_id = canonical_entity.id
+        except Exception:
+            # Defensive: broken supersede chain or missing entity — skip.
+            entity_id = resolution.entity_id
+        if atom_id not in index:
+            index[atom_id] = []
+        if entity_id not in index[atom_id]:
+            index[atom_id].append(entity_id)
+    return dict(sorted(index.items()))
+
+
+@router.get(
+    "/distillations/{source_id}/relations/atom-entity-index",
+    response_class=JSONResponse,
+)
+async def atom_entity_index(
+    source_id: str,
+    substrate: Annotated[Substrate, Depends(get_substrate)],
+) -> JSONResponse:
+    """Return ``dict[atom_id, list[entity_id]]`` for the given distillation.
+
+    Entity ids are canonical (CV-9: passed through
+    ``latest_entity_for``). Atoms with no resolutions are absent from
+    the dict. Keys are sorted for deterministic output.
+
+    Headers:
+        Cache-Control: no-store — resolutions change during a session.
+    """
+    _ensure_distillation_exists(substrate, source_id)
+    index = _build_atom_entity_index(substrate, source_id)
+    return JSONResponse(
+        content=index,
+        headers={"Cache-Control": "no-store"},
     )

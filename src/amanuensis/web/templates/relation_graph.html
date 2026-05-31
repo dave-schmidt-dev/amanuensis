@@ -40,6 +40,7 @@
      not HTML-escape the braces / brackets. The ``id="cy-data"`` is the
      stable HTMX swap target. #}
   <script type="application/json" id="cy-data">{{ cy_data_json | safe }}</script>
+  <script type="application/json" id="atom-entity-index">{{ atom_entity_index_json | safe }}</script>
 
   {# Empty-state helper text shown ONLY when the payload has zero
      elements; Cytoscape renders a blank canvas otherwise which is
