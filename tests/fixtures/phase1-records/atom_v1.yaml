@@ -1,0 +1,32 @@
+id: a-deadbeefdeadbeef
+source_id: src-doc1
+section_path:
+  - "I. Background"
+  - "A. Parties"
+paragraph_index: 0
+sentence_index: 0
+char_span:
+  - 0
+  - 120
+scale_anchor: sentence
+kind: claim
+predicate: alleges
+operands:
+  - role: subject
+    kind: entity
+    value: ent-plaintiff-acme
+  - role: object
+    kind: literal
+    value: "breach of contract"
+narrative: "Plaintiff ACME alleges breach of contract by Defendant."
+qualifier_level: null
+qualifier_basis: null
+provenance_id: p-aaaaaaaaaaaaaaaa
+role_attributions:
+  - agent:
+      kind: llm
+      identifier: claude-opus-4-7
+      role: extractor
+    activity: "extractor proposed"
+    at: 2026-05-30T10:00:00+00:00
+schema_version: 1

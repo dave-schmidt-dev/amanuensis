@@ -1,0 +1,18 @@
+id: r-cafecafecafecafe
+source_id: src-doc1
+from_atom_id: a-deadbeefdeadbeef
+to_atom_id: a-beefbeefbeefbeef
+kind: supports
+warrant: "The allegations provide supporting evidence for the damage claim."
+warrant_defensibility: literature-backed
+warrant_basis: "Established contract law principles (Restatement 2d of Contracts § 236)."
+confidence: high
+provenance_id: p-bbbbbbbbbbbbbbbb
+role_attributions:
+  - agent:
+      kind: llm
+      identifier: claude-opus-4-7
+      role: extractor
+    activity: "extractor proposed"
+    at: 2026-05-30T10:30:00+00:00
+schema_version: 1
