@@ -1,0 +1,16 @@
+{
+  "name": "amanuensis-e2e",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Playwright @playwright/test E2E suite for the amanuensis web app (M8.9).",
+  "scripts": {
+    "test": "playwright test",
+    "test:headed": "playwright test --headed",
+    "install-browsers": "playwright install chromium"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.40.0",
+    "typescript": "^5.3.0",
+    "@types/node": "^20.10.0"
+  }
+}

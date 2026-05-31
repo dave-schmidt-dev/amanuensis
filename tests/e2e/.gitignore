@@ -1,0 +1,5 @@
+# Node + Playwright artifacts — rebuildable, never committed.
+node_modules/
+playwright-report/
+test-results/
+package-lock.json

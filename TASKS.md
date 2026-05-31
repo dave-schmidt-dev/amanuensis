@@ -158,19 +158,23 @@ Synthesis record: `~/Documents/Projects/.plans/amanuensis/phase1-distill-foundat
     M7.1 skill files, M7.2 stub-skip test, M7.3 distill CLI,
     M7.4 reconciliation gate + CR-7, M7.5 e2e integration test,
     M7.6 install-skills final, M7.7 skill-author guide.
-  - M8 (Web app, 10 tasks) — **IN PROGRESS** (7/10).
-    - M8.1-M8.5, M8.7, M8.8: **DONE** (skeleton + dashboard +
-      atom browser + Cytoscape graph + forms + replay/status +
-      localhost-only refusal).
-    - M8.6 (form-lock contention test): pending. Now unblocked
-      (needs M8.5).
-    - M8.9 (Playwright E2E): pending. Now unblocked (needs M8.4 +
-      M8.5).
-    - M8.10 (docs/supervision-protocol.md): pending. Now
-      unblocked (needs M8.5).
-  - M9-M11 — pending. M9.1 (export) now unblocked (needs M8.4
-    done); M10.1 (cross-link sweep) needs M8.10; M11.1 (CI
-    workflow) is the final cap.
+  - M8 (Web app, 10 tasks) — **DONE**. Skeleton + dashboard +
+    atom browser + Cytoscape graph + forms + replay/status +
+    localhost-only refusal + form-lock contention test +
+    Playwright E2E + supervision-protocol doc. All 10 tasks
+    landed; 5 docling-free web tests via pytest's TestClient +
+    10 Playwright specs gated under `@pytest.mark.e2e`.
+  - M9 (Static export stub, 1 task) — **DONE**. `amanuensis
+    export <source-id> --format static-html --output PATH`
+    produces a self-contained HTML file (no CDN; pure f-string
+    rendering; `</script` injection defense; 0644 mode).
+  - M10 (Documentation polish, 1 task) — **IN PROGRESS**.
+    M10.1 (cross-link sweep + Known Limitations review): now
+    unblocked (needs M7.7 + M8.10).
+  - M11 (INVARIANT CI gate + final validation, 3 tasks) — **IN
+    PROGRESS**. M11.1 (CI workflow) now unblocked. M11.2
+    (manual e2e on legal-pleading fixture) needs M11.1; M11.3
+    (final docs sync + invariant-gate verifier) needs M11.2.
 
 ## Upcoming phases
 

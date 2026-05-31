@@ -1,0 +1,6 @@
+# Generated fixture workspace — rebuilt by globalSetup.ts on every fresh
+# `playwright test` run. Not source-of-truth; checked in only when a
+# developer wants to inspect a specific planted state without re-running
+# the builder.
+workspace/
+stress-workspace/
