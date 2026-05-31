@@ -5,15 +5,6 @@
 #   -> pytest (unit/integration) -> pytest -m invariants (REQUIRED gate)
 #   -> Playwright E2E (pytest -m e2e shells `npx playwright test`).
 #
-# Lockfile dependency (intentional, documented):
-#   `uv sync --frozen` requires `uv.lock` to be present in the checked-out
-#   tree. As of M11.1, `uv.lock` is listed in `.gitignore`, so CI will
-#   fail at the sync step with a clear error until that policy decision
-#   is reversed. Fix:
-#       uv lock && git add -f uv.lock && git commit
-#   (and remove `uv.lock` from `.gitignore`). M11.1 ships the gate; the
-#   lockfile-commit decision is left to the orchestrator.
-#
 # Determinism notes:
 #   - Runner is pinned to `ubuntu-24.04`, NOT `ubuntu-latest`, so the
 #     image doesn't auto-promote underneath us.

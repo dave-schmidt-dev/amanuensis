@@ -1394,3 +1394,19 @@ Format: dated entries, newest first. Bug entries cite the area touched:
   26 invariant-marked subset, 10 Playwright E2E specs (gated
   by `@pytest.mark.e2e`). | files: INVARIANTS.md, HISTORY.md,
   TASKS.md, tests/docs/test_invariants_have_gate_tests.py
+
+## 2026-05-31
+
+- **CI unblocked — `uv.lock` committed.** Standing lockfile
+  decision from the M11.1 ship (deferred to "the orchestrator")
+  resolved in favor of commit-the-lockfile, consistent with the
+  rest of the determinism story: pinned runner (`ubuntu-24.04`) +
+  pinned uv (`0.4.30`) + pinned lockfile + `uv sync --frozen`.
+  Edits: (1) removed `uv.lock` from `.gitignore`; (2) committed
+  the existing resolved lockfile (`uv lock` was a no-op — 149
+  packages already resolved); (3) removed the now-stale "Lockfile
+  dependency" notice from the top of `.github/workflows/ci.yml`;
+  (4) closed the standing task in `TASKS.md`. First CI run on the
+  next push will no longer fail at the sync step. | files:
+  .gitignore, uv.lock, .github/workflows/ci.yml, TASKS.md,
+  HISTORY.md

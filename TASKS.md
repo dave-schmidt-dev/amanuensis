@@ -48,8 +48,6 @@ Synthesis record: `~/Documents/Projects/.plans/amanuensis/phase1-distill-foundat
   for that engagement (vocabulary, scheme catalogue, probandum
   template). Phase 1's substrate schema designed to absorb this
   without rewrite.
-- [pending] Lockfile commit — `uv.lock` currently gitignored;
-  first CI run will fail at `uv sync --frozen` until `uv lock &&
-  git add -f uv.lock && git commit` + removal from `.gitignore`
-  lands. Documented inline at the top of
-  `.github/workflows/ci.yml`.
+- [done] Lockfile commit — `uv.lock` committed 2026-05-31;
+  `.gitignore` entry removed; inline CI-workflow notice removed.
+  CI's `uv sync --frozen` now has the lockfile it needs.

@@ -12,7 +12,6 @@ dist/
 # Virtualenv / uv
 .venv/
 .python-version
-uv.lock
 
 # Environment + secrets
 .env
