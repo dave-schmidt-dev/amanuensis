@@ -40,10 +40,14 @@
     <div class="rounded border border-neutral-800 bg-neutral-900 p-3 sm:col-span-2">
       <p class="text-xs uppercase tracking-wider text-neutral-500">entity</p>
       <p class="mt-1">
+        {% if canonical_entity %}
         <a
-          href="/entities/{{ resolution.entity_id }}"
+          href="/entities/{{ canonical_entity.id }}"
           class="font-mono text-sm text-neutral-200 underline decoration-neutral-700 underline-offset-2 hover:decoration-neutral-300"
-        >{{ resolution.entity_id }}</a>
+        >{{ canonical_entity.id }}</a>
+        {% else %}
+        <span class="font-mono text-sm text-neutral-500">{{ resolution.entity_id }}</span>
+        {% endif %}
       </p>
     </div>
     <div class="rounded border border-neutral-800 bg-neutral-900 p-3 sm:col-span-2">
@@ -71,10 +75,17 @@
   {% endif %}
 
   <p class="text-sm">
+    {% if canonical_entity %}
     <a
-      href="/entities/{{ resolution.entity_id }}"
+      href="/entities/{{ canonical_entity.id }}"
       class="text-neutral-300 underline decoration-neutral-700 underline-offset-2 hover:decoration-neutral-300"
     >&larr; back to entity</a>
+    {% else %}
+    <a
+      href="/entities"
+      class="text-neutral-300 underline decoration-neutral-700 underline-offset-2 hover:decoration-neutral-300"
+    >&larr; back to entity registry</a>
+    {% endif %}
   </p>
 </section>
 {% endblock %}

@@ -16,7 +16,12 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import HTMLResponse
 
-from amanuensis.fs import Substrate, SubstrateNotFound
+from amanuensis.fs import (
+    Substrate,
+    SubstrateNotFound,
+    SupersedeChainTooDeep,
+    SupersedeCycleDetected,
+)
 
 from ..dependencies import get_substrate
 
@@ -56,12 +61,23 @@ async def resolution_detail(
 
     is_superseded = latest is not None and latest.id != resolution_id
 
+    # CV-9: resolve the entity link through the EntitySupersede chain so the
+    # template always links to the canonical (non-superseded) entity, even
+    # when resolution.entity_id is a now-superseded entity id. A broken chain
+    # (missing entity, cycle, too-deep) falls back to the raw entity_id so the
+    # page stays renderable.
+    try:
+        canonical_entity = substrate.latest_entity_for(resolution.entity_id)
+    except (SubstrateNotFound, SupersedeCycleDetected, SupersedeChainTooDeep):
+        canonical_entity = None
+
     templates = request.app.state.templates
     response = templates.TemplateResponse(  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType,reportReturnType]
         request,
         "resolution_detail.html",
         {
             "resolution": resolution,
+            "canonical_entity": canonical_entity,
             "latest": latest,
             "is_superseded": is_superseded,
         },

@@ -19,7 +19,12 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import HTMLResponse
 
-from amanuensis.fs import Substrate, SubstrateNotFound
+from amanuensis.fs import (
+    Substrate,
+    SubstrateNotFound,
+    SupersedeChainTooDeep,
+    SupersedeCycleDetected,
+)
 
 from ..dependencies import get_substrate
 
@@ -40,7 +45,19 @@ async def entities_list(
     ] = None,
 ) -> HTMLResponse:
     """Render the entity browser with optional kind and substring filters."""
-    all_entities = list(substrate.list_entities())
+    all_entities_raw = list(substrate.list_entities())
+
+    # CV-9: only show canonical (non-superseded) entities. An entity is
+    # canonical iff latest_entity_for(e.id).id == e.id. Damaged chains
+    # (SubstrateNotFound / cycle / too-deep) are treated as canonical so
+    # they remain visible rather than silently disappearing.
+    def _is_canonical(entity_id: str) -> bool:
+        try:
+            return substrate.latest_entity_for(entity_id).id == entity_id
+        except (SubstrateNotFound, SupersedeCycleDetected, SupersedeChainTooDeep):
+            return True
+
+    all_entities = [e for e in all_entities_raw if _is_canonical(e.id)]
 
     filtered = all_entities
     if kind is not None:
@@ -98,8 +115,21 @@ async def entity_detail(
             detail=f"entity {entity_id!r} not found",
         ) from exc
 
-    # Resolutions that resolve to this entity.
-    resolutions = list(substrate.list_resolutions(where_entity_id=entity_id))
+    # CV-9: collect resolutions whose *canonical* entity id matches the
+    # requested entity id. Resolution records store the entity_id at the
+    # time they were written; after a merge entity_A → entity_B the
+    # resolution's on-disk entity_id is still entity_A. Walking the chain
+    # via latest_entity_for makes those resolutions visible under entity_B.
+    # Resolutions with a broken chain fall back to their raw entity_id.
+    def _canonical_entity_id(raw_entity_id: str) -> str:
+        try:
+            return substrate.latest_entity_for(raw_entity_id).id
+        except (SubstrateNotFound, SupersedeCycleDetected, SupersedeChainTooDeep):
+            return raw_entity_id
+
+    resolutions = [
+        r for r in substrate.list_resolutions() if _canonical_entity_id(r.entity_id) == entity_id
+    ]
 
     # Supersede chain: walk from this entity to the terminal one.
     # If this entity IS the terminal one, the chain has length 1.

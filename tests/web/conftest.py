@@ -23,11 +23,14 @@ from typing import Any
 import pytest
 
 from amanuensis.fs import Substrate
+from amanuensis.fs._atomic import atomic_write_text
+from amanuensis.fs._serialize import serialize_yaml
 from amanuensis.schemas import (
     AgentAttribution,
     Atom,
     Clarification,
     Entity,
+    EntitySupersede,
     OperandRef,
     OperandTypeSchema,
     ParagraphEntry,
@@ -412,3 +415,88 @@ def planted_resolutions_workspace(web_workspace: Path, web_substrate: Substrate)
     )
     _plant_resolution(web_substrate, entity=entity, atom=atom, source_id=SOURCE_ID)
     return web_workspace
+
+
+# ---------------------------------------------------------------------------
+# Merged-entity fixture (T8.8 — CV-9 supersede-chain walking)
+# ---------------------------------------------------------------------------
+
+_MERGE_SOURCE_ID = "src-merge"
+
+
+@pytest.fixture
+def merged_entity_workspace(
+    web_workspace: Path, web_substrate: Substrate
+) -> tuple[Path, str, str, str]:
+    """Workspace with 2 entities + 1 resolution + 1 EntitySupersede.
+
+    Plants:
+    - ``entity_A`` (kind=``organization``, superseded by entity_B)
+    - ``entity_B`` (kind=``organization``, canonical)
+    - ``resolution_R`` targeting entity_A's id (on-disk entity_id == A)
+    - ``EntitySupersede(A → B)``
+
+    Also plants the atom that resolution_R anchors to, so that the
+    atom-entity-index endpoint has something to index.
+
+    Returns ``(workspace_path, entity_A_id, entity_B_id, resolution_R_id)``.
+    """
+    now = datetime(2026, 5, 31, 10, 0, 0, tzinfo=UTC)
+    agent = AgentAttribution(kind="human", identifier="test-supervisor", role="human_supervisor")
+    role_attr = RoleAttribution(agent=agent, activity="merged", at=now)
+
+    # Plant the atom that resolution_R will anchor to.
+    atom, _atom_prov = _plant_atom(web_substrate, _MERGE_SOURCE_ID)
+
+    # Plant entity_A and entity_B.
+    entity_a, _prov_a = _plant_entity(
+        web_substrate,
+        kind="organization",
+        canonical_name="Old Corp",
+    )
+    entity_b, _prov_b = _plant_entity(
+        web_substrate,
+        kind="organization",
+        canonical_name="New Corp",
+    )
+
+    # Plant resolution_R pointing to entity_A (the superseded entity).
+    resolution_r, _prov_r = _plant_resolution(
+        web_substrate, entity=entity_a, atom=atom, source_id=_MERGE_SOURCE_ID
+    )
+
+    # Build an EntitySupersede(A → B) and write it.
+    es_draft = EntitySupersede(
+        id="t-" + "0" * 16,
+        kind="entity",
+        superseded_entity_id=entity_a.id,
+        replacement_entity_id=entity_b.id,
+        reason="fixture merge for T8.8 CV-9 test",
+        provenance_id="p-" + "0" * 16,
+        role_attributions=[role_attr],
+        schema_version=1,
+    )
+    es_id = compute_id(es_draft)
+
+    prov_es_draft = ProvenanceRecord(
+        id="p-" + "0" * 16,
+        entity_type="entity-supersede",
+        entity_id=es_id,
+        activity="entity-merge",
+        activity_started_at=now,
+        activity_ended_at=now,
+        used_entity_ids=[],
+        was_attributed_to=agent,
+        was_influenced_by=[],
+        schema_version=1,
+    )
+    prov_es_id = compute_id(prov_es_draft)
+    prov_es = prov_es_draft.model_copy(update={"id": prov_es_id})
+    es = es_draft.model_copy(update={"id": es_id, "provenance_id": prov_es_id})
+
+    prov_es_path = web_substrate.mappings_provenance_path(prov_es.id)
+    prov_es_path.parent.mkdir(parents=True, exist_ok=True)
+    atomic_write_text(prov_es_path, serialize_yaml(prov_es))
+    web_substrate.add_entity_supersede(es)
+
+    return web_workspace, entity_a.id, entity_b.id, resolution_r.id
