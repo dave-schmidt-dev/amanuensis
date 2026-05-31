@@ -38,8 +38,10 @@ test.describe("phase-2a: resolution-ambiguous clarification flow", () => {
     await resolveForm.locator('button[type="submit"]').click();
 
     // The POST handler responds with a 303 redirect back to /clarifications.
-    // After the redirect we should see the "resolved" section heading.
+    // After the redirect we should see the "resolved (N)" section heading.
+    // The bare "resolved" string also appears in row footers (kind / source
+    // metadata), so target the heading specifically to satisfy strict mode.
     await page.goto("/clarifications");
-    await expect(page.locator("text=resolved")).toBeVisible();
+    await expect(page.getByRole("heading", { name: /^resolved \(\d+\)$/ })).toBeVisible();
   });
 });
