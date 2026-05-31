@@ -31,8 +31,11 @@ Prior plan: `~/Documents/Projects/.plans/amanuensis/phase1-distill-foundation-20
 
 ## Upcoming phases
 
-- [in progress] **Phase 2a (Resolve) — M1+M2+M3+M4+M5+M6+M7 SHIPPED
-  2026-05-31; M8–M11 remain (25 tasks).** 57 of 82 tasks done. M7
+- [in progress] **Phase 2a (Resolve) — M1+M2+M3+M4+M5+M6+M7+M8 SHIPPED
+  2026-05-31; M9–M11 remain (17 tasks).** 65 of 82 tasks done. M8
+  added 6 web routes/templates + 3 route fixes for CV-9 supersede
+  chain walking + Cytoscape hover-by-entity highlight. Next action:
+  M9 (static export additions, 5 tasks). M7
   added the full `amanuensis map` CLI sub-app (9 verbs across 4
   mutating + 5 read-only; dry-run + flock + replay-log discipline
   per the verb summary table in plan §6). Defects caught across

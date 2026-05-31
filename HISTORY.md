@@ -1397,6 +1397,44 @@ Format: dated entries, newest first. Bug entries cite the area touched:
 
 ## 2026-05-31
 
+- **Phase 2a (Resolve) M8 — Web app additions SHIPPED.** All 8 M8 tasks
+  (T8.1-T8.8) shipped in 7 commits (T8.1+T8.2 bundled as one entities.py
+  module; rest atomic). New web surfaces: `GET /entities` list with
+  `?kind=` + `?q=` filters (T8.1), `GET /entities/<id>` detail with
+  Resolutions-pointing-here + Supersede-chain sections (T8.2),
+  `GET /resolutions/<id>` detail with entity backlink + supersede chain
+  (T8.3). `/clarifications` extended for two new Phase 2a kinds with
+  context_refs panel that auto-links `e-`/`j-`/`a-` ids to their detail
+  pages (T8.4). `GET /distillations/<src>/relations/atom-entity-index`
+  JSON fragment endpoint (T8.6) with CV-9-canonical entity ids;
+  Cytoscape hover-by-entity highlight (T8.7) via vanilla JS + orange
+  `.entity-shared` CSS (deliberately NOT purple per plan §8.2
+  anti-AI-slop guidance). T8.5 added a parametric form-lock-contention
+  test for the two new clarification kinds. T8.8 (CV-9 supersede-chain
+  walking) acted as a contract-test gate that caught and drove fixes
+  to 3 route handlers: `/entities` list now filters via
+  `latest_entity_for(e.id).id == e.id` (head-of-chain test);
+  `/entities/<id>` "Resolutions pointing here" now full-scans
+  resolutions and filters by `latest_entity_for(r.entity_id).id ==
+  requested_id` instead of direct `where_entity_id=` (so a resolution
+  whose on-disk entity_id is the SUPERSEDED A still appears on
+  canonical B's detail page); `/resolutions/<id>` now displays
+  `latest_entity_for(r.entity_id)` rather than the raw `r.entity_id`.
+  Relations' `atom-entity-index` was already CV-9-clean. 79 web tests
+  pass; pyright + ruff clean. Implementer orchestration note: with
+  explicit "RUN PYRIGHT + RUFF before commit" reinforcement in
+  prompts, all three Wave dispatches shipped lint-clean code on the
+  first attempt (vs M7's wave-4 step-in). | files: src/amanuensis/web/
+  routes/{entities,resolutions,forms,relations}.py,
+  src/amanuensis/web/app.py,
+  src/amanuensis/web/templates/{base,entities_list,entity_detail,
+  resolution_detail,clarifications,relation_graph}.html,
+  src/amanuensis/web/static/{css/relations.css,js/entity-hover.js},
+  tests/web/{conftest,test_entities_routes,test_resolutions_routes,
+  test_clarifications_extension,test_relation_graph_atom_entity_index,
+  test_supersede_chain_walked,test_form_lock_contention,
+  test_entity_hover_static}.py
+
 - **Phase 2a (Resolve) M7 — CLI map family SHIPPED.** All 13 M7 tasks
   (T7.1-T7.13) shipped in 12 commits (T7.7+T7.8 bundled because they
   share the supersede-ordering insight). The `amanuensis map` Typer
