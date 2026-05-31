@@ -37,6 +37,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 
 from amanuensis.fs import (
     Substrate,
+    SubstrateNotFound,
     WorkspaceLockTimeout,
     acquire_workspace_lock,
 )
@@ -44,8 +45,10 @@ from amanuensis.fs._serialize import parse_clarification_md, parse_iteration_md
 from amanuensis.schemas import (
     AgentAttribution,
     Clarification,
+    Entity,
     IterationDirective,
     ProvenanceRecord,
+    Resolution,
     compute_id,
 )
 
@@ -71,6 +74,23 @@ _FORM_LOCK_TIMEOUT_SECONDS: float = 5.0
 
 
 @dataclass(frozen=True)
+class _ContextRefItem:
+    """A resolved context-reference for display in the clarification panel.
+
+    ``ref_id`` is the raw id from ``context_refs`` (e.g. ``a-…``,
+    ``e-…``, ``j-…``). ``href`` is the link target.  ``display_name``
+    is a short human-readable label (canonical name, atom id, etc.).
+    ``kind`` is one of ``"atom"``, ``"entity"``, ``"resolution"``, or
+    ``"unknown"`` — the template uses it for icon selection.
+    """
+
+    ref_id: str
+    href: str
+    display_name: str
+    kind: Literal["atom", "entity", "resolution", "unknown"]
+
+
+@dataclass(frozen=True)
 class _ClarificationRow:
     """Listing row for ``/clarifications``.
 
@@ -78,10 +98,89 @@ class _ClarificationRow:
     ``_iter_clarifications`` walker, but as a dataclass so the template
     can address the source_id and the clarification fields by attribute
     instead of unpacking a tuple.
+
+    ``context_ref_items`` holds pre-resolved :class:`_ContextRefItem`
+    objects for the context_refs panel (Phase 2a T8.4).
     """
 
     source_id: str
     clarification: Clarification
+    context_ref_items: list[_ContextRefItem]
+
+
+def _resolve_context_refs(substrate: Substrate, refs: list[str]) -> list[_ContextRefItem]:
+    """Resolve a list of context-ref ids to :class:`_ContextRefItem` objects.
+
+    Handles three prefix families:
+    - ``a-`` → atom; link to atom-detail page (no name lookup — atom ids
+      are the label themselves for brevity).
+    - ``e-`` → entity; resolve canonical name via ``get_entity``.
+    - ``j-`` → resolution; resolve via ``get_resolution``.
+    Unknown / unparseable refs fall back to ``kind="unknown"`` with the
+    raw id as display_name (defensive; never 404 the list page).
+    """
+    items: list[_ContextRefItem] = []
+    for ref_id in refs:
+        if ref_id.startswith("e-"):
+            try:
+                entity: Entity = substrate.get_entity(ref_id)
+                items.append(
+                    _ContextRefItem(
+                        ref_id=ref_id,
+                        href=f"/entities/{ref_id}",
+                        display_name=entity.canonical_name,
+                        kind="entity",
+                    )
+                )
+            except SubstrateNotFound:
+                items.append(
+                    _ContextRefItem(
+                        ref_id=ref_id,
+                        href=f"/entities/{ref_id}",
+                        display_name=ref_id,
+                        kind="entity",
+                    )
+                )
+        elif ref_id.startswith("j-"):
+            try:
+                resolution: Resolution = substrate.get_resolution(ref_id)
+                display = f"{resolution.atom_id}[{resolution.operand_index}]→{resolution.entity_id}"
+                items.append(
+                    _ContextRefItem(
+                        ref_id=ref_id,
+                        href=f"/resolutions/{ref_id}",
+                        display_name=display,
+                        kind="resolution",
+                    )
+                )
+            except SubstrateNotFound:
+                items.append(
+                    _ContextRefItem(
+                        ref_id=ref_id,
+                        href=f"/resolutions/{ref_id}",
+                        display_name=ref_id,
+                        kind="resolution",
+                    )
+                )
+        elif ref_id.startswith("a-"):
+            items.append(
+                _ContextRefItem(
+                    ref_id=ref_id,
+                    href=f"/atoms/{ref_id}",
+                    display_name=ref_id,
+                    kind="atom",
+                )
+            )
+        else:
+            items.append(
+                _ContextRefItem(
+                    ref_id=ref_id,
+                    href="#",
+                    display_name=ref_id,
+                    kind="unknown",
+                )
+            )
+    return items
 
 
 def _list_distillation_source_ids(substrate: Substrate) -> list[str]:
@@ -120,7 +219,14 @@ def _iter_clarifications(substrate: Substrate) -> list[_ClarificationRow]:
                     clar = parse_clarification_md(path.read_text(encoding="utf-8"))
                 except Exception:
                     continue
-                out.append(_ClarificationRow(source_id=source_id, clarification=clar))
+                ctx_items = _resolve_context_refs(substrate, clar.context_refs)
+                out.append(
+                    _ClarificationRow(
+                        source_id=source_id,
+                        clarification=clar,
+                        context_ref_items=ctx_items,
+                    )
+                )
     return out
 
 
