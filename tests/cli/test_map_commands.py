@@ -649,3 +649,111 @@ def test_vocabulary_show_archived_not_found(tmp_path: Path) -> None:
     )
     assert res.exit_code == 1
     assert "not found" in (res.stdout + res.stderr).lower()
+
+
+# ---------------------------------------------------------------------------
+# T7.10: map vocabulary snapshot tests
+# ---------------------------------------------------------------------------
+
+
+def test_vocabulary_snapshot_pins_first_time(tmp_path: Path) -> None:
+    workspace = _make_workspace(tmp_path)
+    res = runner.invoke(
+        app,
+        [
+            "map",
+            "vocabulary",
+            "snapshot",
+            "--workspace",
+            str(workspace),
+        ],
+    )
+    assert res.exit_code == 0, f"stdout={res.stdout!r} stderr={res.stderr!r}"
+    snapshot = workspace / "mappings" / "entity-vocabulary-snapshot.yaml"
+    assert snapshot.is_file()
+
+
+def test_vocabulary_snapshot_refuses_overwrite(tmp_path: Path) -> None:
+    workspace = _make_workspace(tmp_path)
+    # First pin.
+    res1 = runner.invoke(
+        app,
+        [
+            "map",
+            "vocabulary",
+            "snapshot",
+            "--workspace",
+            str(workspace),
+        ],
+    )
+    assert res1.exit_code == 0
+    # Hand-modify the snapshot so a re-pin would conflict.
+    snapshot = workspace / "mappings" / "entity-vocabulary-snapshot.yaml"
+    snapshot.write_text(snapshot.read_text() + "\n# tampered\n")
+    # Second pin without --extend: rejected.
+    res2 = runner.invoke(
+        app,
+        [
+            "map",
+            "vocabulary",
+            "snapshot",
+            "--workspace",
+            str(workspace),
+        ],
+    )
+    assert res2.exit_code == 1
+    assert "extend" in (res2.stdout + res2.stderr).lower()
+
+
+def test_vocabulary_snapshot_extend_archives(tmp_path: Path) -> None:
+    workspace = _make_workspace(tmp_path)
+    res1 = runner.invoke(
+        app,
+        [
+            "map",
+            "vocabulary",
+            "snapshot",
+            "--workspace",
+            str(workspace),
+        ],
+    )
+    assert res1.exit_code == 0
+    # Hand-modify to make extend a meaningful change.
+    snapshot = workspace / "mappings" / "entity-vocabulary-snapshot.yaml"
+    snapshot.write_text(snapshot.read_text() + "\n# modified\n")
+    res2 = runner.invoke(
+        app,
+        [
+            "map",
+            "vocabulary",
+            "snapshot",
+            "--extend",
+            "--workspace",
+            str(workspace),
+        ],
+    )
+    assert res2.exit_code == 0, f"stdout={res2.stdout!r} stderr={res2.stderr!r}"
+    archive_dir = workspace / "mappings" / "entity-vocabulary-archive"
+    assert archive_dir.is_dir()
+    archive_files = list(archive_dir.glob("*.yaml"))
+    assert len(archive_files) >= 1
+
+
+def test_vocabulary_snapshot_dry_run_no_writes(tmp_path: Path) -> None:
+    workspace = _make_workspace(tmp_path)
+    snapshot = workspace / "mappings" / "entity-vocabulary-snapshot.yaml"
+    assert not snapshot.exists()
+    res = runner.invoke(
+        app,
+        [
+            "map",
+            "vocabulary",
+            "snapshot",
+            "--dry-run",
+            "--workspace",
+            str(workspace),
+        ],
+    )
+    assert res.exit_code == 0
+    assert "would" in res.stdout.lower()
+    assert not snapshot.exists()
