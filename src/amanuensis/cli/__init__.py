@@ -44,6 +44,9 @@ from . import (
     status,
     vocabulary,
 )
+from . import (
+    map as map_cli,
+)
 
 # ``no_args_is_help=True`` makes ``amanuensis`` (no args) print help
 # instead of silently succeeding. ``add_completion=False`` keeps the
@@ -134,6 +137,11 @@ app.add_typer(
     vocabulary.app,
     name="vocabulary",
     help="Inspect the active vocabulary registry and per-distillation snapshots.",
+)
+app.add_typer(
+    map_cli.app,
+    name="map",
+    help="Resolve entities across distillations; manage the mapping registry.",
 )
 
 

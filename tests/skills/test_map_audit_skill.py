@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 from amanuensis.skills._frontmatter import split_frontmatter
 
 SKILL = Path(__file__).parent.parent.parent / "src" / "amanuensis" / "skills" / "map_audit.md"
@@ -69,29 +67,28 @@ def test_cli_commands_invoked_are_real() -> None:
     top_level_commands = {cmd.name for cmd in app.registered_commands}
     all_commands: set[str] = {c for c in top_level_commands if c is not None}
 
-    # Recursively add subcommand group commands.
+    # Recursively add subcommand group commands (two levels deep to cover
+    # nested sub-apps like ``map entity show``).
     for group in app.registered_groups:
         group_name = group.name
         typer_app = group.typer_instance
-        if typer_app is not None and hasattr(typer_app, "registered_commands"):
+        if typer_app is None:
+            continue
+        if hasattr(typer_app, "registered_commands"):
             for cmd in typer_app.registered_commands:
                 all_commands.add(f"{group_name} {cmd.name}")
+        if hasattr(typer_app, "registered_groups"):
+            for subgroup in typer_app.registered_groups:
+                subgroup_name = subgroup.name
+                sub_typer_app = subgroup.typer_instance
+                if sub_typer_app is not None and hasattr(sub_typer_app, "registered_commands"):
+                    for cmd in sub_typer_app.registered_commands:
+                        all_commands.add(f"{group_name} {subgroup_name} {cmd.name}")
 
-    # Check each invoked command; skip 'map' subcommands (M7 not yet shipped).
-    for cmd_str in invoked:  # pyright: ignore[reportUnknownVariableType]
-        # Commands like "amanuensis map status" start with "map" in the path,
-        # which doesn't exist yet in Phase 2a. Skip with a documented reason.
-        if cmd_str.startswith("amanuensis map "):
-            pytest.skip(
-                f"M7 map subapp not yet shipped; skipping CLI command validation for: {cmd_str}"
-            )
-
-    # For non-map commands, strip "amanuensis " prefix and validate.
+    # Validate every invoked command against the registered CLI surface.
     for cmd_str in invoked:  # pyright: ignore[reportUnknownVariableType]
         if not cmd_str.startswith("amanuensis "):
             raise AssertionError(f"invalid cli_commands_invoked format: {cmd_str}")
 
         cmd_path = cmd_str.replace("amanuensis ", "")
-
-        if not cmd_path.startswith("map "):
-            assert cmd_path in all_commands, f"cli command not found in app: {cmd_path}"
+        assert cmd_path in all_commands, f"cli command not found in app: {cmd_path}"

@@ -11,7 +11,7 @@ phase: map
 cli_commands_invoked:
   - amanuensis map status
   - amanuensis atom show
-  - amanuensis entity list
+  - amanuensis map entity list
 ---
 
 ## Purpose

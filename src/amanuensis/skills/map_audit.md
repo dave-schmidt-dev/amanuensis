@@ -11,8 +11,8 @@ expects_substrate: true
 phase: map
 cli_commands_invoked:
   - amanuensis map status
-  - amanuensis entity show
-  - amanuensis resolution show
+  - amanuensis map entity show
+  - amanuensis map resolution show
 ---
 
 ## Purpose
