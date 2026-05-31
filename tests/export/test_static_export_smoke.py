@@ -413,3 +413,58 @@ def test_export_no_include_mappings_disables(
     )
     assert output_path.is_file()
     # Functional assertion (sidebar absent) verified in T9.2.
+
+
+# --- T9.2: Entity sidebar rendering tests ----------------------------
+
+
+def test_sidebar_with_mappings(
+    populated_mappings_workspace: Path,
+    tmp_path: Path,
+) -> None:
+    """Sidebar appears with entity canonical_name when include_mappings=True."""
+    substrate = Substrate(populated_mappings_workspace)
+    out = tmp_path / "report.html"
+    export_static_html(
+        substrate=substrate,
+        source_id="export-m9-src",
+        output_path=out,
+        include_mappings=True,
+    )
+    text = out.read_text(encoding="utf-8")
+    assert '<aside class="entity-sidebar">' in text
+    assert "ACME" in text
+
+
+def test_sidebar_absent_without_mappings_flag(
+    populated_mappings_workspace: Path,
+    tmp_path: Path,
+) -> None:
+    """Sidebar is absent when include_mappings=False."""
+    substrate = Substrate(populated_mappings_workspace)
+    out = tmp_path / "report.html"
+    export_static_html(
+        substrate=substrate,
+        source_id="export-m9-src",
+        output_path=out,
+        include_mappings=False,
+    )
+    text = out.read_text(encoding="utf-8")
+    assert '<aside class="entity-sidebar">' not in text
+
+
+def test_empty_state_when_mappings_empty(
+    empty_mappings_workspace: Path,
+    tmp_path: Path,
+) -> None:
+    """Empty-state message rendered when mappings/entities/ is absent."""
+    substrate = Substrate(empty_mappings_workspace)
+    out = tmp_path / "report.html"
+    export_static_html(
+        substrate=substrate,
+        source_id="export-m9-src",
+        output_path=out,
+        include_mappings=True,
+    )
+    text = out.read_text(encoding="utf-8")
+    assert "No mappings yet" in text
