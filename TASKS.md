@@ -31,35 +31,19 @@ Prior plan: `~/Documents/Projects/.plans/amanuensis/phase1-distill-foundation-20
 
 ## Upcoming phases
 
-- [in progress] **Phase 2a (Resolve) — M1+M2+M3+M4+M5+M6+M7+M8 SHIPPED
-  2026-05-31; M9–M11 remain (17 tasks).** 65 of 82 tasks done. M8
-  added 6 web routes/templates + 3 route fixes for CV-9 supersede
-  chain walking + Cytoscape hover-by-entity highlight. Next action:
-  M9 (static export additions, 5 tasks). M7
-  added the full `amanuensis map` CLI sub-app (9 verbs across 4
-  mutating + 5 read-only; dry-run + flock + replay-log discipline
-  per the verb summary table in plan §6). Defects caught across
-  M1-M7 (full list): T1.8 hash-corrupting v1 `kind` injection in
-  `_serialize.py`; T1.10 frontmatter `find("---")` mid-content
-  bug; M3 implementer's `from conftest import`; M6 nested-lock
-  deadlock in `ReplayLog.append`; M6 over-strict `_MAP_ROLE_RE`
-  regex; M6 missing `_non_empty_kind` validator on Entity; M6
-  `role_attribution.at` timestamp drift breaking idempotency
-  (fixed via deterministic `_stable_role_attribution_at` derived
-  from `inputs_hash`); M5 unconditional `pytest.skip()` guards
-  and wrong command paths in skill frontmatter (caught by M7
-  implementer); M7 supersede ordering bug (ResolutionSupersede
-  must precede new Resolution write to satisfy INV-14 triple-
-  guard). Orchestration lesson: explicit "RUN PYRIGHT + RUFF
-  before commit" needed in implementer prompts after one Sonnet
-  agent shipped lint-dirty code. 177 cli+skill+invariants tests
-  pass; pyright strict + ruff clean. Next action: M8 (web app
-  additions: 8 tasks — /entities + /resolutions routes +
-  templates, /clarifications extension, atom-entity index,
-  Cytoscape hover binding, supersede-chain-walked tests).
+- [done] **Phase 2a (Resolve) — SHIPPED 2026-05-31.** All 82 tasks
+  complete across 11 milestones. 874 fast pytest cases + 50
+  invariants + 3 integration pass; pyright strict + ruff + vulture
+  clean; 11 Playwright specs authored (1 new T11.3); 9 new map CLI
+  verbs; 3 new web routes; 4 new content-addressable schemas
+  (Entity / Resolution / EntitySupersede / ResolutionSupersede); 3
+  new invariants (INV-12/13/14) active with executable gate tests.
+  See HISTORY.md 2026-05-31 entry for the per-milestone breakdown,
+  defects caught + remediated, and full validation transcript.
 - [pending] Phase 2b (Connect) — cross-doc support/attack edges built
   on Phase 2a's resolved entities. Full brainstorm cycle required;
-  blocked on 2a implementation.
+  not blocked (Phase 2a complete). Begin with `~/.agent/prompts/
+  brainstorm.md` cycle when ready.
 - [pending] Phase 2c (Hierarchize) — probandum hierarchies built on
   Phase 2b's cross-doc edges. Full brainstorm cycle required; blocked
   on 2b implementation.

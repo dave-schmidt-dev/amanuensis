@@ -1397,6 +1397,53 @@ Format: dated entries, newest first. Bug entries cite the area touched:
 
 ## 2026-05-31
 
+- **Phase 2a (Resolve) — SHIPPED.** All 82 tasks complete across 11
+  milestones (M1 schema foundation, M2 entity-kind vocabulary, M3
+  substrate API extensions, M4 INV-9+INV-2 executable gates, M5
+  map_resolve/map_audit skills, M6 dispatch+reconcile extension, M7
+  CLI map family (13 verbs), M8 web app additions, M9 static export
+  additions, M10 INV-12/13/14 new invariants, M11 integration+E2E+
+  final validation). Final gates met: 874 fast pytest cases pass
+  (≥575 required ✓), 50 invariants pass (≥30 required ✓), pyright
+  strict 0 errors, ruff clean, vulture 0 findings, 11 Playwright
+  specs authored (10 prior + 1 new T11.3 resolution-ambiguous flow).
+  ~70 commits across the phase including docs/HISTORY/TASKS updates.
+  Real defects caught and fixed inline during implementation: T1.8
+  hash-corrupting v1 `kind` injection; T1.10 frontmatter parser
+  mid-content bug; M6 nested-lock deadlock in `ReplayLog.append`
+  (fixed via `_lock_held=True` kwarg with `nullcontext()`); M6
+  over-strict `_MAP_ROLE_RE` regex (loosened to `\w+`); M6 missing
+  `_non_empty_kind` validator on Entity; M6 `role_attribution.at`
+  timestamp drift breaking content-addressable id stability (fixed
+  via `_stable_role_attribution_at` deriving `at` from `inputs_hash`);
+  M5 unconditional `pytest.skip()` guards + wrong skill frontmatter
+  command paths; M7 supersede-ordering bug (ResolutionSupersede must
+  precede new Resolution write to satisfy INV-14 triple-guard); M8
+  CV-9 supersede-chain walking gaps in 3 route handlers (the T8.8
+  contract test drove fixes to `/entities` list filtering, the
+  "Resolutions pointing here" full-scan, and `/resolutions/<id>`
+  entity-link canonical resolution). New invariants INV-12/13/14
+  active with gate tests. T11.1 deferred PDF authoring (no
+  LaTeX/Typst/reportlab available in dev env) — uses Python
+  fixture-builder mirroring `tests/e2e/_fixture_builder.py` pattern;
+  T11.2 integration test verified 5 canonical entities deduplicate
+  correctly across 3 distillations with CR-5 byte-identical re-run.
+  Open follow-ups: T11.1 real PDF fixtures + `amanuensis ingest`
+  exercise (deferred); test_entity_merge_rejects_already_superseded
+  3-entity scaffold (skipped with TODO marker); harvest closed-loop
+  freeze-check not run (no INVARIANTS-driven harvest tool dispatched
+  this session). | files: src/amanuensis/schemas/{entity,resolution,
+  entity_supersede,resolution_supersede}.py, src/amanuensis/cli/map.py,
+  src/amanuensis/dispatch/reconcile.py, src/amanuensis/vocabulary/
+  entity_registry.py, src/amanuensis/web/routes/{entities,resolutions,
+  forms,relations}.py, src/amanuensis/web/templates/{entities_list,
+  entity_detail,resolution_detail,relation_graph,clarifications}.html,
+  src/amanuensis/web/static/{css/relations.css,js/entity-hover.js},
+  src/amanuensis/export/static_html.py, src/amanuensis/skills/
+  {map_resolve,map_audit}.md, vocabularies/generic/entity-kinds.yaml,
+  INVARIANTS.md, docs/{architecture,schema-reference,cli-reference,
+  skill-author-guide,supervision-protocol}.md
+
 - **Phase 2a (Resolve) M8 — Web app additions SHIPPED.** All 8 M8 tasks
   (T8.1-T8.8) shipped in 7 commits (T8.1+T8.2 bundled as one entities.py
   module; rest atomic). New web surfaces: `GET /entities` list with
