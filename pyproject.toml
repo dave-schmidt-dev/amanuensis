@@ -90,6 +90,7 @@ reportUnknownVariableType = "none"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["."]
 addopts = "-ra --strict-markers --strict-config -n 8"
 markers = [
     "invariants: tests that enforce INVARIANTS.md gates",

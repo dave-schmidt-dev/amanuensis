@@ -154,6 +154,25 @@ class Substrate:
             )
         self.root: Path = root
 
+        # Auto-migrate v1 Clarification records to v2 (PM-3). The scan is
+        # bytes-cheap: glob for c-*.md and substring-check for
+        # 'schema_version: 1'. Only if any match do we invoke the full
+        # migration script (which re-parses and rewrites). Import is scoped
+        # inside the function to avoid hard-coupling src/ to scripts/ at
+        # module load time.
+        for c_md in self.root.glob("distillations/*/clarifications/*/c-*.md"):
+            try:
+                head = c_md.read_text()[:512]  # frontmatter is well under 512 bytes
+            except OSError:
+                continue
+            if "schema_version: 1" in head:
+                from scripts.migrate_clarifications_to_schema_v2 import (
+                    migrate_workspace,
+                )
+
+                migrate_workspace(self.root)
+                break  # one full migration sweep covers everything
+
     # --- Path resolvers (pure path computation; no FS access) ---------
 
     def _distillation_root(self, source_id: str) -> Path:
