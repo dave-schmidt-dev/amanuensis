@@ -52,6 +52,17 @@ def export_command(
             help="Export format. Phase 1 ships static-html only.",
         ),
     ] = ExportFormat.static_html,
+    include_mappings: Annotated[
+        bool,
+        typer.Option(
+            "--include-mappings/--no-include-mappings",
+            help=(
+                "Include entity sidebar and inline resolution annotations "
+                "driven by the mappings/ registry (Phase 2a). "
+                "Use --no-include-mappings to revert to Phase-1-style rendering."
+            ),
+        ),
+    ] = True,
     workspace: Annotated[
         Path | None,
         typer.Option(
@@ -69,6 +80,10 @@ def export_command(
     ``atoms-data``, ``relations-data``) so a downstream consumer can
     rebuild the substrate slice. Phase 4 will replace this with the
     full audit-HTML bundle.
+
+    Phase 2a (M9) adds the entity sidebar and inline resolution
+    annotations when ``--include-mappings`` is set (the default).  Pass
+    ``--no-include-mappings`` to produce a Phase-1-compatible output.
     """
     workspace_path = workspace_from_kwargs({"workspace": workspace})
     substrate = Substrate(workspace_path)
@@ -85,6 +100,7 @@ def export_command(
             substrate=substrate,
             source_id=source_id,
             output_path=output,
+            include_mappings=include_mappings,
         )
     except SubstrateNotFound as exc:
         fatal(f"cannot export {source_id!r}: {exc}")

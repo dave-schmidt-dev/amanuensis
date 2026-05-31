@@ -353,3 +353,63 @@ def test_export_renders_with_no_atoms(
     assert "No atoms extracted" in text
     atoms_data = _extract_json_block(text, "atoms-data")
     assert atoms_data == []
+
+
+# --- T9.1: --include-mappings CLI flag tests --------------------------
+
+
+def test_export_include_mappings_default_on(
+    export_workspace: Path,
+    export_substrate: Substrate,
+    tmp_path: Path,
+) -> None:
+    """Default behavior includes mappings flag (exit 0, file produced)."""
+    _plant_manifest(export_substrate, SOURCE_ID)
+    _plant_atom(export_substrate, SOURCE_ID)
+
+    output_path = tmp_path / "default-mappings.html"
+    result = runner.invoke(
+        app,
+        [
+            "export",
+            SOURCE_ID,
+            "--output",
+            str(output_path),
+            "--workspace",
+            str(export_workspace),
+        ],
+    )
+    assert result.exit_code == 0, (
+        f"export CLI failed (exit={result.exit_code})\nstdout: {result.stdout}"
+    )
+    assert output_path.is_file()
+    # Functional assertion (sidebar present) verified in T9.2.
+
+
+def test_export_no_include_mappings_disables(
+    export_workspace: Path,
+    export_substrate: Substrate,
+    tmp_path: Path,
+) -> None:
+    """--no-include-mappings flag is accepted and exits 0."""
+    _plant_manifest(export_substrate, SOURCE_ID)
+    _plant_atom(export_substrate, SOURCE_ID)
+
+    output_path = tmp_path / "no-mappings.html"
+    result = runner.invoke(
+        app,
+        [
+            "export",
+            SOURCE_ID,
+            "--output",
+            str(output_path),
+            "--workspace",
+            str(export_workspace),
+            "--no-include-mappings",
+        ],
+    )
+    assert result.exit_code == 0, (
+        f"export CLI failed (exit={result.exit_code})\nstdout: {result.stdout}"
+    )
+    assert output_path.is_file()
+    # Functional assertion (sidebar absent) verified in T9.2.

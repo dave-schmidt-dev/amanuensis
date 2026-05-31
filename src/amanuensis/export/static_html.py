@@ -37,6 +37,7 @@ import html
 import json
 import os
 import stat
+from collections import defaultdict
 from datetime import UTC, datetime
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
@@ -46,7 +47,7 @@ import yaml
 
 from amanuensis.fs import Substrate
 from amanuensis.fs._serialize import parse_paragraph_md
-from amanuensis.schemas import Atom, Relation, SourceMirrorManifest
+from amanuensis.schemas import Atom, Entity, Relation, SourceMirrorManifest
 
 # Output file mode — group / world readable; owner writable. The
 # exported HTML is meant to be shared (emailed, posted, archived).
@@ -207,6 +208,59 @@ footer {
   color: var(--muted);
   font-size: 0.8rem;
 }
+/* Entity sidebar (Phase 2a M9) */
+aside.entity-sidebar {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-left: 3px solid #e07b39;
+  border-radius: 6px;
+  padding: 0.75rem 1rem;
+  margin-bottom: 1.5rem;
+  font-size: 0.88rem;
+}
+aside.entity-sidebar h2 {
+  margin: 0 0 0.5rem;
+  font-size: 1rem;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 0.25rem;
+  color: #e07b39;
+}
+aside.entity-sidebar .entity-kind-group { margin-bottom: 0.5rem; }
+aside.entity-sidebar .entity-kind-label {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #e07b39;
+  opacity: 0.8;
+  margin-bottom: 0.2rem;
+}
+aside.entity-sidebar ul { list-style: none; padding: 0; margin: 0; }
+aside.entity-sidebar li {
+  padding: 0.15rem 0;
+  border-bottom: none;
+  background: none;
+  border-radius: 0;
+  border: none;
+  margin: 0;
+}
+aside.entity-sidebar a {
+  color: var(--fg);
+  text-decoration: none;
+}
+aside.entity-sidebar a:hover { text-decoration: underline; color: #e07b39; }
+/* Inline resolution annotations */
+a.resolved-entity {
+  color: #e07b39;
+  text-decoration: none;
+  border-bottom: 1px dashed #e07b39;
+}
+a.resolved-entity:hover { text-decoration: underline; }
+span.unresolved-entity {
+  color: var(--muted);
+  border-bottom: 1px dotted var(--muted);
+}
+span.operand { color: var(--muted); font-size: 0.88em; }
+div.operands { margin-top: 0.3rem; }
 """
 
 
@@ -263,7 +317,57 @@ def _render_paragraphs(manifest: SourceMirrorManifest, bodies: dict[str, str]) -
     return "\n".join(parts)
 
 
-def _render_atoms(atoms: list[Atom]) -> str:
+def _render_operands(
+    atom: Atom,
+    *,
+    substrate: Substrate,
+    include_mappings: bool,
+) -> str:
+    """Render an atom's operands as inline spans/links.
+
+    For ``kind=="entity"`` operands:
+    - With ``include_mappings=True`` and a resolved entity: renders as
+      ``<a href="#entity-<canonical_id>" class="resolved-entity" ...>``.
+    - Otherwise: renders as ``<span class="unresolved-entity">value</span>``.
+
+    Non-entity operands render as ``<span class="operand">value (role: …)</span>``.
+    """
+    if not atom.operands:
+        return ""
+    parts: list[str] = []
+    for idx, operand in enumerate(atom.operands):
+        if operand.kind == "entity":
+            resolved_link = ""
+            if include_mappings:
+                resolution = substrate.latest_resolution_for(atom.source_id, atom.id, idx)
+                if resolution is not None:
+                    try:
+                        canonical = substrate.latest_entity_for(resolution.entity_id)
+                        resolved_link = (
+                            f'<a href="#entity-{_esc(canonical.id)}" '
+                            f'class="resolved-entity" '
+                            f'title="Canonical: {_esc(canonical.canonical_name)}">'
+                            f"{_esc(operand.value)}</a>"
+                        )
+                    except Exception:
+                        pass
+            if resolved_link:
+                parts.append(resolved_link)
+            else:
+                parts.append(f'<span class="unresolved-entity">{_esc(operand.value)}</span>')
+        else:
+            parts.append(
+                f'<span class="operand">{_esc(operand.value)} (role: {_esc(operand.role)})</span>'
+            )
+    return " ".join(parts)
+
+
+def _render_atoms(
+    atoms: list[Atom],
+    *,
+    substrate: Substrate,
+    include_mappings: bool,
+) -> str:
     if not atoms:
         return '<p class="empty">No atoms extracted for this source.</p>'
     parts: list[str] = []
@@ -277,11 +381,16 @@ def _render_atoms(atoms: list[Atom]) -> str:
         backref = (
             f'<a class="tag" href="#paragraph-{_esc(paragraph_id)}">↑ {_esc(paragraph_id)}</a>'
         )
+        operands_html = _render_operands(
+            atom, substrate=substrate, include_mappings=include_mappings
+        )
+        operands_block = f'<div class="operands">{operands_html}</div>' if operands_html else ""
         parts.append(
             f'<li id="atom-{_esc(atom.id)}">'
             f"{kind_tag}{scale_tag}{backref}"
             f'<span class="predicate">{_esc(atom.predicate)}</span>'
             f"<div>{_esc(atom.narrative)}</div>"
+            f"{operands_block}"
             "</li>"
         )
     return f'<ul class="atoms">{"".join(parts)}</ul>'
@@ -319,6 +428,75 @@ def _json_block(block_id: str, payload: list[dict[str, Any]]) -> str:
     return f'<script type="application/json" id="{block_id}">\n{safe}\n</script>'
 
 
+def _render_entity_sidebar(substrate: Substrate, *, include_mappings: bool) -> str:
+    """Render the entity sidebar ``<aside>`` block.
+
+    When ``include_mappings=False``: returns an empty string (no sidebar).
+
+    When ``include_mappings=True`` and ``mappings/entities/`` is empty or
+    absent: returns an empty-state aside with the literal text
+    ``"No mappings yet — run `amanuensis map` to populate."``.
+
+    When ``include_mappings=True`` and entities exist: returns an
+    ``<aside class="entity-sidebar">`` grouping canonical entities by
+    kind. Each entry gets an ``id="entity-<id>"`` anchor so inline
+    annotations can deep-link here. Superseded entities are excluded by
+    walking via ``latest_entity_for`` and comparing ids.
+    """
+    if not include_mappings:
+        return ""
+
+    # Collect all entity ids from disk.
+    all_entities = list(substrate.list_entities())
+
+    if not all_entities:
+        return (
+            '<aside class="entity-sidebar">'
+            '<p class="empty">No mappings yet — run `amanuensis map` to populate.</p>'
+            "</aside>"
+        )
+
+    # Walk to canonical. An entity is canonical iff latest_entity_for(e.id).id == e.id.
+    canonical_entities: list[Entity] = []
+    for entity in all_entities:
+        try:
+            canonical = substrate.latest_entity_for(entity.id)
+        except Exception:
+            continue
+        if canonical.id == entity.id:
+            canonical_entities.append(canonical)
+
+    if not canonical_entities:
+        return (
+            '<aside class="entity-sidebar">'
+            '<p class="empty">No mappings yet — run `amanuensis map` to populate.</p>'
+            "</aside>"
+        )
+
+    # Group by kind; sort groups and entries within each group for determinism.
+    groups: dict[str, list[Entity]] = defaultdict(list)
+    for entity in sorted(canonical_entities, key=lambda e: e.canonical_name):
+        groups[entity.kind].append(entity)
+
+    parts: list[str] = ['<aside class="entity-sidebar">', "<h2>Entities</h2>"]
+    for kind in sorted(groups):
+        entries: list[Entity] = groups[kind]
+        items = "".join(
+            f'<li id="entity-{_esc(e.id)}">'
+            f'<a href="#entity-{_esc(e.id)}">{_esc(e.canonical_name)}</a>'
+            f"</li>"
+            for e in entries
+        )
+        parts.append(
+            f'<div class="entity-kind-group">'
+            f'<div class="entity-kind-label">{_esc(kind)}</div>'
+            f"<ul>{items}</ul>"
+            f"</div>"
+        )
+    parts.append("</aside>")
+    return "\n".join(parts)
+
+
 def _render_document(
     *,
     manifest: SourceMirrorManifest,
@@ -330,6 +508,8 @@ def _render_document(
     paragraph_bodies: dict[str, str],
     generated_at: datetime,
     version_string: str,
+    substrate: Substrate,
+    include_mappings: bool,
 ) -> str:
     summary = _render_summary(
         manifest,
@@ -338,8 +518,9 @@ def _render_document(
         relation_count=len(relations),
     )
     paragraphs_html = _render_paragraphs(manifest, paragraph_bodies)
-    atoms_html = _render_atoms(atoms)
+    atoms_html = _render_atoms(atoms, substrate=substrate, include_mappings=include_mappings)
     relations_html = _render_relations(relations)
+    sidebar_html = _render_entity_sidebar(substrate, include_mappings=include_mappings)
     footer = (
         "<footer>Generated by amanuensis "
         f"v{_esc(version_string)} at "
@@ -361,6 +542,7 @@ def _render_document(
         f"<style>{_CSS}</style>\n"
         "</head>\n"
         "<body>\n"
+        f"{sidebar_html}\n"
         f"{summary}\n"
         "<h2>Paragraphs</h2>\n"
         f"{paragraphs_html}\n"
@@ -383,6 +565,8 @@ def export_static_html(
     substrate: Substrate,
     source_id: str,
     output_path: Path,
+    include_mappings: bool = True,
+    now: datetime | None = None,
 ) -> Path:
     """Render one distillation as a single self-contained HTML file.
 
@@ -391,6 +575,18 @@ def export_static_html(
     ``output_path`` with three embedded JSON sidecar blocks so a
     downstream consumer (or Phase 4's audit-HTML bundler) can rebuild
     the substrate slice without re-walking the workspace.
+
+    Args:
+        substrate: Bound Substrate for the workspace.
+        source_id: Per-distillation source id to render.
+        output_path: Destination for the output file (created or overwritten).
+        include_mappings: When ``True`` (default), includes the entity
+            sidebar and inline resolution annotations driven by the
+            ``mappings/`` registry.  When ``False``, reverts to Phase-1-
+            style rendering with no sidebar and no annotations.
+        now: Override the "generated at" timestamp — used by tests to
+            produce byte-identical output across runs.  Defaults to
+            ``datetime.now(UTC)``.
 
     Returns ``output_path`` for caller convenience.
 
@@ -415,6 +611,8 @@ def export_static_html(
     atoms_payload: list[dict[str, Any]] = [a.model_dump(mode="json") for a in atoms]
     relations_payload: list[dict[str, Any]] = [r.model_dump(mode="json") for r in relations]
 
+    generated_at = now if now is not None else datetime.now(UTC)
+
     document = _render_document(
         manifest=manifest,
         paragraphs_payload=paragraphs_payload,
@@ -423,8 +621,10 @@ def export_static_html(
         atoms=atoms,
         relations=relations,
         paragraph_bodies=paragraph_bodies,
-        generated_at=datetime.now(UTC),
+        generated_at=generated_at,
         version_string=_package_version(),
+        substrate=substrate,
+        include_mappings=include_mappings,
     )
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
