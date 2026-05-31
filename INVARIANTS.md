@@ -28,21 +28,16 @@ Status legend: `active` (gate enforced) | `near-threshold` (warn) | `waived` (ex
 
 ## INV-2 — No harness-specific files at project root
 
-- **Status:** active (gate via repo discipline; no automated scan yet)
+- **Status:** active (gated)
 - **Established:** 2026-05-29
 - **Property:** No `CLAUDE.md`, `AGENTS.md`, `GEMINI.md`, or `README.md` at the
   amanuensis project root. Documentation lives in `docs/` (human-facing,
   build-step-derived).
-- **Gate test (planned, not yet shipped):**
-  `tests/invariants/test_no_harness_files.py` would scan the repo root for
-  forbidden filenames. Phase 1 holds this invariant by repo discipline only
-  (every git status checked at sync points; the orchestrator's pre-push
-  hooks would reject a stray `CLAUDE.md` via the cross-link sweep). Will
-  ship as a single-assertion test under `tests/docs/` in Phase 2 alongside
-  the `install-skills` integration tests.
-- **Gap documented:** flagged in HISTORY follow-ups (2026-05-30) as a Phase 2
-  early-task item; non-blocking for Phase 1 because the property is binary
-  and reviewable by eye.
+- **Gate test:** `tests/invariants/test_no_harness_files.py` — four cases:
+  (1) clean workspace passes; (2) a hand-authored `mappings/README.md` lacking
+  the generator marker is flagged; (3) a generator-written marker README passes;
+  (4) the `no-harness-files` pre-commit hook in `.pre-commit-config.yaml` lists
+  every forbidden filename (shell gate and pytest gate stay in sync).
 - **Rationale:** Keeps amanuensis harness-agnostic. Agent-facing instructions
   live in skills (loaded JIT via each harness's skill mechanism); the project
   marker (INV-1) provides activation; per-harness skill discovery is handled
@@ -192,22 +187,19 @@ Status legend: `active` (gate enforced) | `near-threshold` (warn) | `waived` (ex
 
 ## INV-9 — Cross-document reasoning is Phase 2's job, not Phase 1's
 
-- **Status:** active (scope contract, no executable gate)
+- **Status:** active (gated)
 - **Established:** 2026-05-29
 - **Property:** Phase 1 emits intra-document relations only. Cross-document
   entity resolution, support/attack edges spanning documents, probandum
   hierarchies spanning sources are Phase 2 (Map) outputs. Phase 1 atoms
   carry normalized entity references so Phase 2 can join on them without
   re-extraction.
-- **Gate test:** None in Phase 1 — this is a scope contract documented in
-  the architecture and skill files (extractor/auditor skills only see one
-  source-mirror at a time, and the dispatch driver's write-isolation
-  rule, INV-11, structurally prevents one role from writing under another
-  source's path). An executable
-  `tests/invariants/test_intra_doc_only.py` (assert that no relation's
-  endpoints reference atoms from distinct `source_id`s) lands when
-  Phase 2's cross-doc surface is introduced — at that point the
-  intra-doc gate becomes a meaningful regression test.
+- **Gate test:** `tests/invariants/test_intra_doc_only.py` — three cases:
+  (1) all relations in a clean fixture substrate have `source_id` matching
+  their distillation and both endpoint atoms belong to the same source;
+  (2) no Phase-2 cross-doc directories (`probanda/`, `cross-doc/`) exist
+  at the workspace root; (3) a deliberately planted cross-source violation
+  (relation filed under `src1` but claiming `source_id=src2`) is caught.
 - **Rationale:** Single-doc Phase 1 keeps the multi-agent loop's context bounded
   and the checkpointing boundary clean. Concentrates cross-source complexity in
   Phase 2.

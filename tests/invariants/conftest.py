@@ -1,11 +1,11 @@
 """Shared fixtures for ``tests/invariants/`` gate tests.
 
-The gate tests in this directory exercise INV-3, INV-5, and INV-10 on a
-hand-built fixture substrate (NOT the M2.1 PDFs — those are vocabulary-
-design fixtures, not substrate state). The factories below mirror the
-patterns in ``tests/validators/conftest.py`` but are re-declared here so
-this directory's tests do not implicitly depend on collection order of
-``tests/validators/conftest.py``.
+The gate tests in this directory exercise INV-3, INV-5, INV-9, INV-10,
+and INV-2 on hand-built fixture substrates (NOT the M2.1 PDFs — those
+are vocabulary-design fixtures, not substrate state). The factories
+below mirror the patterns in ``tests/validators/conftest.py`` but are
+re-declared here so this directory's tests do not implicitly depend on
+collection order of ``tests/validators/conftest.py``.
 
 The ``vocabulary_subset`` fixture builds a 3-entry hand-rolled
 Vocabulary used by the INV-5 "snapshot vs global" gate test: we want a
@@ -22,12 +22,14 @@ from typing import Any
 
 import pytest
 
+from amanuensis.fs import Substrate
 from amanuensis.schemas import (
     AgentAttribution,
     Atom,
     OperandRef,
     OperandTypeSchema,
     ProvenanceRecord,
+    Relation,
     RoleAttribution,
     Vocabulary,
     VocabularyEntry,
@@ -237,6 +239,167 @@ def matched_atom_factory(
         )
 
     return _make
+
+
+def _build_relation(
+    role_attribution: RoleAttribution,
+    *,
+    source_id: str,
+    from_atom_id: str,
+    to_atom_id: str,
+    provenance_id: str = "p-" + "0" * 16,
+) -> Relation:
+    """Build a Relation with a content-addressable id."""
+    payload: dict[str, Any] = {
+        "id": "r-" + "0" * 16,
+        "source_id": source_id,
+        "from_atom_id": from_atom_id,
+        "to_atom_id": to_atom_id,
+        "kind": "supports",
+        "warrant": "The obligation follows from the payment clause.",
+        "warrant_defensibility": "conventional",
+        "warrant_basis": "standard contract interpretation",
+        "confidence": "high",
+        "provenance_id": provenance_id,
+        "role_attributions": [role_attribution],
+        "schema_version": 1,
+    }
+    draft = Relation(**payload)
+    payload["id"] = compute_id(draft)
+    return Relation(**payload)
+
+
+@pytest.fixture
+def intra_doc_test_workspace(
+    tmp_path: Path,
+    role_attribution: RoleAttribution,
+    agent: AgentAttribution,
+) -> Path:
+    """Clean workspace satisfying INV-9: one source, two atoms, one relation.
+
+    The relation's ``source_id``, ``from_atom_id``, and ``to_atom_id`` all
+    belong to the same distillation. Walking with ``list_relations`` and
+    ``get_atom`` on the same ``src`` must not raise or fail any source-equality
+    assertion.
+    """
+    marker = tmp_path / "amanuensis.yaml"
+    marker.write_text("schema_version: 1\nproject_name: inv9-clean\n", encoding="utf-8")
+    substrate = Substrate(tmp_path)
+
+    src = "src-inv9-001"
+    atom_a, prov_a = _matched_atom_and_provenance(
+        role_attribution, agent, source_id=src, char_span=(0, 42)
+    )
+    atom_b, prov_b = _matched_atom_and_provenance(
+        role_attribution, agent, source_id=src, char_span=(100, 142)
+    )
+    for prov in (prov_a, prov_b):
+        substrate.add_provenance(src, prov)
+    for atom in (atom_a, atom_b):
+        substrate.add_atom(src, atom)
+
+    relation = _build_relation(
+        role_attribution, source_id=src, from_atom_id=atom_a.id, to_atom_id=atom_b.id
+    )
+    substrate.add_relation(src, relation)
+    return tmp_path
+
+
+@pytest.fixture
+def cross_source_violation_workspace(
+    tmp_path: Path,
+    role_attribution: RoleAttribution,
+    agent: AgentAttribution,
+) -> Path:
+    """Deliberately violating workspace: a relation filed under src1 whose
+    ``source_id`` field names src2.
+
+    INV-9 requires ``rel.source_id == src`` for every relation yielded by
+    ``list_relations(src)``. This fixture bypasses ``Substrate.add_relation``
+    (which enforces the check) by writing the YAML file directly, so the
+    gate test can confirm the assertion catches the violation.
+    """
+    from amanuensis.fs._serialize import serialize_yaml
+
+    marker = tmp_path / "amanuensis.yaml"
+    marker.write_text("schema_version: 1\nproject_name: inv9-violation\n", encoding="utf-8")
+    substrate = Substrate(tmp_path)
+
+    src1 = "src-inv9-v01"
+    src2 = "src-inv9-v02"
+    atom_a, prov_a = _matched_atom_and_provenance(
+        role_attribution, agent, source_id=src1, char_span=(0, 42)
+    )
+    atom_b, prov_b = _matched_atom_and_provenance(
+        role_attribution, agent, source_id=src2, char_span=(100, 142)
+    )
+    for prov, src in ((prov_a, src1), (prov_b, src2)):
+        substrate.add_provenance(src, prov)
+    for atom, src in ((atom_a, src1), (atom_b, src2)):
+        substrate.add_atom(src, atom)
+
+    # Build a relation that claims to belong to src2 but file it under src1.
+    # This is the cross-source violation: the relation's source_id != the
+    # distillation directory it lives under.
+    bad_relation = _build_relation(
+        role_attribution,
+        source_id=src2,  # <-- wrong: filed under src1, claims src2
+        from_atom_id=atom_a.id,
+        to_atom_id=atom_b.id,
+    )
+    # Write directly, bypassing the source_id guard in add_relation.
+    relation_dir = tmp_path / "distillations" / src1 / "relations"
+    relation_dir.mkdir(parents=True, exist_ok=True)
+    (relation_dir / f"{bad_relation.id}.yaml").write_text(
+        serialize_yaml(bad_relation), encoding="utf-8"
+    )
+    return tmp_path
+
+
+@pytest.fixture
+def clean_workspace(tmp_path: Path) -> Path:
+    """Workspace with amanuensis.yaml and no forbidden harness files at root.
+
+    Used by the INV-2 gate test to confirm a clean project passes.
+    """
+    marker = tmp_path / "amanuensis.yaml"
+    marker.write_text("schema_version: 1\nproject_name: inv2-clean\n", encoding="utf-8")
+    return tmp_path
+
+
+@pytest.fixture
+def workspace_with_hand_authored_readme(tmp_path: Path) -> Path:
+    """Workspace where ``mappings/README.md`` lacks the generator marker.
+
+    Simulates a hand-authored README inside the ``mappings/`` directory
+    (the file exists but does NOT contain the
+    ``<!-- amanuensis-generated: do not edit -->`` marker). The INV-2 gate
+    test treats such a file as a violation of the "no hand-authored docs at
+    harness-adjacent paths" discipline.
+    """
+    marker = tmp_path / "amanuensis.yaml"
+    marker.write_text("schema_version: 1\nproject_name: inv2-hand-readme\n", encoding="utf-8")
+    mappings_dir = tmp_path / "mappings"
+    mappings_dir.mkdir(parents=True, exist_ok=True)
+    (mappings_dir / "README.md").write_text(
+        "# mappings\n\nThis is a hand-authored README without the generator marker.\n",
+        encoding="utf-8",
+    )
+    return tmp_path
+
+
+@pytest.fixture
+def workspace_with_marker_readme(tmp_path: Path) -> Path:
+    """Workspace where ``mappings/README.md`` carries the generator marker.
+
+    Simulates a README produced by ``Substrate.ensure_mappings_readme``.
+    The INV-2 gate test confirms this variant passes (marker = generator-owned).
+    """
+    marker = tmp_path / "amanuensis.yaml"
+    marker.write_text("schema_version: 1\nproject_name: inv2-marker-readme\n", encoding="utf-8")
+    substrate = Substrate(tmp_path)
+    substrate.ensure_mappings_readme()
+    return tmp_path
 
 
 @pytest.fixture
