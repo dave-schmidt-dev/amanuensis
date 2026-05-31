@@ -6,16 +6,15 @@ Validates that:
 - ``_resolve_replay_log_root`` produces the correct directory for both role families.
 """
 
+# pyright: reportPrivateUsage=false
+
 from __future__ import annotations
 
 from pathlib import Path
 
 import pytest
 
-from amanuensis.fs.replay_log import (  # pyright: ignore[reportPrivateUsage]
-    ReplayLog,
-    _resolve_replay_log_root,
-)
+from amanuensis.fs.replay_log import ReplayLog, _resolve_replay_log_root
 
 
 def _ws(tmp_path: Path) -> Path:
