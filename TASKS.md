@@ -31,19 +31,18 @@ Prior plan: `~/Documents/Projects/.plans/amanuensis/phase1-distill-foundation-20
 
 ## Upcoming phases
 
-- [in progress] **Phase 2a (Resolve) — PLAN COMPLETE; ready for
-  implementation.** Phase 2 was decomposed into three sub-projects
-  (2a Resolve / 2b Connect / 2c Hierarchize); only 2a is planned.
-  Warp-tier cycle completed 2026-05-31: spec → plan draft (subagent)
-  → self-contrarian (3 OW + 4 PW + 3 WR) → 3 parallel external
-  reviewers (codex contrarian + agy auditor + claude constructive;
-  22 findings; 18 ACCEPT + 2 ACKNOWLEDGE + 2 REJECT) → refinement
-  subagent applied accepts → fresh-eyes premortem (cursor-agent +
-  Kimi K2.5; 15 items: 6 MITIGATE + 9 ACKNOWLEDGE) → premortem
-  mitigations applied → 82-task TDD breakdown. Final plan: 3,229
-  lines + 82 tasks. Implementation timeline: 14-17 days single /
-  8-11 days subagent-driven. Next action: subagent-driven execution
-  per CLAUDE.md convention.
+- [in progress] **Phase 2a (Resolve) — M1 SHIPPED 2026-05-31;
+  M2–M11 remain (70 tasks).** Plan: warp-tier cycle completed
+  2026-05-31 (spec → plan draft → self-contrarian → 3 parallel
+  external reviewers; 22 findings, 18 ACCEPT + 2 ACK + 2 REJECT →
+  refinement → premortem → 82-task TDD breakdown). M1 (12 tasks,
+  schema foundation) shipped under subagent-driven discipline with
+  parallel waves: T1.1; T1.2–T1.5 + T1.6–T1.8 parallel; T1.9 +
+  T1.10 + T1.12 parallel; T1.11 sequential after T1.10. Combined
+  spec+code-quality reviewer per task in parallel; 8 commits.
+  Implementation timeline: 14–17 days single / 8–11 days
+  subagent-driven (M1 alone ≈ 1 session). Next action: M2
+  (Entity-kind vocabulary, 5 tasks).
 - [pending] Phase 2b (Connect) — cross-doc support/attack edges built
   on Phase 2a's resolved entities. Full brainstorm cycle required;
   blocked on 2a implementation.

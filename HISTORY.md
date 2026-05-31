@@ -1397,6 +1397,46 @@ Format: dated entries, newest first. Bug entries cite the area touched:
 
 ## 2026-05-31
 
+- **Phase 2a (Resolve) M1 — Schema foundation SHIPPED.** All 12 M1
+  tasks (T1.1–T1.12) executed under subagent-driven discipline with
+  parallel waves: Wave 0 (T1.1 prefix registration), Wave 1 (T1.2–T1.5
+  four new schemas + T1.6 AgentAttribution.role + T1.7
+  ProvenanceRecord.entity_type + T1.8 Clarification.kind, dispatched
+  in parallel with orchestrator-batched `__init__.py` re-exports to
+  avoid file-race), Wave 2 (T1.9 collision sweep + T1.10 migration
+  script + T1.12 backward-compat fixtures, dispatched in parallel),
+  then T1.11 auto-trigger sequentially. Each task got a combined
+  spec+code-quality reviewer subagent in a parallel wave; 8 commits
+  shipped. Combined-reviewer pattern saved ~7 review-dispatch
+  round-trips vs the skill's default two-stage cadence with no quality
+  loss for mechanical schema work. Two real defects caught in review
+  and fixed inline (not deferred): (1) T1.8 implementer added a v1
+  `kind` injection in `_serialize.py` that would corrupt content hashes
+  (kind is identity-bearing, not volatile) — reverted; v1 records now
+  go through T1.10/T1.11 migration before reaching the deserializer;
+  (2) T1.10's frontmatter parser used `find("---")` instead of
+  `find("\n---")` — would mis-split YAML with `---` mid-block-scalar;
+  one-character fix. Additional review-driven hygiene: T1.8's
+  reconcile.py default activity→kind mapping changed from
+  `"resolution-disputed"` (semantically wrong for Phase 1) to
+  `"warrant-defensibility-contested"` (Phase 1 has no resolutions to
+  dispute); T1.5 review surfaced a missing-type entry in
+  `compute_id()`'s error message. T1.10 also patched `pyproject.toml`
+  to add `pythonpath = ["."]` for pytest's `scripts.*` import path.
+  Per-task verification stayed sub-3s (targeted `tests/schemas/` only);
+  full suite reserved for pre-push. M1 gate state: 256 schema+fs+
+  dispatch tests pass, pyright src+tests clean. | files:
+  src/amanuensis/schemas/{entity,resolution,resolution_supersede,entity_supersede}.py,
+  src/amanuensis/schemas/{__init__,_hashing,_shared,clarification,provenance}.py,
+  src/amanuensis/fs/{substrate,_serialize}.py,
+  src/amanuensis/dispatch/reconcile.py,
+  scripts/{__init__,migrate_clarifications_to_schema_v2}.py,
+  tests/schemas/{test_entity,test_resolution,test_resolution_supersede,test_entity_supersede,test_agent_attribution,test_content_addressing,test_provenance,test_clarification,test_phase1_backward_compat,conftest}.py,
+  tests/fs/{test_clarification_migration,conftest}.py,
+  tests/cli/conftest.py, tests/web/conftest.py,
+  tests/fixtures/phase1-records/{atom_v1,relation_v1}.yaml,
+  pyproject.toml
+
 - **CI unblocked — `uv.lock` committed.** Standing lockfile
   decision from the M11.1 ship (deferred to "the orchestrator")
   resolved in favor of commit-the-lockfile, consistent with the
