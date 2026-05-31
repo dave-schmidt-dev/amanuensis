@@ -40,11 +40,16 @@ from amanuensis.schemas import (
     AgentAttribution,
     Atom,
     Clarification,
+    Entity,
+    EntitySupersede,
     IterationDirective,
     OperandTypeSchema,
     ProvenanceRecord,
     Relation,
     ReplayLogEntry,
+    Resolution,
+    ResolutionSupersede,
+    RoleAttribution,
     SourceMirrorManifest,
     Vocabulary,
     VocabularyEntry,
@@ -470,3 +475,194 @@ def test_phase2a_kind_prefixes_registered() -> None:
     assert _KIND_PREFIX["Resolution"] == "j-"
     assert _KIND_PREFIX["ResolutionSupersede"] == "s-"
     assert _KIND_PREFIX["EntitySupersede"] == "t-"
+
+
+# --- Phase 2a: Entity, Resolution, *Supersede collision sweep --------
+
+
+def _attr() -> RoleAttribution:
+    """Build a RoleAttribution for test entities."""
+    return RoleAttribution(
+        agent=AgentAttribution(
+            kind="llm",
+            identifier="claude-opus-4-7",
+            role="extractor",
+        ),
+        activity="test",
+        at=datetime(2026, 5, 29, 12, 0, 0, tzinfo=UTC),
+    )
+
+
+def _make_entity(canonical_name: str = "ACME", prov_id: str = "p-aaaaaaaaaaaaaaaa") -> Entity:
+    """Build a valid Entity instance for testing."""
+    return Entity(
+        id="e-x",
+        kind="party",
+        canonical_name=canonical_name,
+        aliases=[],
+        notes=None,
+        provenance_id=prov_id,
+        role_attributions=[_attr()],
+    )
+
+
+def _make_resolution(
+    source_id: str = "s",
+    atom_id: str = "a-1",
+    entity_id: str = "e-1",
+    prov_id: str = "p-1",
+) -> Resolution:
+    """Build a valid Resolution instance for testing."""
+    return Resolution(
+        id="j-x",
+        source_id=source_id,
+        atom_id=atom_id,
+        operand_index=0,
+        entity_id=entity_id,
+        confidence="high",
+        basis="rule fired",
+        provenance_id=prov_id,
+        role_attributions=[_attr()],
+    )
+
+
+def _make_resolution_supersede(
+    superseded_id: str = "j-1",
+    replacement_id: str = "j-2",
+    prov_id: str = "p-1",
+) -> ResolutionSupersede:
+    """Build a valid ResolutionSupersede instance for testing."""
+    return ResolutionSupersede(
+        id="s-x",
+        superseded_resolution_id=superseded_id,
+        replacement_resolution_id=replacement_id,
+        reason="correction required",
+        provenance_id=prov_id,
+        role_attributions=[_attr()],
+    )
+
+
+def _make_entity_supersede(
+    superseded_id: str = "e-1",
+    replacement_id: str = "e-2",
+    prov_id: str = "p-1",
+) -> EntitySupersede:
+    """Build a valid EntitySupersede instance for testing."""
+    return EntitySupersede(
+        id="t-x",
+        kind="entity",
+        superseded_entity_id=superseded_id,
+        replacement_entity_id=replacement_id,
+        reason="merged into canonical form",
+        provenance_id=prov_id,
+        role_attributions=[_attr()],
+    )
+
+
+# --- Prefix tests (4 tests) ---
+
+
+def test_entity_id_prefix() -> None:
+    """Entity ids must start with 'e-'."""
+    assert compute_id(_make_entity()).startswith("e-")
+
+
+def test_resolution_id_prefix() -> None:
+    """Resolution ids must start with 'j-'."""
+    assert compute_id(_make_resolution()).startswith("j-")
+
+
+def test_resolution_supersede_id_prefix() -> None:
+    """ResolutionSupersede ids must start with 's-'."""
+    assert compute_id(_make_resolution_supersede()).startswith("s-")
+
+
+def test_entity_supersede_id_prefix() -> None:
+    """EntitySupersede ids must start with 't-'."""
+    assert compute_id(_make_entity_supersede()).startswith("t-")
+
+
+# --- Volatility tests (4 tests) ---
+
+
+@given(name=st.text(min_size=1, max_size=50).filter(lambda s: s.strip()))
+@settings(max_examples=200, suppress_health_check=[HealthCheck.function_scoped_fixture])
+def test_entity_hash_stable_under_provenance_id_change(name: str) -> None:
+    """Changing provenance_id does NOT change Entity id."""
+    e1 = _make_entity(canonical_name=name, prov_id="p-aaaaaaaaaaaaaaaa")
+    e2 = _make_entity(canonical_name=name, prov_id="p-bbbbbbbbbbbbbbbb")
+    assert compute_id(e1) == compute_id(e2)
+
+
+@given(src=st.text(min_size=1, max_size=20).filter(lambda s: s.strip()))
+@settings(max_examples=200, suppress_health_check=[HealthCheck.function_scoped_fixture])
+def test_resolution_hash_stable_under_provenance_id_change(src: str) -> None:
+    """Changing provenance_id does NOT change Resolution id."""
+    r1 = _make_resolution(source_id=src, prov_id="p-aaaaaaaaaaaaaaaa")
+    r2 = _make_resolution(source_id=src, prov_id="p-bbbbbbbbbbbbbbbb")
+    assert compute_id(r1) == compute_id(r2)
+
+
+@given(sup_id=st.text(min_size=1, max_size=20).filter(lambda s: s.strip()))
+@settings(max_examples=200, suppress_health_check=[HealthCheck.function_scoped_fixture])
+def test_resolution_supersede_hash_stable_under_provenance_id_change(sup_id: str) -> None:
+    """Changing provenance_id does NOT change ResolutionSupersede id."""
+    s1 = _make_resolution_supersede(superseded_id=sup_id, prov_id="p-aaaaaaaaaaaaaaaa")
+    s2 = _make_resolution_supersede(superseded_id=sup_id, prov_id="p-bbbbbbbbbbbbbbbb")
+    assert compute_id(s1) == compute_id(s2)
+
+
+@given(sup_id=st.text(min_size=1, max_size=20).filter(lambda s: s.strip()))
+@settings(max_examples=200, suppress_health_check=[HealthCheck.function_scoped_fixture])
+def test_entity_supersede_hash_stable_under_provenance_id_change(sup_id: str) -> None:
+    """Changing provenance_id does NOT change EntitySupersede id."""
+    t1 = _make_entity_supersede(superseded_id=sup_id, prov_id="p-aaaaaaaaaaaaaaaa")
+    t2 = _make_entity_supersede(superseded_id=sup_id, prov_id="p-bbbbbbbbbbbbbbbb")
+    assert compute_id(t1) == compute_id(t2)
+
+
+# --- Collision-sweep tests (4 tests) ---
+
+
+def test_entity_collision_sweep() -> None:
+    """Generate 1000 distinct entities; assert 1000 unique ids."""
+    ids: set[str] = set()
+    for i in range(1000):
+        e = _make_entity(canonical_name=f"name-{i}", prov_id=f"p-{i:016x}"[:18])
+        ids.add(compute_id(e))
+    assert len(ids) == 1000
+
+
+def test_resolution_collision_sweep() -> None:
+    """Generate 1000 distinct resolutions; assert 1000 unique ids."""
+    ids: set[str] = set()
+    for i in range(1000):
+        r = _make_resolution(source_id=f"s-{i}", entity_id=f"e-{i}", prov_id=f"p-{i:016x}"[:18])
+        ids.add(compute_id(r))
+    assert len(ids) == 1000
+
+
+def test_resolution_supersede_collision_sweep() -> None:
+    """Generate 1000 distinct resolution superseders; assert 1000 unique ids."""
+    ids: set[str] = set()
+    for i in range(1000):
+        s = _make_resolution_supersede(
+            superseded_id=f"j-{i}",
+            replacement_id=f"j-{i + 1000}",
+            prov_id=f"p-{i:016x}"[:18],
+        )
+        ids.add(compute_id(s))
+    assert len(ids) == 1000
+
+
+def test_entity_supersede_collision_sweep() -> None:
+    """Generate 1000 distinct entity superseders; assert 1000 unique ids."""
+    ids: set[str] = set()
+    for i in range(1000):
+        t = _make_entity_supersede(
+            superseded_id=f"e-{i}",
+            replacement_id=f"e-{i + 1000}",
+            prov_id=f"p-{i:016x}"[:18],
+        )
+        ids.add(compute_id(t))
+    assert len(ids) == 1000
