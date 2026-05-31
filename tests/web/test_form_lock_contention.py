@@ -23,8 +23,10 @@ reliability — mirrors the M1.8 pattern from
 
 from __future__ import annotations
 
+# pyright: reportPrivateUsage=false
 import multiprocessing
 import time
+from datetime import UTC, datetime
 from multiprocessing.process import BaseProcess
 from pathlib import Path
 
@@ -32,11 +34,17 @@ import pytest
 from fastapi.testclient import TestClient
 
 from amanuensis.fs import Substrate, WorkspaceLockTimeout, acquire_workspace_lock
-from amanuensis.schemas import Atom, Clarification, ProvenanceRecord
+from amanuensis.schemas import (
+    AgentAttribution,
+    Atom,
+    Clarification,
+    ProvenanceRecord,
+    compute_id,
+)
 from amanuensis.web.app import create_app
 from amanuensis.web.routes import forms as forms_routes
 
-from .conftest import SOURCE_ID
+from .conftest import SOURCE_ID, _plant_atom, _plant_clarification
 
 # --- Child entry point (module-level for spawn pickling) -------------
 
@@ -312,3 +320,106 @@ def test_form_recovers_after_lock_released_does_not_raise_for_holder(
     # symbol IS exercised by the contention assertions implicitly
     # (the route catches it), but pyright would otherwise flag it.
     assert WorkspaceLockTimeout is not None
+
+
+# ---------------------------------------------------------------------------
+# T8.5 — parametric extension for Phase 2a clarification kinds
+# ---------------------------------------------------------------------------
+
+
+def _plant_workspace_with_clarification_kind(workspace: Path, clar_kind: str) -> Clarification:
+    """Set up a workspace with marker, atom, and one open clarification of ``clar_kind``.
+
+    Writes the ``amanuensis.yaml`` INV-1 marker, plants an atom under
+    ``SOURCE_ID``, then plants an open clarification whose ``kind`` is
+    set to ``clar_kind``. Returns the clarification so the caller can
+    build the POST payload.
+    """
+    marker = workspace / "amanuensis.yaml"
+    marker.write_text("schema_version: 1\nproject_name: flock-test\n", encoding="utf-8")
+    substrate = Substrate(workspace)
+    atom, prov = _plant_atom(substrate, SOURCE_ID)
+    clar = _plant_clarification(substrate, atom=atom, prov=prov, source_id=SOURCE_ID)
+    # Re-build with the requested kind (content-addressable id differs per kind).
+    raising_agent = AgentAttribution(kind="llm", identifier="auditor-test", role="auditor")
+    payload: dict[str, object] = {
+        "id": "c-" + "0" * 16,
+        "status": "open",
+        "kind": clar_kind,
+        "raised_at": datetime(2026, 5, 30, 12, 5, 0, tzinfo=UTC),
+        "raised_by": raising_agent,
+        "raised_by_activity": "audit_v1",
+        "context_refs": [atom.id],
+        "question": f"Test question for kind={clar_kind}",
+        "options": None,
+        "resolved_at": None,
+        "resolved_by": None,
+        "resolution": None,
+        "raised_provenance_id": prov.id,
+        "resolved_provenance_id": None,
+        "schema_version": 2,
+    }
+    draft = Clarification(**payload)  # type: ignore[arg-type]
+    payload["id"] = compute_id(draft)
+    typed_clar = Clarification(**payload)  # type: ignore[arg-type]
+    substrate.add_clarification(SOURCE_ID, typed_clar)
+    # Remove the warrant-defensibility-contested clar planted by _plant_clarification;
+    # the open/ directory may hold both — only the new one matters for this test.
+    _ = clar  # kept for traceability; the test POST uses typed_clar.id
+    return typed_clar
+
+
+@pytest.mark.parametrize(
+    "clar_kind",
+    ["resolution-disputed", "resolution-ambiguous"],
+)
+def test_resolve_form_new_kinds_respect_flock(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    clar_kind: str,
+) -> None:
+    """The two new Phase 2a clarification kinds inherit the flock-503 behaviour.
+
+    Mirrors ``test_clarification_resolve_times_out_when_lock_held`` but
+    parametrizes over the two new kinds. The POST handler does not
+    discriminate by ``kind`` — what matters is that neither new kind
+    bypasses the flock-acquisition path and both surface a 503 with the
+    expected body when contended.
+    """
+    clar = _plant_workspace_with_clarification_kind(tmp_path, clar_kind)
+    monkeypatch.setenv("AMANUENSIS_WORKSPACE", str(tmp_path))
+    monkeypatch.setattr(forms_routes, "_FORM_LOCK_TIMEOUT_SECONDS", 0.5)
+
+    substrate = Substrate(tmp_path)
+    open_path = substrate.clarification_path(SOURCE_ID, clar.id, resolved=False)
+    assert open_path.is_file(), f"fixture should have planted an open {clar_kind!r} clarification"
+
+    proc, _ready = _spawn_holder(tmp_path, hold_seconds=2.0)
+    try:
+        client = _build_client()
+        t0 = time.monotonic()
+        response = client.post(
+            f"/clarifications/{clar.id}/resolve",
+            data={
+                "source_id": SOURCE_ID,
+                "resolution": f"Should never be written — lock held ({clar_kind}).",
+            },
+            follow_redirects=False,
+        )
+        elapsed = time.monotonic() - t0
+
+        assert response.status_code == 503, response.text
+        body_lower = response.text.lower()
+        assert "workspace busy" in body_lower
+        assert "lock" in body_lower
+        assert elapsed < 3.0, f"route waited too long: {elapsed:.3f}s"
+
+        # Substrate is untouched: open file survives, no resolved variant.
+        assert open_path.is_file(), "open clarification must survive a lock-timeout"
+        resolved_path = substrate.clarification_path(SOURCE_ID, clar.id, resolved=True)
+        assert not resolved_path.is_file(), (
+            "no resolved variant should have been written under contention"
+        )
+    finally:
+        _join_child(proc)
+        assert proc.exitcode == 0
