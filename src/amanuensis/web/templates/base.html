@@ -6,6 +6,7 @@
     <title>{% block title %}amanuensis{% endblock %}</title>
     <link rel="stylesheet" href="/static/tailwind.css" />
     <script src="/static/vendor/htmx.min.js" defer></script>
+    {% block extra_head %}{% endblock %}
   </head>
   <body class="h-full bg-neutral-950 text-neutral-100 antialiased">
     <header class="border-b border-neutral-800 bg-neutral-900">

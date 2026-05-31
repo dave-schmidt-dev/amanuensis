@@ -1,0 +1,10 @@
+/* relations.css — Cytoscape hover-by-entity highlight (Phase 2a M8 T8.7).
+ *
+ * Applied to Cytoscape nodes that share an entity with the currently-hovered
+ * atom node. The entity-hover.js binding adds/removes this class via
+ * node.addClass('entity-shared') / node.removeClass('entity-shared').
+ *
+ * Orange (not purple) per Phase 2a M8 §8.2 anti-AI-slop guidance. */
+.entity-shared {
+  border: 2px solid #ff8800;
+}

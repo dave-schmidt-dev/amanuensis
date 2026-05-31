@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% block title %}relations &middot; {{ source_id }} &middot; amanuensis{% endblock %}
+{% block extra_head %}<link rel="stylesheet" href="/static/css/relations.css">{% endblock %}
 {% block nav %}
 <a href="/" class="text-neutral-300 hover:text-neutral-50">&larr; dashboard</a>
 <a href="/distillations/{{ source_id }}" class="text-neutral-300 hover:text-neutral-50">overview</a>
@@ -61,6 +62,7 @@
 <script src="/static/vendor/cytoscape-cose-bilkent.js"></script>
 <script src="/static/vendor/cytoscape.min.js"></script>
 <script defer src="/static/vendor/alpine.min.js"></script>
+<script src="/static/js/entity-hover.js" defer></script>
 
 <script>
   // Alpine component factory. Defined on `window` so the
