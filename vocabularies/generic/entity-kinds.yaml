@@ -1,0 +1,42 @@
+# vocabularies/generic/entity-kinds.yaml
+version: 1
+kinds:
+  - id: party
+    description: A named party to a legal matter (plaintiff / defendant / counter-party).
+    resolution_rules:
+      - name-and-role-equivalence
+      - organization-suffix-normalization
+  - id: person
+    description: A named individual (witness / counsel / officer).
+    resolution_rules:
+      - full-name-parse
+      - name-and-role-equivalence
+  - id: organization
+    description: A corporate or governmental entity that is not a direct party.
+    resolution_rules:
+      - organization-suffix-normalization
+  - id: instrument
+    description: A document, contract, motion, or filing.
+    resolution_rules:
+      - name-and-role-equivalence
+  - id: event
+    description: A dated occurrence (signing / hearing / filing / breach).
+    resolution_rules:
+      - date-and-participant-equivalence
+  - id: statute
+    description: A statutory citation.
+    resolution_rules:
+      - bluebook-citation-parse
+  - id: case-citation
+    description: A judicial decision citation.
+    resolution_rules:
+      - bluebook-citation-parse
+      - parallel-citation-merge
+  - id: jurisdiction
+    description: A court / region / governing body.
+    resolution_rules:
+      - jurisdictional-canonicalization
+  - id: concept
+    description: An abstract legal concept (force majeure / consideration).
+    resolution_rules:
+      - supervisor-only
