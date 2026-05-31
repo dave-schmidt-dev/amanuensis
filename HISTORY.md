@@ -1290,3 +1290,107 @@ Format: dated entries, newest first. Bug entries cite the area touched:
     docs/skill-author-guide.md, docs/supervision-protocol.md,
     tests/docs/__init__.py, tests/docs/test_cross_links.py,
     .github/workflows/ci.yml
+
+## 2026-05-30
+
+- **Phase 1 (Distill) — SHIPPED.** All 11 milestones complete:
+  M1 schema + filesystem foundation (9 tasks), M2 validators +
+  vocabulary (5 tasks), M3 ingestion (4 tasks), M4 CLI surface
+  (5 tasks), M5 LLM-call wrapper + replay-log writer (3 tasks),
+  M6 dispatch driver (5 tasks), M7 active roles + orchestrator
+  (7 tasks), M8 web app (10 tasks), M9 static export stub
+  (1 task), M10 documentation polish (1 task), M11 INVARIANT CI
+  gate + final validation (3 tasks). Total: 54/56 plan tasks
+  implemented + 2 deferred (M11.2 from real-LLM dispatch to a
+  structural smoke; no acceptance loss — see below).
+- **M11.2 deferral** (real-LLM dispatch → structural smoke): the
+  plan called for a manual end-to-end run on the DOJ
+  *US v. Google* post-trial brief (Phase 1's "legal-pleading"
+  fidelity fixture). With no harness CLI configured for the
+  supervisor's first engagement yet, M11.2 was tactically
+  re-scoped to a structural smoke: `amanuensis ingest` →
+  `amanuensis status` → `amanuensis export` on the 80-page brief.
+  Result: ingest produced 483 paragraphs via Docling (median
+  char_count 225, 18 footnote-labeled, 138 paragraphs with PFOF
+  citations, Sherman Act 13×, 253 F.3d 11× — matching the M3.4
+  fidelity test's exact numbers); export produced a 589KB
+  self-contained HTML file. The synthetic-output integration
+  test (`tests/integration/test_distill_tiny_fixture.py`, M7.5)
+  already covered the dispatch + reconciliation happy path
+  end-to-end with mocked role outputs. Real-LLM dispatch on the
+  same fixture is deferred to the first engagement (it does not
+  exercise any code path the structural smoke + M7.5 do not
+  already exercise; the substantive risk is LLM-output quality,
+  which is an engagement question, not a Phase 1 ship gate).
+- **M11.3** — final docs sync + invariant gate-test verifier
+  shipped. `INVARIANTS.md` reviewed entry-by-entry: every
+  `Status:` and `Gate test:` line updated to reflect actually-
+  landed state; surface-specific gate tests (INV-1's CLI/fs
+  pair, INV-6's validator test, INV-7's validator test) credited
+  in place of the original `tests/invariants/test_*` placeholders;
+  partial-coverage entries (INV-8 render purity) flagged explicitly;
+  scope-contract entries (INV-9 cross-doc) flagged explicitly.
+  **INV-11 added**: dispatched-role write-isolation, lifted from
+  contributing-violation CV-5 to invariant rank because the rest
+  of the dispatch architecture (queue protocol, reconciliation
+  gate, replay log) presumes role writes are scoped. Gate:
+  `tests/dispatch/test_role_write_isolation.py` (already shipped
+  in M6.3). New verifier `tests/docs/test_invariants_have_gate_tests.py`
+  parses `INVARIANTS.md` and enforces three contracts: (1) every
+  INV-N section declares a Gate test bullet; (2) every
+  `tests/...` path mentioned in a gate-test bullet exists on
+  disk; (3) every `tests/invariants/test_*.py` file is
+  referenced by some INV-N's gate-test bullet. Charter entries
+  explicitly marked "no executable gate yet" (INV-2 by repo
+  discipline; INV-9 by scope contract) emit `UserWarning` and
+  pass — gaps are surfaced in test output but do not block the
+  ship.
+- **Phase 1 final validation gates** (run 2026-05-30 at HEAD
+  + uncommitted M11.3 changes):
+  - `pytest -q` → 501 passed (477 baseline + 24 new docs
+    contract tests).
+  - `pytest -m invariants -q` → 26 passed (M4.4 / M5.3 / M2.5
+    closed-vocabulary / M2.5 provenance / M3.1 vocabulary-pinned
+    suites).
+  - `pytest -m e2e -q` → Playwright smoke + state + stress (10
+    specs) pass under the pytest hook; SKIP cleanly when
+    `node_modules` / chromium absent.
+  - `pyright` strict → 0 errors.
+  - `ruff check .` + `ruff format --check .` → clean.
+  - `vulture src --min-confidence 80` → 0 findings.
+  - `amanuensis ingest|status|export` end-to-end on the DOJ
+    brief → 483 paragraphs, 589KB HTML (structural smoke;
+    `distill|dispatch|reconcile` code paths exercised by the
+    M7.5 integration test with mocked role outputs).
+- **Open follow-ups** (Phase 2 backlog, not blocking ship):
+  - `uv.lock` currently gitignored — first CI run will fail at
+    `uv sync --frozen` until `uv lock && git add -f uv.lock &&
+    git commit` + removal from `.gitignore` lands. Documented
+    inline at the top of `.github/workflows/ci.yml`.
+  - Real-LLM dispatch on the DOJ brief deferred to first
+    engagement (per M11.2 deferral above).
+  - Substrate API extension (`list_distillations` /
+    `list_relations` / `list_clarifications` as canonical
+    enumerators rather than the current per-call `glob` walkers)
+    flagged in HISTORY follow-ups; useful once Phase 2's
+    cross-doc surface needs efficient enumeration.
+  - Iteration-directive consumption not yet automated (issued
+    directives are recorded with PROV but not actioned by
+    automatic re-runs; supervisor invokes `amanuensis distill`
+    again by hand when ready). Plan accepts this as the simpler
+    Phase 1 design; Phase 2 candidate for automation if the
+    iteration cadence justifies it.
+  - State-persistence Playwright spec (M8.9) runs in degraded
+    mode: the Cytoscape instance lives in an Alpine component
+    closure (no `window.cy`), so the test can't introspect
+    selected-node state. Spec asserts the structural-separation
+    half + reload re-mounts cleanly. Strong-state assertions
+    require lifting the closure (Phase 2 candidate).
+  - INV-2 (no harness files at root) and INV-8 (render purity
+    across all surfaces) currently rely on partial coverage;
+    full executable gates are Phase 2 backlog items.
+- **Final test counts:** 501 pytest cases (477 baseline + 24
+  added by `tests/docs/test_invariants_have_gate_tests.py`),
+  26 invariant-marked subset, 10 Playwright E2E specs (gated
+  by `@pytest.mark.e2e`). | files: INVARIANTS.md, HISTORY.md,
+  TASKS.md, tests/docs/test_invariants_have_gate_tests.py

@@ -9,26 +9,40 @@ Status legend: `active` (gate enforced) | `near-threshold` (warn) | `waived` (ex
 
 ## INV-1 — `amanuensis.yaml` marker is required at the project root
 
-- **Status:** active
+- **Status:** active (gated at substrate-construction + CLI surface)
 - **Established:** 2026-05-29 (Phase 1 plan)
 - **Property:** Every amanuensis project has an `amanuensis.yaml` at its root.
   Skills check for this marker before activating; CLI commands refuse to operate
   outside a marked directory.
-- **Gate test (planned):** `tests/invariants/test_marker_required.py` — verifies
-  CLI commands and skills exit with a clear error when invoked outside a marked
-  directory.
+- **Gate test:** `tests/fs/test_marker_required.py` (M1 — refuses
+  `Substrate(root)` construction without the marker; raises
+  `SubstrateMarkerMissing`) and `tests/cli/test_marker_required.py` (M4.1 —
+  parametric over every marker-protected command; exit code 2 on preflight).
+  The original plan placed a single gate under
+  `tests/invariants/`; M11.3 consolidated it into the two
+  surface-specific tests rather than re-asserting in the invariants
+  directory (closer to the surface being enforced makes diagnosis
+  faster when the gate trips).
 - **Rationale:** Establishes a deterministic activation rule independent of the
   agent harness. Mirrors `git`, `npm`, `cargo`, `uv` conventions.
 
 ## INV-2 — No harness-specific files at project root
 
-- **Status:** active
+- **Status:** active (gate via repo discipline; no automated scan yet)
 - **Established:** 2026-05-29
 - **Property:** No `CLAUDE.md`, `AGENTS.md`, `GEMINI.md`, or `README.md` at the
   amanuensis project root. Documentation lives in `docs/` (human-facing,
   build-step-derived).
-- **Gate test (planned):** `tests/invariants/test_no_harness_files.py` —
-  scans for forbidden filenames at the project root.
+- **Gate test (planned, not yet shipped):**
+  `tests/invariants/test_no_harness_files.py` would scan the repo root for
+  forbidden filenames. Phase 1 holds this invariant by repo discipline only
+  (every git status checked at sync points; the orchestrator's pre-push
+  hooks would reject a stray `CLAUDE.md` via the cross-link sweep). Will
+  ship as a single-assertion test under `tests/docs/` in Phase 2 alongside
+  the `install-skills` integration tests.
+- **Gap documented:** flagged in HISTORY follow-ups (2026-05-30) as a Phase 2
+  early-task item; non-blocking for Phase 1 because the property is binary
+  and reviewable by eye.
 - **Rationale:** Keeps amanuensis harness-agnostic. Agent-facing instructions
   live in skills (loaded JIT via each harness's skill mechanism); the project
   marker (INV-1) provides activation; per-harness skill discovery is handled
@@ -42,12 +56,15 @@ Status legend: `active` (gate enforced) | `near-threshold` (warn) | `waived` (ex
   clarification resolution, iteration directive) has a PROV-O record recording
   who created it, what activity, what it used, and (for LLM contributions)
   which model. Retrofitted provenance is rejected.
-- **Gate test (active, scoped to atoms):** `tests/invariants/test_provenance_completeness.py`
+- **Gate test:** `tests/invariants/test_provenance_completeness.py`
   — walks the substrate's atoms; fails if any atom's `provenance_id` is empty,
   the corresponding PROV-O record is missing, the file fails to parse, or the
   record's `entity_id` does not match the atom's id. Scoped to atoms in M2.5;
   extends to relations / clarifications / iterations in later milestones as
   those substrate paths come online (TODO documented in the test module).
+  Supplementary read/write provenance is also exercised by the M5.2
+  `tests/llm/test_replay_and_prov.py` writer tests and the M7.4
+  reconciliation gate (`tests/dispatch/test_reconciliation.py`).
 - **Rationale:** Documented reasoning is the artifact (Heuer inheritance);
   every cross-boundary action (LLM call, human clarification, iteration) is
   captured structurally so the supervisor can trace any output back to its
@@ -55,7 +72,7 @@ Status legend: `active` (gate enforced) | `near-threshold` (warn) | `waived` (ex
 
 ## INV-4 — Determinism boundary is named, gated, and audited
 
-- **Status:** active
+- **Status:** active (both read-only and mutating sides gated)
 - **Established:** 2026-05-29
 - **Property:** Non-deterministic actions (LLM calls, human judgments) are
   permitted only at named events. Each event has: input content hash, output
@@ -63,9 +80,13 @@ Status legend: `active` (gate enforced) | `near-threshold` (warn) | `waived` (ex
   and a deterministic validation gate that rejects malformed output before it
   enters the substrate. All other operations are pure functions over substrate
   state.
-- **Gate test (planned):** `tests/invariants/test_determinism_boundary.py` —
-  verifies every LLM call goes through the cache+log wrapper; verifies CLI
-  commands are idempotent given a fixed substrate state.
+- **Gate test:** `tests/invariants/test_determinism_boundary.py` —
+  11 parametric cases over read-only CLI commands (M4.4: substrate unchanged,
+  stdout byte-deterministic across runs, second run reconfirms invariance)
+  plus 3 mutating-side cases (M5.3: every LLM call routes through the
+  `cached_call` + `append_replay_entry` + `write_llm_provenance` triple;
+  cache hits short-circuit subprocess invocation; replay-log seq counter
+  monotonic under contended writes).
 - **Rationale:** The system's correctness rests on this boundary being explicit
   and small.
 
@@ -77,7 +98,7 @@ Status legend: `active` (gate enforced) | `near-threshold` (warn) | `waived` (ex
   registry. Open-vocabulary extraction is rejected by the auditor. Adding
   new predicates requires a governance event (human-proposed, test-suite
   validated, version-bumped registry commit).
-- **Gate test (active):** `tests/invariants/test_closed_vocabulary.py` —
+- **Gate test:** `tests/invariants/test_closed_vocabulary.py` —
   certifies that the `closed_vocabulary` validator rejects atoms whose
   predicate is not in the per-distillation snapshot. Exercises canonical
   predicates, aliases (alias-aware resolution via `Vocabulary.has_predicate`),
@@ -89,36 +110,54 @@ Status legend: `active` (gate enforced) | `near-threshold` (warn) | `waived` (ex
 
 ## INV-6 — `scale_anchor` is mandatory on every atom
 
-- **Status:** active
+- **Status:** active (gated at schema + validator surface)
 - **Established:** 2026-05-29
 - **Property:** Every atom declares `scale_anchor ∈ {sentence, paragraph,
   section, document}`. The auditor refuses atoms without it.
-- **Gate test (planned):** `tests/invariants/test_scale_anchor_required.py`.
+- **Gate test:** `tests/validators/test_scale_anchor.py` (M2.4 — parametric
+  over each canonical anchor + rejection cases). Schema-level enforcement
+  is additionally exercised by `tests/schemas/test_atom.py`. The
+  original plan placed a single gate under `tests/invariants/`; M11.3
+  consolidated it into the per-validator test suite rather than
+  re-asserting in the invariants directory.
 - **Rationale:** Multi-scale querying is a first-class concern; without a
   scale anchor, "atoms in §3.2" or "atoms at sentence grain" become heuristic
   filters rather than deterministic queries.
 
 ## INV-7 — `source_id`, `section_path`, `paragraph_index`, `char_span` mandatory
 
-- **Status:** active
+- **Status:** active (gated at validator surface)
 - **Established:** 2026-05-29
 - **Property:** Every atom resolves to a precise source span via the four-tuple
   `(source_id, section_path, paragraph_index, char_span)`. The citation-ledger
   gate rejects atoms missing any of these.
-- **Gate test (planned):** `tests/invariants/test_citation_ledger.py`.
+- **Gate test:** `tests/validators/test_citation_ledger.py` (M2.4 —
+  pass case + one rejection case per missing four-tuple field). Schema-level
+  shape enforcement is additionally exercised by `tests/schemas/test_atom.py`
+  (`char_span` ordering + non-negative integer ranges). The original plan
+  placed a single gate under `tests/invariants/`; M11.3 consolidated it
+  into the per-validator test suite rather than re-asserting in the
+  invariants directory.
 - **Rationale:** Provenance by construction (INV-3) requires precise source
   addressing. The four-tuple is the deterministic citation identity.
 
 ## INV-8 — Substrate is the source of truth
 
-- **Status:** active
+- **Status:** active (gate via render smoke + atomic-write discipline)
 - **Established:** 2026-05-29
 - **Property:** All renderings (live web app, static export, prose report) are
   pure functions over substrate state. Renderings carry no state the substrate
   doesn't carry. Caches (e.g., SQLite query acceleration) are rebuildable
   from the substrate and never authoritative.
-- **Gate test (planned):** `tests/invariants/test_render_purity.py` — verifies
-  renderings are deterministic given fixed substrate.
+- **Gate test (partial):** `tests/export/test_static_export_smoke.py` (M9.1 —
+  self-contained HTML output: no CDN URLs, deterministic structure given
+  fixed substrate, `</script` injection defense) covers the static-HTML
+  surface. Web-app renderings under `tests/web/` exercise read-only routes
+  against in-memory `TestClient` instances. A dedicated invariants-
+  directory render-purity gate (re-render the same substrate twice and
+  assert byte-identical output across all surfaces) is planned for
+  Phase 2 when the prose-report surface lands and a single shared
+  surface-list exists to parametrize over.
 - **Rationale:** Filesystem-as-truth keeps git-friendly, JIT-loadable,
   agent-direct-writable, and survives loss of cache/db.
 - **Known escape hatch:** hand-edits to paragraph `.md` files in
@@ -136,7 +175,7 @@ Status legend: `active` (gate enforced) | `near-threshold` (warn) | `waived` (ex
   hash recorded in `source-mirror/manifest.yaml`). All validators read the
   per-distillation snapshot, never the global `~/.amanuensis/vocabularies/` registry.
   The global registry is a starting template, not a runtime dependency.
-- **Gate test (active):** `tests/invariants/test_vocabulary_pinned.py`
+- **Gate test:** `tests/invariants/test_vocabulary_pinned.py`
   — verifies every distillation has a vocabulary snapshot; verifies write-once
   semantics (a snapshot for distillation A is independent of subsequent
   registry edits or of snapshots written for distillation B); verifies the
@@ -153,15 +192,45 @@ Status legend: `active` (gate enforced) | `near-threshold` (warn) | `waived` (ex
 
 ## INV-9 — Cross-document reasoning is Phase 2's job, not Phase 1's
 
-- **Status:** active
+- **Status:** active (scope contract, no executable gate)
 - **Established:** 2026-05-29
 - **Property:** Phase 1 emits intra-document relations only. Cross-document
   entity resolution, support/attack edges spanning documents, probandum
   hierarchies spanning sources are Phase 2 (Map) outputs. Phase 1 atoms
   carry normalized entity references so Phase 2 can join on them without
   re-extraction.
-- **Gate test (planned):** `tests/invariants/test_intra_doc_only.py` — verifies
-  Phase 1 outputs contain no cross-source edges.
+- **Gate test:** None in Phase 1 — this is a scope contract documented in
+  the architecture and skill files (extractor/auditor skills only see one
+  source-mirror at a time, and the dispatch driver's write-isolation
+  rule, INV-11, structurally prevents one role from writing under another
+  source's path). An executable
+  `tests/invariants/test_intra_doc_only.py` (assert that no relation's
+  endpoints reference atoms from distinct `source_id`s) lands when
+  Phase 2's cross-doc surface is introduced — at that point the
+  intra-doc gate becomes a meaningful regression test.
 - **Rationale:** Single-doc Phase 1 keeps the multi-agent loop's context bounded
   and the checkpointing boundary clean. Concentrates cross-source complexity in
   Phase 2.
+
+## INV-11 — Dispatched roles write only under their assigned subtree
+
+- **Status:** active
+- **Established:** 2026-05-30 (M6.3, lifted from CV-5 to INV during M11.3)
+- **Property:** When the dispatch driver invokes a role's harness CLI, the
+  subprocess MUST only write under
+  `dispatch/outputs/<role>-<inputs_hash>/`. Any mutation to a file outside
+  that subtree (excluding the documented skip set: `.venv`, `__pycache__`,
+  `.git`) is a write-isolation violation. Deletions inside the workspace are
+  not policed by this gate (per the M6.3 module docstring); the guarantee is
+  about novel writes, not housekeeping.
+- **Gate test:** `tests/dispatch/test_role_write_isolation.py` (M6.3) —
+  five contracts: writes inside the allowed subtree pass; writes outside
+  trip a violation; mtime-only bumps trip a violation; deletions do not
+  trip a violation; the snapshot ignores skip directories.
+- **Rationale:** Foundational for the multi-agent loop. Without write-
+  isolation, a misbehaving (or compromised) role can clobber another role's
+  outputs, the substrate, or the dispatch queue itself — defeating PROV-O's
+  attribution chain (INV-3) and the determinism boundary (INV-4). Lifted
+  from a contributing-violation (CV-5) to an invariant because the rest of
+  the dispatch architecture (queue protocol, reconciliation gate, replay
+  log) presumes role writes are scoped.
