@@ -31,25 +31,29 @@ Prior plan: `~/Documents/Projects/.plans/amanuensis/phase1-distill-foundation-20
 
 ## Upcoming phases
 
-- [in progress] **Phase 2a (Resolve) — M1+M2+M3+M4+M5+M6 SHIPPED 2026-05-31;
-  M7 wave 1+2 (T7.1–T7.6) shipped 2026-05-31; M7 wave 3+ remain.**
-  M1 (12 tasks, schema foundation) +
-  M2 (5 tasks, entity-kind vocabulary) + M3 (11 tasks, substrate
-  API extensions) + M4 (3 tasks, INV-9+INV-2 executable gates) +
-  M5 (5 tasks, map_resolve/map_audit skills) + M6 (8 tasks,
-  dispatch+reconcile extension for map roles) + M7 T7.1–T7.6 (map
-  CLI: sub-app skeleton, orchestrator, preflight, status, entity
-  list/show/merge) = 50 of 82 tasks done. Defects caught: T1.8
-  hash-corrupting v1 `kind` injection in `_serialize.py`; T1.10
-  frontmatter `find("---")` mid-content bug; M3 implementer's `from
-  conftest import`; M6 nested-lock deadlock in `ReplayLog.append`;
-  M6 over-strict `_MAP_ROLE_RE` regex; M6 missing `_non_empty_kind`
-  validator on Entity; M6 `role_attribution.at` timestamp drift
-  breaking idempotency (fixed via deterministic
-  `_stable_role_attribution_at` derived from `inputs_hash`).
-  86 fast tests + 3 integration tests pass; pyright strict + ruff
-  clean. Next action: M7 wave 3 (T7.7–T7.10: resolution show/
-  supersede, vocabulary show/snapshot).
+- [in progress] **Phase 2a (Resolve) — M1+M2+M3+M4+M5+M6+M7 SHIPPED
+  2026-05-31; M8–M11 remain (25 tasks).** 57 of 82 tasks done. M7
+  added the full `amanuensis map` CLI sub-app (9 verbs across 4
+  mutating + 5 read-only; dry-run + flock + replay-log discipline
+  per the verb summary table in plan §6). Defects caught across
+  M1-M7 (full list): T1.8 hash-corrupting v1 `kind` injection in
+  `_serialize.py`; T1.10 frontmatter `find("---")` mid-content
+  bug; M3 implementer's `from conftest import`; M6 nested-lock
+  deadlock in `ReplayLog.append`; M6 over-strict `_MAP_ROLE_RE`
+  regex; M6 missing `_non_empty_kind` validator on Entity; M6
+  `role_attribution.at` timestamp drift breaking idempotency
+  (fixed via deterministic `_stable_role_attribution_at` derived
+  from `inputs_hash`); M5 unconditional `pytest.skip()` guards
+  and wrong command paths in skill frontmatter (caught by M7
+  implementer); M7 supersede ordering bug (ResolutionSupersede
+  must precede new Resolution write to satisfy INV-14 triple-
+  guard). Orchestration lesson: explicit "RUN PYRIGHT + RUFF
+  before commit" needed in implementer prompts after one Sonnet
+  agent shipped lint-dirty code. 177 cli+skill+invariants tests
+  pass; pyright strict + ruff clean. Next action: M8 (web app
+  additions: 8 tasks — /entities + /resolutions routes +
+  templates, /clarifications extension, atom-entity index,
+  Cytoscape hover binding, supersede-chain-walked tests).
 - [pending] Phase 2b (Connect) — cross-doc support/attack edges built
   on Phase 2a's resolved entities. Full brainstorm cycle required;
   blocked on 2a implementation.

@@ -1397,6 +1397,43 @@ Format: dated entries, newest first. Bug entries cite the area touched:
 
 ## 2026-05-31
 
+- **Phase 2a (Resolve) M7 — CLI map family SHIPPED.** All 13 M7 tasks
+  (T7.1-T7.13) shipped in 12 commits (T7.7+T7.8 bundled because they
+  share the supersede-ordering insight). The `amanuensis map` Typer
+  sub-app exposes nine verbs (four mutating + five read-only):
+  orchestrator (T7.2) with skill preflight (T7.3) and vocabulary
+  auto-pin; read-only `status` (T7.4), `entity list/show` (T7.5),
+  `resolution show` (T7.7), `vocabulary show` (T7.9); mutating
+  `entity merge` (T7.6), `resolution supersede` (T7.8),
+  `vocabulary snapshot` (T7.10) — all with `--dry-run` (CV-3) where
+  applicable, all under workspace flock with `_lock_held=True` replay-
+  log writes. T7.11 parametric flock-contention test restricted to
+  verbs whose flock-acquisition is the first mutating step (merge /
+  supersede validate args first, so their flock behavior is exercised
+  implicitly by happy-path tests). T7.12 extended marker-required
+  parametric (now 23 verbs gated by INV-1); T7.13 extended INV-4
+  read-only determinism to `map status` / `map status --json` /
+  `map entity list` (with-snapshot variants gated by happy-path
+  tests). One real ordering bug discovered: `add_resolution`'s INV-14
+  duplicate-triple guard rejects the new resolution unless the
+  `ResolutionSupersede` record is written FIRST so
+  `latest_resolution_for` walks the chain. The skeleton-wave
+  implementer also caught M5 latent bugs: unconditional
+  `pytest.skip()` guards in the skill tests and wrong command paths
+  (`entity list` → `map entity list`) in the skill frontmatter; both
+  fixed. Orchestrator step-in once: a Sonnet implementer (T7.7+T7.8)
+  shipped code that passed targeted tests but left 8 ruff errors + 4
+  pyright errors uncommitted — orchestrator cleaned and committed.
+  Lesson encoded in future implementer prompts: explicit "RUN PYRIGHT
+  + RUFF before commit" with the exact one-liners. 99 cli tests + 17
+  invariants tests + 23 marker-required tests + skill tests pass;
+  pyright strict + ruff clean. | files: src/amanuensis/cli/map.py
+  (new, 1500+ lines), src/amanuensis/cli/__init__.py,
+  src/amanuensis/skills/{map_resolve,map_audit}.md,
+  tests/cli/{test_map_commands,test_marker_required}.py,
+  tests/invariants/test_determinism_boundary.py,
+  tests/skills/{test_map_resolve_skill,test_map_audit_skill}.py
+
 - **Phase 2a (Resolve) M6 — Dispatch + reconcile extension for map roles
   SHIPPED.** All 8 M6 tasks (T6.1-T6.8) shipped in one combined commit
   (the bug fixes cross-cut the per-task boundaries; per-task split would
