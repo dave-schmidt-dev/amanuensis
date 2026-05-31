@@ -31,23 +31,24 @@ Prior plan: `~/Documents/Projects/.plans/amanuensis/phase1-distill-foundation-20
 
 ## Upcoming phases
 
-- [in progress] **Phase 2a (Resolve) — M1+M2+M3 SHIPPED 2026-05-31;
-  M4–M11 remain (54 tasks).** M1 (12 tasks, schema foundation) +
+- [in progress] **Phase 2a (Resolve) — M1+M2+M3+M4+M5+M6 SHIPPED 2026-05-31;
+  M7–M11 remain (38 tasks).** M1 (12 tasks, schema foundation) +
   M2 (5 tasks, entity-kind vocabulary) + M3 (11 tasks, substrate
-  API extensions) = 28 of 82 tasks done in 11 commits + 3 docs.
+  API extensions) + M4 (3 tasks, INV-9+INV-2 executable gates) +
+  M5 (5 tasks, map_resolve/map_audit skills) + M6 (8 tasks,
+  dispatch+reconcile extension for map roles) = 44 of 82 tasks done.
   Heavy parallelism via subagent waves; combined spec+code-quality
   reviewer per task. Real defects caught in review and fixed
-  inline: T1.8 hash-corrupting v1 `kind` injection in
-  `_serialize.py`; T1.10 frontmatter `find("---")` mid-content
-  bug; M3 implementer's `from conftest import` (conftest is
-  auto-loaded, not directly importable) — fixed to
-  `from tests.fs.conftest import`. M3 also surfaced an
-  orchestration lesson: dispatching source-modifying subagents in
-  parallel with a `git push` (whose pre-push hook runs the full
-  ~7min suite) trips the "files-modified-during-hook" check.
-  Pushed M1; M2+M3 unpushed (8 commits) pending next push window.
-  Next action: continue with M4 (Phase-1-promised invariant gates,
-  3 tasks) in fresh session per `handoff.md`.
+  inline across milestones: T1.8 hash-corrupting v1 `kind` injection
+  in `_serialize.py`; T1.10 frontmatter `find("---")` mid-content
+  bug; M3 implementer's `from conftest import`; M6 nested-lock
+  deadlock in `ReplayLog.append`; M6 over-strict `_MAP_ROLE_RE`
+  regex; M6 missing `_non_empty_kind` validator on Entity; M6
+  `role_attribution.at` timestamp drift breaking idempotency
+  (fixed via deterministic `_stable_role_attribution_at` derived
+  from `inputs_hash`). 633 fast tests + 3 integration tests pass;
+  pyright strict + ruff clean. Next action: continue with M7 (CLI
+  map family — `amanuensis map ...` Typer sub-app, 13 tasks).
 - [pending] Phase 2b (Connect) — cross-doc support/attack edges built
   on Phase 2a's resolved entities. Full brainstorm cycle required;
   blocked on 2a implementation.

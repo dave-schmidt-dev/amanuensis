@@ -1397,6 +1397,65 @@ Format: dated entries, newest first. Bug entries cite the area touched:
 
 ## 2026-05-31
 
+- **Phase 2a (Resolve) M6 — Dispatch + reconcile extension for map roles
+  SHIPPED.** All 8 M6 tasks (T6.1-T6.8) shipped in one combined commit
+  (the bug fixes cross-cut the per-task boundaries; per-task split would
+  have separated atomically-related changes). `_parse_output_dir_name`
+  rewritten with `_MAP_ROLE_RE` to handle the hyphen in `map-resolve` /
+  `map-audit` role names; `_DEFAULT_ROLE_TO_HARNESS` routes both new
+  roles to the claude harness; `_process_map_resolve_output` builds and
+  commits Entity + Resolution per resolver proposal;
+  `_process_map_audit_output` cross-checks accepted ids and writes
+  clarifications; both append a single mappings-scope replay-log entry
+  (including SC-7 / R14 no-op trace for empty payloads); INV-11
+  write-isolation parametric extension covers map roles. T6.8 end-to-end
+  test drives the full enqueue → simulated driver output → reconcile
+  pair flow with mocked payloads. Four bugs found and fixed inline:
+  (a) `ReplayLog.append` deadlocked when called from inside
+  `reconcile_outputs` (re-acquired the flock); added `_lock_held: bool`
+  kwarg with `nullcontext()` fallback. (b) `_MAP_ROLE_RE` was too strict
+  (`[a-f0-9]+`); synthetic test hashes (`"g"*64`, `"A"*64`) fell to the
+  partition fallback and were parsed as `role="map"`, hitting the no-op
+  unknown-role branch. Loosened to `\w+`. (c) `Entity.kind` had no
+  non-empty validator (canonical_name did); added `_non_empty_kind` to
+  match. (d) `_build_entity` / `_build_resolution` used
+  `datetime.now(UTC)` in `role_attribution.at`, which entered the
+  content-addressable hash — two runs of the same resolver output
+  produced different resolution ids and tripped INV-14's duplicate-triple
+  guard. Introduced `_stable_role_attribution_at` deriving `at` from
+  `inputs_hash` so re-runs are idempotent; PROV records still use real
+  wall-clock `now`. Phase 1's `_build_atom_draft` /
+  `_build_relation_draft` have the same latent issue but rely on
+  `_consumed/` move for idempotency so they never trip it (out of scope).
+  633 fast tests + 3 integration tests pass; pyright strict + ruff
+  clean. | files: src/amanuensis/dispatch/reconcile.py,
+  src/amanuensis/cli/dispatch.py, src/amanuensis/fs/replay_log.py,
+  src/amanuensis/schemas/entity.py,
+  tests/dispatch/{test_role_write_isolation,test_reconcile_role_parsing,
+  test_reconcile_map_resolve,test_reconcile_map_audit,
+  test_reconcile_map_no_op,test_driver_replay_log_routing,
+  test_map_role_pair}.py, tests/cli/test_dispatch_routing.py
+
+- **Phase 2a (Resolve) M5 — map_resolve / map_audit skills SHIPPED.**
+  All 5 M5 tasks (T5.1-T5.5) shipped in 5 atomic commits.
+  `src/amanuensis/skills/map_resolve.md` (101 lines) and
+  `src/amanuensis/skills/map_audit.md` (102 lines) author the closed-loop
+  resolver + auditor procedures aligned with PM-11 (skill preflight)
+  and CR-7 (frontmatter `role` field discipline). `install_skills`
+  CLI propagates both new skills under the harness directory without
+  code changes (the loop is already dynamic over `*.md` in
+  `src/amanuensis/skills/`). T5.3 added VALID_ROLES closed-set
+  validation for skill frontmatter (CR-7+CV-2); T5.4 added lint tests.
+
+- **Phase 2a (Resolve) M4 — INV-9 + INV-2 executable gates SHIPPED.**
+  All 3 M4 tasks (T4.1-T4.3) shipped in one combined commit. The two
+  Phase-1-promised invariants moved from "active (unenforced)" to
+  "active (gated)" with executable pytest gate tests covering the
+  positive case (clean workspace passes) and negative cases (forbidden
+  files / cross-source operand-refs fail). `INVARIANTS.md` status
+  fields flipped accordingly. | files: INVARIANTS.md,
+  tests/invariants/{test_intra_doc_only,test_no_harness_files}.py
+
 - **Phase 2a (Resolve) M3 — Substrate API extensions SHIPPED.** All 11
   M3 tasks (T3.1-T3.11) shipped in 3 commits (T3.1 typed exceptions;
   T3.2-T3.8 substrate extensions batched; T3.9-T3.11 ReplayLog dual-path
