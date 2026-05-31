@@ -13,6 +13,7 @@ serializing under the workspace flock from M1.8. These tests exercise:
    ``SubstrateNotFound``.
 8. Concurrent writers: 10 spawn-context processes append simultaneously;
    final seq set is {0..9}, no duplicates, no gaps, counter advances to 10.
+   Parametrized over distillation scope and mapping scope.
 9. Crash-discipline (orphan-overwrite): pre-seeding an orphan entry at
    the unclaimed seq, then appending — the orphan is overwritten with
    the new entry's content; counter advances by 1; no gap, no duplicate.
@@ -78,12 +79,20 @@ def _append_one(
     )
 
 
+def _make_log(tmp_workspace: Path, scope: str, source_id: str | None) -> ReplayLog:
+    """Factory for a ReplayLog instance based on scope discriminator."""
+    if scope == "mapping":
+        return ReplayLog.for_mappings(tmp_workspace)
+    return ReplayLog.for_source(tmp_workspace, source_id or SOURCE_ID)
+
+
 # --- Child entry points (module-level for spawn pickling) ------------
 
 
 def _race_child(
     workspace_str: str,
-    source_id: str,
+    source_id: str | None,
+    scope: str,
     ready_path_str: str,
     go_path_str: str,
     child_index: int,
@@ -98,7 +107,11 @@ def _race_child(
     ready_path = Path(ready_path_str)
     go_path = Path(go_path_str)
 
-    log = ReplayLog(Path(workspace_str), source_id)
+    ws = Path(workspace_str)
+    if scope == "mapping":
+        log = ReplayLog.for_mappings(ws)
+    else:
+        log = ReplayLog.for_source(ws, source_id or SOURCE_ID)
 
     # Mark this child as ready (its own ready file).
     ready_path.write_text("ready", encoding="utf-8")
@@ -130,13 +143,13 @@ def _race_child(
 def test_init_rejects_missing_marker(tmp_path: Path) -> None:
     """Constructing on a non-workspace directory fails fast (INV-1 defense)."""
     with pytest.raises(SubstrateMarkerMissing):
-        ReplayLog(tmp_path, SOURCE_ID)
+        ReplayLog.for_source(tmp_path, SOURCE_ID)
 
 
 def test_init_rejects_nonexistent_directory(tmp_path: Path) -> None:
     missing = tmp_path / "does-not-exist"
     with pytest.raises(SubstrateMarkerMissing):
-        ReplayLog(missing, SOURCE_ID)
+        ReplayLog.for_source(missing, SOURCE_ID)
 
 
 def test_init_rejects_invalid_source_id(tmp_workspace: Path) -> None:
@@ -144,7 +157,7 @@ def test_init_rejects_invalid_source_id(tmp_workspace: Path) -> None:
     from amanuensis.fs import SubstrateInvalidId
 
     with pytest.raises(SubstrateInvalidId):
-        ReplayLog(tmp_workspace, "../escape")
+        ReplayLog.for_source(tmp_workspace, "../escape")
 
 
 # --- Lock-free read tests --------------------------------------------
@@ -152,23 +165,23 @@ def test_init_rejects_invalid_source_id(tmp_workspace: Path) -> None:
 
 def test_read_seq_fresh_workspace_returns_zero(tmp_workspace: Path) -> None:
     """No counter file yet ⇒ next-to-assign value is 0."""
-    log = ReplayLog(tmp_workspace, SOURCE_ID)
+    log = ReplayLog.for_source(tmp_workspace, SOURCE_ID)
     assert log.read_seq() == 0
 
 
 def test_list_entries_fresh_workspace_is_empty(tmp_workspace: Path) -> None:
-    log = ReplayLog(tmp_workspace, SOURCE_ID)
+    log = ReplayLog.for_source(tmp_workspace, SOURCE_ID)
     assert list(log.list_entries()) == []
 
 
 def test_get_entry_missing_seq_raises(tmp_workspace: Path) -> None:
-    log = ReplayLog(tmp_workspace, SOURCE_ID)
+    log = ReplayLog.for_source(tmp_workspace, SOURCE_ID)
     with pytest.raises(SubstrateNotFound):
         log.get_entry(seq=0)
 
 
 def test_get_entry_missing_seq_raises_after_some_appends(tmp_workspace: Path) -> None:
-    log = ReplayLog(tmp_workspace, SOURCE_ID)
+    log = ReplayLog.for_source(tmp_workspace, SOURCE_ID)
     _append_one(log)
     _append_one(log)
     with pytest.raises(SubstrateNotFound):
@@ -179,7 +192,7 @@ def test_get_entry_missing_seq_raises_after_some_appends(tmp_workspace: Path) ->
 
 
 def test_append_populates_seq_and_timestamp(tmp_workspace: Path) -> None:
-    log = ReplayLog(tmp_workspace, SOURCE_ID)
+    log = ReplayLog.for_source(tmp_workspace, SOURCE_ID)
     before = datetime.now(UTC) - timedelta(seconds=1)
     entry = _append_one(log)
     after = datetime.now(UTC) + timedelta(seconds=1)
@@ -192,14 +205,14 @@ def test_append_populates_seq_and_timestamp(tmp_workspace: Path) -> None:
 
 
 def test_append_honors_caller_timestamp(tmp_workspace: Path) -> None:
-    log = ReplayLog(tmp_workspace, SOURCE_ID)
+    log = ReplayLog.for_source(tmp_workspace, SOURCE_ID)
     custom = datetime(2025, 6, 15, 8, 30, 0, tzinfo=UTC)
     entry = _append_one(log, timestamp=custom)
     assert entry.timestamp == custom
 
 
 def test_append_bumps_counter(tmp_workspace: Path) -> None:
-    log = ReplayLog(tmp_workspace, SOURCE_ID)
+    log = ReplayLog.for_source(tmp_workspace, SOURCE_ID)
     assert log.read_seq() == 0
     _append_one(log)
     assert log.read_seq() == 1
@@ -209,7 +222,7 @@ def test_append_bumps_counter(tmp_workspace: Path) -> None:
 
 def test_append_entry_path_layout(tmp_workspace: Path) -> None:
     """Entry lands at ``distillations/<src>/replay-log/<yyyy-mm-dd>/<seq:012>.yaml``."""
-    log = ReplayLog(tmp_workspace, SOURCE_ID)
+    log = ReplayLog.for_source(tmp_workspace, SOURCE_ID)
     ts = datetime(2026, 5, 29, 14, 30, 0, tzinfo=UTC)
     _append_one(log, timestamp=ts)
     expected = (
@@ -227,7 +240,7 @@ def test_append_entry_path_layout(tmp_workspace: Path) -> None:
 
 def test_append_day_directory_uses_utc(tmp_workspace: Path) -> None:
     """A non-UTC tz-aware timestamp still groups by UTC date."""
-    log = ReplayLog(tmp_workspace, SOURCE_ID)
+    log = ReplayLog.for_source(tmp_workspace, SOURCE_ID)
     # 2026-05-29T01:00:00-05:00 == 2026-05-29T06:00:00Z → UTC day 2026-05-29.
     ts = datetime(2026, 5, 29, 1, 0, 0, tzinfo=timezone(timedelta(hours=-5)))
     _append_one(log, timestamp=ts)
@@ -236,7 +249,7 @@ def test_append_day_directory_uses_utc(tmp_workspace: Path) -> None:
 
 
 def test_get_entry_roundtrips(tmp_workspace: Path) -> None:
-    log = ReplayLog(tmp_workspace, SOURCE_ID)
+    log = ReplayLog.for_source(tmp_workspace, SOURCE_ID)
     e0 = _append_one(log, activity="a0")
     e1 = _append_one(log, activity="a1")
     assert log.get_entry(seq=0).activity == "a0"
@@ -247,7 +260,7 @@ def test_get_entry_roundtrips(tmp_workspace: Path) -> None:
 
 
 def test_list_entries_yields_seq_ascending(tmp_workspace: Path) -> None:
-    log = ReplayLog(tmp_workspace, SOURCE_ID)
+    log = ReplayLog.for_source(tmp_workspace, SOURCE_ID)
     # Append a few entries on the same UTC day.
     base = datetime(2026, 5, 29, 12, 0, 0, tzinfo=UTC)
     for i in range(5):
@@ -258,7 +271,7 @@ def test_list_entries_yields_seq_ascending(tmp_workspace: Path) -> None:
 
 def test_list_entries_orders_across_day_dirs(tmp_workspace: Path) -> None:
     """Lexicographic day-dir traversal yields chronological order."""
-    log = ReplayLog(tmp_workspace, SOURCE_ID)
+    log = ReplayLog.for_source(tmp_workspace, SOURCE_ID)
     _append_one(log, timestamp=datetime(2026, 5, 28, 12, 0, 0, tzinfo=UTC))
     _append_one(log, timestamp=datetime(2026, 5, 29, 12, 0, 0, tzinfo=UTC))
     _append_one(log, timestamp=datetime(2026, 5, 30, 12, 0, 0, tzinfo=UTC))
@@ -271,7 +284,7 @@ def test_list_entries_orders_across_day_dirs(tmp_workspace: Path) -> None:
 
 
 def test_counter_file_lives_at_expected_path(tmp_workspace: Path) -> None:
-    log = ReplayLog(tmp_workspace, SOURCE_ID)
+    log = ReplayLog.for_source(tmp_workspace, SOURCE_ID)
     _append_one(log)
     counter = tmp_workspace / "distillations" / SOURCE_ID / "replay-log" / _COUNTER_FILENAME
     assert counter.is_file()
@@ -281,15 +294,26 @@ def test_counter_file_lives_at_expected_path(tmp_workspace: Path) -> None:
 # --- Concurrent writer race -----------------------------------------
 
 
+@pytest.mark.parametrize(
+    "scope,source_id",
+    [
+        ("distillation", SOURCE_ID),
+        ("mapping", None),
+    ],
+    ids=["distillation", "mapping"],
+)
 @pytest.mark.parametrize("n_writers", [10])
-def test_concurrent_appends_no_gaps_no_duplicates(tmp_workspace: Path, n_writers: int) -> None:
+def test_concurrent_appends_no_gaps_no_duplicates(
+    tmp_workspace: Path, n_writers: int, scope: str, source_id: str | None
+) -> None:
     """Plan §5 invariant: N concurrent writers ⇒ exactly N entries, seqs {0..N-1}.
 
-    Uses spawn-context children (cross-platform reliability; M1.6 pattern)
-    and a parent-side barrier (per-child ready files + a single go file)
-    so all children contend for the workspace flock at roughly the same
-    instant. Without the barrier, slow process startup could quietly
-    serialize the appends and hide a real concurrency bug.
+    Parametrized over distillation and mapping scopes. Uses spawn-context
+    children (cross-platform reliability; M1.6 pattern) and a parent-side
+    barrier (per-child ready files + a single go file) so all children
+    contend for the workspace flock at roughly the same instant. Without
+    the barrier, slow process startup could quietly serialize the appends
+    and hide a real concurrency bug.
     """
     ctx = multiprocessing.get_context("spawn")
     go_path = tmp_workspace / ".go"
@@ -301,7 +325,8 @@ def test_concurrent_appends_no_gaps_no_duplicates(tmp_workspace: Path, n_writers
             target=_race_child,
             args=(
                 str(tmp_workspace),
-                SOURCE_ID,
+                source_id,
+                scope,
                 str(ready_paths[i]),
                 str(go_path),
                 i,
@@ -334,7 +359,7 @@ def test_concurrent_appends_no_gaps_no_duplicates(tmp_workspace: Path, n_writers
                 p.join(timeout=5)
 
     # --- Assertions -------------------------------------------------
-    log = ReplayLog(tmp_workspace, SOURCE_ID)
+    log = _make_log(tmp_workspace, scope, source_id)
     entries = list(log.list_entries())
 
     assert len(entries) == n_writers, (
@@ -368,7 +393,7 @@ def test_orphan_entry_is_overwritten_by_next_writer(tmp_workspace: Path) -> None
     and bumps the counter to N+1. Net: no gap, no duplicate, and the
     orphan's content is gone.
     """
-    log = ReplayLog(tmp_workspace, SOURCE_ID)
+    log = ReplayLog.for_source(tmp_workspace, SOURCE_ID)
 
     # Seed: append 5 real entries so the counter reaches 5. Pin the
     # timestamp to the same UTC day the orphan + recovery use below,
@@ -458,7 +483,7 @@ def test_orphan_in_different_day_directory_is_removed_by_recovery(
     files matching the claimed seq and unlink any whose path differs
     from the canonical write target.
     """
-    log = ReplayLog(tmp_workspace, SOURCE_ID)
+    log = ReplayLog.for_source(tmp_workspace, SOURCE_ID)
 
     # Seed: append 5 real entries on day D (2026-05-29). Counter ⇒ 5.
     day_d = datetime(2026, 5, 29, 12, 0, 0, tzinfo=UTC)

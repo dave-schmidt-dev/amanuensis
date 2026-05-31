@@ -412,7 +412,7 @@ def test_inv4_llm_call_boundary_writes_all_three_artefacts(
     assert replay_path.is_file()
 
     # The replay-log entry holds the cross-reference fields INV-4 wants.
-    log = ReplayLog(cli_workspace, _M53_SOURCE_ID)
+    log = ReplayLog.for_source(cli_workspace, _M53_SOURCE_ID)
     persisted = log.get_entry(seq=0)
     assert persisted.inputs_hash == hit.inputs_hash
     assert persisted.actor.kind == "llm"

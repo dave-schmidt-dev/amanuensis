@@ -1,26 +1,34 @@
-"""Per-distillation append-only replay log with monotonic seq counter.
+"""Append-only replay log with monotonic seq counter (distillation or mapping scope).
 
-The replay log is the canonical activity stream for a distillation:
-every role invocation, every cache hit, every substrate mutation lands
-as one ``ReplayLogEntry`` YAML file. Entries are ordered by a
-workspace-wide-serialized integer ``seq`` and grouped into day
-subdirectories for human navigation.
+The replay log is the canonical activity stream for a distillation or the
+mappings layer: every role invocation, every cache hit, every substrate
+mutation lands as one ``ReplayLogEntry`` YAML file. Entries are ordered by a
+workspace-wide-serialized integer ``seq`` and grouped into day subdirectories
+for human navigation.
 
 Layout (plan §5; see also M1.6 substrate layout)::
 
     <workspace>/
-      amanuensis.yaml                            (INV-1 marker)
+      amanuensis.yaml                                    (INV-1 marker)
+
+      # Distillation scope (Phase 1 roles):
       distillations/<source-id>/
         replay-log/
           .next-seq                              (one decimal integer; default 0)
           <yyyy-mm-dd>/<padded-seq-12>.yaml      (one ReplayLogEntry per file)
 
-The ``.next-seq`` counter is per-distillation (each ``distillations/<source-id>``
-gets its own), but the workspace-level ``flock`` from
+      # Mapping scope (Phase 2a roles):
+      mappings/
+        replay-log/
+          .next-seq
+          <yyyy-mm-dd>/<padded-seq-12>.yaml
+
+The ``.next-seq`` counter is per-scope (each distillation or the mappings
+layer gets its own), but the workspace-level ``flock`` from
 ``amanuensis.fs.lock.acquire_workspace_lock`` serializes ALL writers
-across the workspace — so two writers targeting different distillations
-still take the same lock. Cheap, correct, and matches the plan §5
-concurrency model ("workspace flock").
+across the workspace — so two writers targeting different scopes still take
+the same lock. Cheap, correct, and matches the plan §5 concurrency model
+("workspace flock").
 
 Crash discipline (plan §5):
 
@@ -52,7 +60,8 @@ acquire the workspace lock — plan §5 reserves the lock for mutating
 operations. ``os.replace`` (M1.6) gives readers consistent snapshots.
 
 API:
-    ``ReplayLog(workspace_root, source_id)`` — bind to a distillation.
+    ``ReplayLog.for_source(workspace_root, source_id)`` — bind to a distillation.
+    ``ReplayLog.for_mappings(workspace_root)`` — bind to the mappings scope.
     ``append(...)`` — assign seq + write the entry (mutating).
     ``read_seq()`` — current counter value (lock-free).
     ``list_entries()`` — iterate entries in seq order (lock-free).
@@ -64,6 +73,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Literal
 
 from amanuensis.schemas import AgentAttribution, ReplayLogEntry
 
@@ -82,13 +92,60 @@ _MARKER_FILENAME: str = "amanuensis.yaml"  # mirrors Substrate.MARKER_FILENAME
 _COUNTER_FILENAME: str = ".next-seq"
 _SEQ_WIDTH: int = 12  # zero-padded width-12 per plan §5 (e.g. 000000000042.yaml)
 
+# Roles that route to <workspace>/mappings/replay-log/.
+_MAP_ROLES: frozenset[str] = frozenset({"map-resolve", "map-audit"})
+
+# Roles that route to <workspace>/distillations/<source-id>/replay-log/.
+_DISTILLATION_ROLES: frozenset[str] = frozenset(
+    {"extractor", "auditor", "contrarian", "constructive", "premortem", "human_supervisor"}
+)
+
+
+def _resolve_replay_log_root(  # pyright: ignore[reportUnusedFunction] — package-internal helper used by tests and future dispatch wiring
+    workspace_root: Path, role: str, source_id: str | None
+) -> Path:
+    """Compute the replay-log directory for a given role + optional source.
+
+    Map roles (map-resolve, map-audit) ignore source_id and route to
+    ``<workspace>/mappings/replay-log/``. Distillation roles (extractor,
+    auditor, contrarian, constructive, premortem, human_supervisor)
+    require source_id and route to
+    ``<workspace>/distillations/<source>/replay-log/``.
+
+    Args:
+        workspace_root: Resolved workspace root Path (must be a directory
+            containing the INV-1 marker; validated by the caller).
+        role: Role name string. Determines routing branch.
+        source_id: Per-distillation scope key. Required for distillation
+            roles; ignored (may be None) for map roles.
+
+    Returns:
+        The absolute Path to the replay-log directory for this scope.
+
+    Raises:
+        ValueError: if a distillation role is given without source_id.
+    """
+    if role in _MAP_ROLES:
+        return workspace_root / "mappings" / "replay-log"
+    # All other roles (including distillation roles and any unknown
+    # future role) route through the per-distillation path. This keeps
+    # the helper forward-compatible without requiring exhaustive
+    # enumeration of every possible role name.
+    if source_id is None:
+        raise ValueError(f"role {role!r} requires source_id but source_id is None")
+    return workspace_root / "distillations" / source_id / "replay-log"
+
 
 class ReplayLog:
-    """Per-distillation append-only replay log.
+    """Append-only replay log bound to a workspace scope (distillation or mappings).
 
-    Construction validates the workspace marker (INV-1) and the
-    ``source_id`` path component. The replay log directory is created
-    lazily on first append.
+    Construction validates the workspace marker (INV-1). For distillation
+    scope, the ``source_id`` path component is also validated. The replay
+    log directory is created lazily on first append.
+
+    Prefer the factory classmethods over direct construction:
+    - ``ReplayLog.for_source(workspace_root, source_id)`` — Phase 1 distillation scope.
+    - ``ReplayLog.for_mappings(workspace_root)`` — Phase 2a mappings scope.
 
     Concurrency: ``append`` holds the workspace flock for the entire
     read-counter / write-entry / bump-counter cycle. Read methods are
@@ -100,7 +157,27 @@ class ReplayLog:
     gap-free sequence on retry.
     """
 
-    def __init__(self, workspace_root: Path | str, source_id: str) -> None:
+    def __init__(
+        self,
+        workspace_root: Path | str,
+        source_id: str,
+        *,
+        _kind: Literal["distillation", "mapping"] = "distillation",
+    ) -> None:
+        """Bind to a workspace scope.
+
+        Direct construction with positional args is the backward-compat
+        path for distillation scope (matches the old ``ReplayLog(root, src)``
+        signature). Prefer the factory classmethods for new call sites.
+
+        Args:
+            workspace_root: Workspace root directory containing amanuensis.yaml.
+            source_id: Per-distillation scope key (validated for distillation
+                kind; ignored for mapping kind — pass any string placeholder).
+            _kind: Internal discriminator. ``"distillation"`` routes to
+                ``distillations/<source_id>/replay-log/``;
+                ``"mapping"`` routes to ``mappings/replay-log/``.
+        """
         root = Path(workspace_root).resolve()
         if not root.is_dir():
             raise SubstrateMarkerMissing(f"workspace_root {root} is not an existing directory.")
@@ -110,14 +187,50 @@ class ReplayLog:
                 f"amanuensis.yaml marker missing at {root}; "
                 "refusing to open a replay log on a non-workspace directory."
             )
-        _validate_id_component(source_id, label="source_id")
+        if _kind == "distillation":
+            _validate_id_component(source_id, label="source_id")
         self.workspace_root: Path = root
         self.source_id: str = source_id
+        self._kind: Literal["distillation", "mapping"] = _kind
+
+    # --- Factory classmethods ------------------------------------------
+
+    @classmethod
+    def for_source(cls, workspace_root: Path | str, source_id: str) -> ReplayLog:
+        """Bind to a per-distillation replay log (Phase 1 backward-compat factory).
+
+        Args:
+            workspace_root: Workspace root directory containing amanuensis.yaml.
+            source_id: Distillation scope key. Validated as a safe path component.
+
+        Returns:
+            A ``ReplayLog`` scoped to
+            ``<workspace>/distillations/<source_id>/replay-log/``.
+        """
+        return cls(workspace_root, source_id, _kind="distillation")
+
+    @classmethod
+    def for_mappings(cls, workspace_root: Path | str) -> ReplayLog:
+        """Bind to the workspace-level mappings replay log (Phase 2a factory).
+
+        The mappings scope is workspace-global — there is no per-source
+        partition. The ``source_id`` stored internally is the empty string
+        (not used for path construction in mapping kind).
+
+        Args:
+            workspace_root: Workspace root directory containing amanuensis.yaml.
+
+        Returns:
+            A ``ReplayLog`` scoped to ``<workspace>/mappings/replay-log/``.
+        """
+        return cls(workspace_root, "", _kind="mapping")
 
     # --- Path resolvers (pure path computation; no FS access) ---------
 
     @property
     def _replay_log_dir(self) -> Path:
+        if self._kind == "mapping":
+            return self.workspace_root / "mappings" / "replay-log"
         return self.workspace_root / "distillations" / self.source_id / "replay-log"
 
     @property
@@ -214,9 +327,8 @@ class ReplayLog:
     ) -> ReplayLogEntry:
         """Append one entry to the replay log.
 
-        Assigns ``seq`` from the per-distillation counter under the
-        workspace flock. Returns the finalized ``ReplayLogEntry`` with
-        ``seq`` populated.
+        Assigns ``seq`` from the per-scope counter under the workspace flock.
+        Returns the finalized ``ReplayLogEntry`` with ``seq`` populated.
 
         The ``timestamp`` parameter defaults to the current UTC time
         (tz-aware). A caller supplying a custom timestamp owns its

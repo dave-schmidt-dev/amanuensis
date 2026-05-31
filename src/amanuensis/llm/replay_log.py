@@ -73,7 +73,7 @@ def append_replay_entry(
         amanuensis.fs.SubstrateMarkerMissing: if ``workspace_root`` has
             no marker file (defended by :class:`ReplayLog`'s constructor).
     """
-    log = ReplayLog(workspace_root, source_id)
+    log = ReplayLog.for_source(workspace_root, source_id)
     written = log.append(
         actor=entry.actor,
         activity=entry.activity,

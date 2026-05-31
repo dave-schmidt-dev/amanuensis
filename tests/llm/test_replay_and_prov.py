@@ -133,7 +133,7 @@ def test_replay_log_appender_acquires_flock(llm_workspace: Path) -> None:
     # The child's entry should be on disk.
     from amanuensis.fs import ReplayLog
 
-    log = ReplayLog(llm_workspace, SOURCE_ID)
+    log = ReplayLog.for_source(llm_workspace, SOURCE_ID)
     entries = list(log.list_entries())
     assert len(entries) == 1
     assert entries[0].activity == "child-append"
