@@ -148,3 +148,38 @@ def test_map_second_run_does_not_repin_snapshot(
     assert res2.exit_code == 0
     bytes2 = snapshot.read_bytes()
     assert bytes1 == bytes2
+
+
+# ---------------------------------------------------------------------------
+# T7.3: skill preflight tests (PM-11)
+# ---------------------------------------------------------------------------
+
+
+def test_map_missing_skills_exits_2(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    workspace = _make_workspace(tmp_path)
+    # Plant a distillation so we get past the empty-workspace branch.
+    (workspace / "distillations" / "src1" / "atoms").mkdir(parents=True)
+    # Point harness home at an empty tmp dir — no skills installed.
+    fake_home = tmp_path / "fake_home"
+    fake_home.mkdir()
+    monkeypatch.setenv("AMANUENSIS_HARNESS_HOME", str(fake_home))
+    res = runner.invoke(app, ["map", "--workspace", str(workspace), "--non-interactive"])
+    assert res.exit_code == 2
+    assert "map-resolve/map-audit skills not installed" in (res.stdout + res.stderr).lower() or (
+        "map-resolve" in (res.stdout + res.stderr).lower()
+    )
+
+
+def test_map_present_skills_proceed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    workspace = _make_workspace(tmp_path)
+    (workspace / "distillations" / "src1" / "atoms").mkdir(parents=True)
+    (workspace / "distillations" / "src1" / "relations").mkdir(parents=True)
+    # Install skills into the fake harness home.
+    fake_home = tmp_path / "fake_home"
+    skills_dir = fake_home / ".claude" / "skills" / "amanuensis"
+    skills_dir.mkdir(parents=True)
+    (skills_dir / "map_resolve.md").write_text("---\nrole: map-resolve\n---\nbody")
+    (skills_dir / "map_audit.md").write_text("---\nrole: map-audit\n---\nbody")
+    monkeypatch.setenv("AMANUENSIS_HARNESS_HOME", str(fake_home))
+    res = runner.invoke(app, ["map", "--workspace", str(workspace), "--non-interactive"])
+    assert res.exit_code == 0, f"stdout={res.stdout!r} stderr={res.stderr!r}"
