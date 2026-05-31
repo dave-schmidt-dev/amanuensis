@@ -55,6 +55,10 @@ class ProvenanceRecord(BaseModel):
         "source-mirror-document",
         "source-mirror-section",
         "source-mirror-paragraph",
+        "entity",
+        "resolution",
+        "resolution-supersede",
+        "entity-supersede",
     ]
     entity_id: str
 
