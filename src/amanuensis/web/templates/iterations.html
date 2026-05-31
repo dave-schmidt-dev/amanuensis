@@ -1,0 +1,119 @@
+{% extends "base.html" %}
+{% block title %}iterations &middot; amanuensis{% endblock %}
+{% block nav %}
+<a href="/" class="text-neutral-300 hover:text-neutral-50">&larr; dashboard</a>
+<a href="/clarifications" class="text-neutral-300 hover:text-neutral-50">clarifications</a>
+{% endblock %}
+{% block content %}
+<section class="space-y-6">
+  <header class="space-y-1">
+    <p class="text-xs uppercase tracking-wider text-neutral-500">iterations</p>
+    <h1 class="text-2xl font-semibold tracking-tight text-neutral-50">workspace directives</h1>
+    <p class="text-sm text-neutral-400">
+      workspace: <code class="rounded bg-neutral-800 px-1.5 py-0.5 text-xs text-neutral-200">{{ workspace_path }}</code>
+    </p>
+  </header>
+
+  <section class="space-y-3 rounded border border-neutral-800 bg-neutral-900 p-4">
+    <h2 class="text-xs uppercase tracking-wider text-neutral-500">add new directive</h2>
+    <form method="post" action="/iterations/add" class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+      <label class="flex flex-col gap-1 text-xs sm:col-span-2">
+        <span class="uppercase tracking-wider text-neutral-500">directive</span>
+        <textarea
+          name="directive"
+          rows="3"
+          required
+          class="rounded border border-neutral-700 bg-neutral-950 px-2 py-1.5 text-sm text-neutral-100 focus:border-neutral-500 focus:outline-none"
+          placeholder="e.g. re-extract atoms with stricter qualifier discipline"
+        ></textarea>
+      </label>
+      <label class="flex flex-col gap-1 text-xs">
+        <span class="uppercase tracking-wider text-neutral-500">target source</span>
+        {% if source_ids %}
+        <select
+          name="target_source"
+          required
+          class="rounded border border-neutral-700 bg-neutral-950 px-2 py-1.5 font-mono text-sm text-neutral-100 focus:border-neutral-500 focus:outline-none"
+        >
+          {% for sid in source_ids %}
+          <option value="{{ sid }}">{{ sid }}</option>
+          {% endfor %}
+        </select>
+        {% else %}
+        <input
+          type="text"
+          name="target_source"
+          required
+          placeholder="source id"
+          class="rounded border border-neutral-700 bg-neutral-950 px-2 py-1.5 font-mono text-sm text-neutral-100 focus:border-neutral-500 focus:outline-none"
+        />
+        {% endif %}
+      </label>
+      <label class="flex flex-col gap-1 text-xs">
+        <span class="uppercase tracking-wider text-neutral-500">target phase</span>
+        <select
+          name="target_phase"
+          class="rounded border border-neutral-700 bg-neutral-950 px-2 py-1.5 text-sm text-neutral-100 focus:border-neutral-500 focus:outline-none"
+        >
+          {% for phase in target_phases %}
+          <option value="{{ phase }}" {% if phase == "distill" %}selected{% endif %}>{{ phase }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label class="flex flex-col gap-1 text-xs sm:col-span-2">
+        <span class="uppercase tracking-wider text-neutral-500">rationale (optional)</span>
+        <input
+          type="text"
+          name="rationale"
+          placeholder="why this directive is needed"
+          class="rounded border border-neutral-700 bg-neutral-950 px-2 py-1.5 text-sm text-neutral-100 focus:border-neutral-500 focus:outline-none"
+        />
+      </label>
+      <label class="flex flex-col gap-1 text-xs">
+        <span class="uppercase tracking-wider text-neutral-500">issuer</span>
+        <input
+          type="text"
+          name="issuer"
+          value="web-supervisor"
+          class="rounded border border-neutral-700 bg-neutral-950 px-2 py-1.5 font-mono text-sm text-neutral-100 focus:border-neutral-500 focus:outline-none"
+        />
+      </label>
+      <div class="flex items-end justify-end sm:col-span-2">
+        <button
+          type="submit"
+          class="rounded border border-emerald-700 bg-emerald-900/40 px-3 py-1.5 text-sm text-emerald-100 hover:bg-emerald-900/70"
+        >issue directive</button>
+      </div>
+    </form>
+  </section>
+
+  {% if directives %}
+  <section class="space-y-3">
+    <h2 class="text-xs uppercase tracking-wider text-neutral-400">past directives ({{ directives|length }})</h2>
+    <ul class="space-y-3">
+      {% for it in directives %}
+      <li class="rounded border border-neutral-800 bg-neutral-950 p-3">
+        <div class="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+          <h3 class="font-mono text-sm text-neutral-200">{{ it.id }}</h3>
+          <p class="text-xs text-neutral-500">
+            phase: <span class="font-mono text-neutral-300">{{ it.target_phase }}</span>
+            &middot; targets: <span class="font-mono text-neutral-300">{{ it.target_artifacts | join(", ") }}</span>
+            &middot; {% if it.applied_at %}<span class="text-emerald-400">applied</span>{% else %}<span class="text-amber-400">issued</span>{% endif %}
+          </p>
+        </div>
+        <p class="mt-2 text-sm text-neutral-100">{{ it.directive }}</p>
+        {% if it.rationale %}
+        <p class="mt-1 text-xs text-neutral-400">rationale: {{ it.rationale }}</p>
+        {% endif %}
+      </li>
+      {% endfor %}
+    </ul>
+  </section>
+  {% else %}
+  <div class="rounded border border-dashed border-neutral-800 bg-neutral-900 p-6 text-center">
+    <p class="text-neutral-300">no iterations</p>
+    <p class="mt-1 text-xs text-neutral-500">use the form above to issue the first workspace-level directive.</p>
+  </div>
+  {% endif %}
+</section>
+{% endblock %}

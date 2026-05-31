@@ -1,0 +1,136 @@
+{% extends "base.html" %}
+{% block title %}replay log &middot; amanuensis{% endblock %}
+{% block nav %}
+<a href="/" class="text-neutral-300 hover:text-neutral-50">&larr; dashboard</a>
+<a href="/status" class="text-neutral-300 hover:text-neutral-50">status</a>
+{% endblock %}
+{% block content %}
+<section class="space-y-6">
+  <header class="space-y-1">
+    <p class="text-xs uppercase tracking-wider text-neutral-500">activity stream</p>
+    <h1 class="text-2xl font-semibold tracking-tight text-neutral-50">replay log</h1>
+    <p class="text-sm text-neutral-400">
+      workspace:
+      <code class="rounded bg-neutral-800 px-1.5 py-0.5 text-xs text-neutral-200">{{ workspace_path }}</code>
+    </p>
+  </header>
+
+  <form
+    method="get"
+    action="/replay-log"
+    class="grid grid-cols-1 gap-3 rounded border border-neutral-800 bg-neutral-900 p-4 sm:grid-cols-4"
+  >
+    <label class="flex flex-col gap-1 text-xs">
+      <span class="uppercase tracking-wider text-neutral-500">actor contains</span>
+      <input
+        type="text"
+        name="actor"
+        value="{{ actor }}"
+        placeholder="e.g. claude-opus"
+        class="rounded border border-neutral-700 bg-neutral-950 px-2 py-1.5 font-mono text-sm text-neutral-100 focus:border-neutral-500 focus:outline-none"
+      />
+    </label>
+    <label class="flex flex-col gap-1 text-xs">
+      <span class="uppercase tracking-wider text-neutral-500">activity contains</span>
+      <input
+        type="text"
+        name="activity"
+        value="{{ activity }}"
+        placeholder="e.g. extract"
+        class="rounded border border-neutral-700 bg-neutral-950 px-2 py-1.5 font-mono text-sm text-neutral-100 focus:border-neutral-500 focus:outline-none"
+      />
+    </label>
+    <label class="flex flex-col gap-1 text-xs">
+      <span class="uppercase tracking-wider text-neutral-500">date (YYYY-MM-DD)</span>
+      <input
+        type="text"
+        name="date"
+        value="{{ date }}"
+        placeholder="all days"
+        class="rounded border border-neutral-700 bg-neutral-950 px-2 py-1.5 font-mono text-sm text-neutral-100 focus:border-neutral-500 focus:outline-none"
+      />
+    </label>
+    <label class="flex flex-col gap-1 text-xs">
+      <span class="uppercase tracking-wider text-neutral-500">limit</span>
+      <input
+        type="number"
+        name="limit"
+        value="{{ limit }}"
+        min="1"
+        max="1000"
+        class="rounded border border-neutral-700 bg-neutral-950 px-2 py-1.5 text-sm text-neutral-100 focus:border-neutral-500 focus:outline-none"
+      />
+    </label>
+    <div class="sm:col-span-4">
+      <button
+        type="submit"
+        class="rounded border border-neutral-700 bg-neutral-800 px-3 py-1.5 text-xs uppercase tracking-wider text-neutral-200 hover:border-neutral-500 hover:text-neutral-50"
+      >
+        apply filters
+      </button>
+    </div>
+  </form>
+
+  {% if rows %}
+  <div class="overflow-x-auto rounded border border-neutral-800">
+    <table class="min-w-full divide-y divide-neutral-800 text-sm">
+      <thead class="bg-neutral-900 text-left text-xs uppercase tracking-wider text-neutral-400">
+        <tr>
+          <th scope="col" class="px-4 py-2">timestamp (UTC)</th>
+          <th scope="col" class="px-4 py-2">seq</th>
+          <th scope="col" class="px-4 py-2">source id</th>
+          <th scope="col" class="px-4 py-2">activity</th>
+          <th scope="col" class="px-4 py-2">actor</th>
+          <th scope="col" class="px-4 py-2">cache</th>
+          <th scope="col" class="px-4 py-2">substrate changes</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-neutral-800 bg-neutral-950">
+        {% for row in rows %}
+        <tr class="hover:bg-neutral-900">
+          <td class="px-4 py-2 font-mono text-xs text-neutral-300">
+            {{ row.entry.timestamp.strftime("%Y-%m-%d %H:%M:%S") }}
+          </td>
+          <td class="px-4 py-2 font-mono text-xs text-neutral-300">{{ row.seq }}</td>
+          <td class="px-4 py-2 font-mono text-xs text-neutral-200">{{ row.source_id }}</td>
+          <td class="px-4 py-2 font-mono text-xs text-neutral-100">{{ row.entry.activity }}</td>
+          <td class="px-4 py-2 text-neutral-200">
+            <span class="font-mono text-xs">{{ row.entry.actor.identifier }}</span>
+            <span class="text-xs text-neutral-500">/ {{ row.entry.actor.kind }}</span>
+          </td>
+          <td class="px-4 py-2 text-xs">
+            {% if row.entry.cache_hit %}
+            <span class="text-emerald-400">hit</span>
+            {% else %}
+            <span class="text-neutral-500">miss</span>
+            {% endif %}
+          </td>
+          <td class="px-4 py-2 text-xs text-neutral-400">
+            {% set change_count = row.entry.substrate_changes | length %}
+            {% if change_count == 0 %}
+            <span class="text-neutral-600">none</span>
+            {% elif change_count == 1 %}
+            <code class="rounded bg-neutral-800 px-1.5 py-0.5 text-neutral-200">{{ row.entry.substrate_changes[0] }}</code>
+            {% else %}
+            <span class="text-neutral-200">{{ change_count }} paths</span>
+            <span class="text-neutral-500">(first: <code class="rounded bg-neutral-800 px-1.5 py-0.5 text-neutral-200">{{ row.entry.substrate_changes[0] }}</code>)</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <p class="text-xs text-neutral-500">
+    showing <span class="text-neutral-200">{{ rows | length }}</span> entries (most recent first)
+  </p>
+  {% else %}
+  <div class="rounded border border-dashed border-neutral-800 bg-neutral-900 p-6 text-center">
+    <p class="text-neutral-300">no replay-log entries match these filters</p>
+    <p class="mt-1 text-xs text-neutral-500">
+      adjust the filter form above, or clear the date field to widen the search across every day.
+    </p>
+  </div>
+  {% endif %}
+</section>
+{% endblock %}

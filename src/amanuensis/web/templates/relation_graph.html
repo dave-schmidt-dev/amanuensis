@@ -1,0 +1,154 @@
+{% extends "base.html" %}
+{% block title %}relations &middot; {{ source_id }} &middot; amanuensis{% endblock %}
+{% block nav %}
+<a href="/" class="text-neutral-300 hover:text-neutral-50">&larr; dashboard</a>
+<a href="/distillations/{{ source_id }}" class="text-neutral-300 hover:text-neutral-50">overview</a>
+<a href="/distillations/{{ source_id }}/atoms" class="text-neutral-300 hover:text-neutral-50">atoms</a>
+{% endblock %}
+{% block content %}
+<section
+  class="space-y-6"
+  x-data="relationGraph()"
+  x-init="init()"
+  @htmx:after-swap.window="onAfterSwap($event)"
+>
+  <header class="space-y-1">
+    <p class="text-xs uppercase tracking-wider text-neutral-500">relations</p>
+    <h1 class="font-mono text-2xl font-semibold tracking-tight text-neutral-50">{{ source_id }}</h1>
+    <p class="text-sm text-neutral-400">
+      {{ node_count }} atom{{ '' if node_count == 1 else 's' }}
+      &middot;
+      {{ edge_count }} relation{{ '' if edge_count == 1 else 's' }}
+    </p>
+  </header>
+
+  <div class="rounded border border-neutral-800 bg-neutral-900 p-2">
+    {# Cytoscape mounts into this div. The div itself MUST NOT be a
+       swap target for HTMX — swapping it would destroy the canvas and
+       force a full re-init. The adjacent ``#cy-data`` script tag below
+       IS the HTMX swap target; the Alpine binding above reads its
+       textContent and re-feeds it into the existing cy instance. #}
+    <div
+      id="cy"
+      class="w-full"
+      style="width: 100%; height: 600px;"
+    ></div>
+  </div>
+
+  {# JSON payload: Cytoscape elements array. Server pre-serialized to
+     JSON; we drop it verbatim with the ``|safe`` filter so Jinja does
+     not HTML-escape the braces / brackets. The ``id="cy-data"`` is the
+     stable HTMX swap target. #}
+  <script type="application/json" id="cy-data">{{ cy_data_json | safe }}</script>
+
+  {# Empty-state helper text shown ONLY when the payload has zero
+     elements; Cytoscape renders a blank canvas otherwise which is
+     confusing on an empty workspace. #}
+  {% if node_count == 0 and edge_count == 0 %}
+  <p class="text-sm text-neutral-500">
+    no atoms or relations on disk yet &mdash; this distillation is empty.
+  </p>
+  {% endif %}
+</section>
+
+{# Vendored deps: load in the order cose-base → cose-bilkent →
+   cytoscape → alpine. The first three are sync (registration order
+   matters; cose-bilkent reads window.coseBase at script-eval time).
+   Alpine is loaded with ``defer`` so it bootstraps after the DOM is
+   parsed but does not block the Cytoscape registration chain. #}
+<script src="/static/vendor/cose-base.js"></script>
+<script src="/static/vendor/cytoscape-cose-bilkent.js"></script>
+<script src="/static/vendor/cytoscape.min.js"></script>
+<script defer src="/static/vendor/alpine.min.js"></script>
+
+<script>
+  // Alpine component factory. Defined on `window` so the
+  // `x-data="relationGraph()"` lookup resolves regardless of script
+  // load order. The cytoscape instance is closed over on the component
+  // so subsequent htmx:afterSwap calls can update elements in place
+  // without rebuilding the canvas (M8.4 ships the structural plumbing;
+  // M8.9 exercises the swap behaviour via Playwright).
+  window.relationGraph = function () {
+    return {
+      cy: null,
+      init() {
+        // Register the cose-bilkent layout extension. Guarded with a
+        // truthiness check so a re-init (Alpine remounts can happen if
+        // the parent x-data block is itself swapped) doesn't double-
+        // register and throw.
+        if (window.cytoscape && window.cytoscapeCoseBilkent) {
+          try {
+            window.cytoscape.use(window.cytoscapeCoseBilkent);
+          } catch (e) {
+            // Already registered — cytoscape throws on second use().
+            // Safe to ignore: subsequent layout() calls still resolve
+            // 'cose-bilkent' by name.
+          }
+        }
+        const payload = this.readPayload();
+        this.cy = window.cytoscape({
+          container: document.getElementById('cy'),
+          elements: payload.elements,
+          layout: { name: 'cose-bilkent' },
+          style: [
+            {
+              selector: 'node',
+              style: {
+                'label': 'data(label)',
+                'background-color': '#3b82f6',
+                'color': '#f5f5f5',
+                'font-size': '10px',
+                'text-wrap': 'wrap',
+                'text-max-width': '120px',
+                'text-valign': 'center',
+                'text-halign': 'center',
+                'width': '40px',
+                'height': '40px',
+              },
+            },
+            {
+              selector: 'edge',
+              style: {
+                'label': 'data(label)',
+                'curve-style': 'bezier',
+                'target-arrow-shape': 'triangle',
+                'line-color': '#737373',
+                'target-arrow-color': '#737373',
+                'color': '#a3a3a3',
+                'font-size': '9px',
+                'text-background-color': '#171717',
+                'text-background-opacity': 0.8,
+                'text-background-padding': '2px',
+              },
+            },
+          ],
+        });
+      },
+      readPayload() {
+        const el = document.getElementById('cy-data');
+        if (!el || !el.textContent) {
+          return { elements: [] };
+        }
+        try {
+          return JSON.parse(el.textContent);
+        } catch (e) {
+          return { elements: [] };
+        }
+      },
+      onAfterSwap(event) {
+        // Only react when the swap targeted our JSON payload block.
+        // HTMX surfaces the swapped target on event.detail.target.
+        const target = event && event.detail && event.detail.target;
+        if (!target || target.id !== 'cy-data') {
+          return;
+        }
+        if (!this.cy) {
+          return;
+        }
+        const payload = this.readPayload();
+        this.cy.json({ elements: payload.elements });
+      },
+    };
+  };
+</script>
+{% endblock %}

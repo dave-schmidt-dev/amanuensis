@@ -1,0 +1,96 @@
+{% extends "base.html" %}
+{% block title %}status &middot; amanuensis{% endblock %}
+{% block nav %}
+<a href="/" class="text-neutral-300 hover:text-neutral-50">&larr; dashboard</a>
+<a href="/replay-log" class="text-neutral-300 hover:text-neutral-50">replay log</a>
+{% endblock %}
+{% block content %}
+<section class="space-y-6">
+  <header class="space-y-1">
+    <p class="text-xs uppercase tracking-wider text-neutral-500">workspace</p>
+    <h1 class="text-2xl font-semibold tracking-tight text-neutral-50">status</h1>
+    <p class="text-sm text-neutral-400">
+      JSON liveness probe: <a href="/healthz" class="underline decoration-neutral-700 underline-offset-2 hover:decoration-neutral-300">/healthz</a>
+    </p>
+  </header>
+
+  <section class="rounded border border-neutral-800 bg-neutral-900 p-4">
+    <h2 class="text-lg font-semibold text-neutral-50">workspace</h2>
+    <dl class="mt-3 grid grid-cols-1 gap-x-6 gap-y-2 text-sm sm:grid-cols-2">
+      <div>
+        <dt class="text-xs uppercase tracking-wider text-neutral-500">path</dt>
+        <dd class="font-mono text-neutral-100">{{ stats.workspace_path }}</dd>
+      </div>
+      <div>
+        <dt class="text-xs uppercase tracking-wider text-neutral-500">env var</dt>
+        <dd class="font-mono text-neutral-100">{{ workspace_env_var }}</dd>
+      </div>
+      <div>
+        <dt class="text-xs uppercase tracking-wider text-neutral-500">marker version</dt>
+        <dd class="font-mono text-neutral-100">{{ stats.marker_version }}</dd>
+      </div>
+      <div>
+        <dt class="text-xs uppercase tracking-wider text-neutral-500">distillations</dt>
+        <dd class="text-neutral-100">{{ stats.distillation_count }}</dd>
+      </div>
+    </dl>
+  </section>
+
+  <section class="rounded border border-neutral-800 bg-neutral-900 p-4">
+    <h2 class="text-lg font-semibold text-neutral-50">substrate totals</h2>
+    <dl class="mt-3 grid grid-cols-2 gap-3 text-sm sm:grid-cols-3">
+      <div class="rounded border border-neutral-800 bg-neutral-950 p-3">
+        <dt class="text-xs uppercase tracking-wider text-neutral-500">atoms</dt>
+        <dd class="mt-1 text-2xl font-semibold text-neutral-50">{{ stats.total_atoms }}</dd>
+      </div>
+      <div class="rounded border border-neutral-800 bg-neutral-950 p-3">
+        <dt class="text-xs uppercase tracking-wider text-neutral-500">relations</dt>
+        <dd class="mt-1 text-2xl font-semibold text-neutral-50">{{ stats.total_relations }}</dd>
+      </div>
+      <div class="rounded border border-neutral-800 bg-neutral-950 p-3">
+        <dt class="text-xs uppercase tracking-wider text-neutral-500">iterations</dt>
+        <dd class="mt-1 text-2xl font-semibold text-neutral-50">{{ stats.total_iterations }}</dd>
+      </div>
+      <div class="rounded border border-neutral-800 bg-neutral-950 p-3">
+        <dt class="text-xs uppercase tracking-wider text-neutral-500">open clarifications</dt>
+        <dd class="mt-1 text-2xl font-semibold text-amber-400">{{ stats.total_clarifications_open }}</dd>
+      </div>
+      <div class="rounded border border-neutral-800 bg-neutral-950 p-3">
+        <dt class="text-xs uppercase tracking-wider text-neutral-500">resolved clarifications</dt>
+        <dd class="mt-1 text-2xl font-semibold text-neutral-300">{{ stats.total_clarifications_resolved }}</dd>
+      </div>
+    </dl>
+  </section>
+
+  <section class="rounded border border-neutral-800 bg-neutral-900 p-4">
+    <h2 class="text-lg font-semibold text-neutral-50">replay log</h2>
+    <dl class="mt-3 grid grid-cols-1 gap-x-6 gap-y-2 text-sm sm:grid-cols-2">
+      <div>
+        <dt class="text-xs uppercase tracking-wider text-neutral-500">entries</dt>
+        <dd class="text-neutral-100">{{ stats.replay_log_file_count }}</dd>
+      </div>
+      <div>
+        <dt class="text-xs uppercase tracking-wider text-neutral-500">total bytes</dt>
+        <dd class="text-neutral-100">{{ stats.replay_log_total_bytes }}</dd>
+      </div>
+    </dl>
+    <p class="mt-3 text-xs text-neutral-500">
+      browse entries at <a href="/replay-log" class="underline decoration-neutral-700 underline-offset-2 hover:decoration-neutral-300">/replay-log</a>.
+    </p>
+  </section>
+
+  <section class="rounded border border-neutral-800 bg-neutral-900 p-4">
+    <h2 class="text-lg font-semibold text-neutral-50">vocabulary registry</h2>
+    <dl class="mt-3 grid grid-cols-1 gap-x-6 gap-y-2 text-sm sm:grid-cols-2">
+      <div class="sm:col-span-2">
+        <dt class="text-xs uppercase tracking-wider text-neutral-500">path</dt>
+        <dd class="font-mono text-neutral-100">{{ stats.vocabulary_registry_path }}</dd>
+      </div>
+      <div>
+        <dt class="text-xs uppercase tracking-wider text-neutral-500">entries</dt>
+        <dd class="text-neutral-100">{{ stats.vocabulary_entry_count }}</dd>
+      </div>
+    </dl>
+  </section>
+</section>
+{% endblock %}

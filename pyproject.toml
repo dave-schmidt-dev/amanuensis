@@ -16,6 +16,8 @@ authors = [
 # (read-only substrate browser + clarifications/iterations forms).
 # pytailwindcss ships the Tailwind binary in a Python package — no
 # Node toolchain required for the wheel build.
+# M8.5 adds python-multipart so FastAPI can parse ``Form(...)`` bodies
+# on the clarification-resolve and iteration-add POST endpoints.
 dependencies = [
     "pydantic>=2.9",
     "typer",
@@ -27,6 +29,7 @@ dependencies = [
     "uvicorn[standard]",
     "jinja2",
     "pytailwindcss",
+    "python-multipart",
 ]
 
 # M4.1 registers the CLI entry point so `amanuensis` resolves on PATH

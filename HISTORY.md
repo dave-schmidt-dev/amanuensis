@@ -1100,3 +1100,82 @@ Format: dated entries, newest first. Bug entries cite the area touched:
     tests/dispatch/test_contested_warrant_clarification.py,
     tests/web/test_atom_browser.py, tests/web/test_atom_detail.py,
     tests/web/test_localhost_only.py
+- M7.5+M8.4+M8.5+M8.7 — third parallel wave (4 subagents). For
+  this wave the orchestrator centralised the `app.py` router
+  registration so M8.4/M8.5/M8.7 didn't race each other on a
+  shared file; each subagent shipped only its router module +
+  templates + tests; the orchestrator wired all three into
+  `app.py` after they landed. Added `python-multipart` runtime
+  dep (FastAPI Form parser).
+  - **M7.5** (end-to-end integration test on tiny fixture):
+    `tests/integration/test_distill_tiny_fixture.py`. Reused the
+    M3.1 CUAD fixture (tiny PDF would be churn for the same
+    coverage). Three tests: happy-path (ingest → synth-extractor-
+    output → reconcile → validator sweep), CR-7 auditor variant,
+    + fixture-presence guard.
+  - **Design call** (M7.5): the test SKIPS the actual `dispatch`
+    step in favor of writing a synthetic
+    `dispatch/outputs/extractor-<hash>/output.yaml` directly,
+    using an opaque sentinel `inputs_hash` (the reconcile gate
+    treats it as a cross-reference, not a cache key). This mirrors
+    what `tests/dispatch/test_reconciliation.py` already does.
+    Real subprocess dispatch isn't testable in CI.
+  - **M8.4** (Cytoscape relation graph): `GET /distillations/<id>
+    /relations`. Vendored Cytoscape 3.30.0 (372KB) +
+    cose-bilkent 4.1.0 (16KB) + cose-base 2.2.0 (119KB) +
+    Alpine.js 3.14.1 (45KB) under `static/vendor/`. Per PM-6:
+    stable `<div id="cy">` container + adjacent JSON `<script
+    type="application/json" id="cy-data">` swappable by HTMX +
+    Alpine listener on `htmx:after-swap` filters to `#cy-data`
+    targets and calls `cy.json({elements:...})` (graph updates
+    without rebuild). 7 tests (data shape + vendor file
+    served-correctly parametric). Label truncation to 64 chars
+    in graph payload (full text on the detail page).
+  - **M8.5** (clarifications + iterations forms with flock):
+    new `routes/forms.py` with `GET /clarifications`,
+    `POST /clarifications/<id>/resolve`, `GET /iterations`,
+    `POST /iterations/add`. Form POSTs acquire the workspace
+    flock (5s timeout); timeout renders an HTML error page.
+    Empty-resolution / empty-directive return 400 BEFORE
+    touching the flock (operator-error vs contention). 7 tests.
+    `_FORM_LOCK_TIMEOUT_SECONDS` lifted as a module constant so
+    M8.6 (form-lock contention test) can monkeypatch it.
+  - **M8.7** (replay-log + status pages): `GET /replay-log`
+    with filters (actor / activity / date / limit ≤ 1000) +
+    `GET /status` (workspace HTML stats — distillation /
+    atom / relation / clarification / iteration counts, replay-
+    log size, vocabulary registry entry count). The existing
+    `/healthz` JSON route is unchanged. 5 tests.
+  - **Design call** (M8.7): the spec said the replay-log lives
+    at `<workspace>/replay-log/<date>/seq-NNNN.yaml` but the M1.7
+    actual layout is per-distillation:
+    `<workspace>/distillations/<source-id>/replay-log/<date>/
+    <seq:012d>.yaml`. The route walks every distillation's log
+    and folds them into one workspace-wide most-recent-first
+    table with the source_id alongside each row.
+  - 23 new tests (3 integration + 7 graph + 7 forms + 5
+    status + 1 fixture-guard); 458 total pass. Pyright + ruff +
+    ruff-format + vulture all clean. | files: pyproject.toml,
+    src/amanuensis/web/app.py,
+    src/amanuensis/web/routes/relations.py,
+    src/amanuensis/web/routes/forms.py,
+    src/amanuensis/web/routes/status.py,
+    src/amanuensis/web/templates/relation_graph.html,
+    src/amanuensis/web/templates/clarifications.html,
+    src/amanuensis/web/templates/iterations.html,
+    src/amanuensis/web/templates/_form_error.html,
+    src/amanuensis/web/templates/replay_log.html,
+    src/amanuensis/web/templates/status.html,
+    src/amanuensis/web/static/vendor/cytoscape.min.js,
+    src/amanuensis/web/static/vendor/cytoscape-cose-bilkent.js,
+    src/amanuensis/web/static/vendor/cose-base.js,
+    src/amanuensis/web/static/vendor/alpine.min.js,
+    src/amanuensis/web/static/vendor/README.md,
+    tests/integration/__init__.py,
+    tests/integration/test_distill_tiny_fixture.py,
+    tests/web/conftest.py,
+    tests/web/test_relation_graph_data.py,
+    tests/web/test_clarification_resolve.py,
+    tests/web/test_iteration_add.py,
+    tests/web/test_replay_log.py,
+    tests/web/test_status_page.py

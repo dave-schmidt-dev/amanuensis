@@ -29,7 +29,10 @@ from fastapi.templating import Jinja2Templates
 
 from .routes import atoms as atom_routes
 from .routes import dashboard as dashboard_routes
+from .routes import forms as form_routes
+from .routes import relations as relation_routes
 from .routes import source as source_routes
+from .routes import status as status_routes
 
 # ``_WEB_ROOT`` is the directory containing this file. Templates and
 # static assets live alongside it; resolving them relatively keeps the
@@ -140,6 +143,9 @@ def create_app() -> FastAPI:
     app.include_router(dashboard_routes.router)
     app.include_router(source_routes.router)
     app.include_router(atom_routes.router)
+    app.include_router(relation_routes.router)
+    app.include_router(form_routes.router)
+    app.include_router(status_routes.router)
 
     return app
 

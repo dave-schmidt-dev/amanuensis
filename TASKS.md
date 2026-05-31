@@ -154,25 +154,23 @@ Synthesis record: `~/Documents/Projects/.plans/amanuensis/phase1-distill-foundat
       shortcuts subprocess; cache miss writes cache (0600) + PROV.
     382 tests pass; all four harnesses (claude/codex/cursor/gemini)
     detected on the supervisor machine.
-  - M7 (Active roles + orchestrator, 7 tasks) — **IN PROGRESS** (6/7).
-    - M7.1-M7.4, M7.6, M7.7: **DONE** (skill files, distill CLI,
-      install-skills final, docs/skill-author-guide.md, stub-skip
-      integration test, reconciliation gate + CR-7 clarification).
-    - M7.5 (end-to-end integration test on tiny fixture): pending.
-      Now unblocked (needs M7.4 done).
-  - M8 (Web app, 10 tasks) — **IN PROGRESS** (4/10).
-    - M8.1, M8.2, M8.3, M8.8: **DONE** (FastAPI skeleton +
-      dashboard + atom browser/detail + localhost-only binding
-      refusal).
-    - M8.4-M8.7, M8.9, M8.10: pending. M8.4 (Cytoscape graph)
-      now unblocked (needs M8.3); M8.5 (forms) + M8.7 (status
-      pages) unblocked. M8.4/M8.5/M8.7 serialise on app.py
-      modifications — use the "subagent writes router file only;
-      orchestrator does include_router in main thread" pattern
-      to parallelise.
-  - M9-M11 — pending. M9.1 (export) waits on M8.4; M10.1 (cross-
-    link sweep) waits on M7.7+M8.10; M11.1 (CI workflow) is the
-    final cap.
+  - M7 (Active roles + orchestrator, 7 tasks) — **DONE**.
+    M7.1 skill files, M7.2 stub-skip test, M7.3 distill CLI,
+    M7.4 reconciliation gate + CR-7, M7.5 e2e integration test,
+    M7.6 install-skills final, M7.7 skill-author guide.
+  - M8 (Web app, 10 tasks) — **IN PROGRESS** (7/10).
+    - M8.1-M8.5, M8.7, M8.8: **DONE** (skeleton + dashboard +
+      atom browser + Cytoscape graph + forms + replay/status +
+      localhost-only refusal).
+    - M8.6 (form-lock contention test): pending. Now unblocked
+      (needs M8.5).
+    - M8.9 (Playwright E2E): pending. Now unblocked (needs M8.4 +
+      M8.5).
+    - M8.10 (docs/supervision-protocol.md): pending. Now
+      unblocked (needs M8.5).
+  - M9-M11 — pending. M9.1 (export) now unblocked (needs M8.4
+    done); M10.1 (cross-link sweep) needs M8.10; M11.1 (CI
+    workflow) is the final cap.
 
 ## Upcoming phases
 

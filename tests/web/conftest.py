@@ -26,6 +26,7 @@ from amanuensis.fs import Substrate
 from amanuensis.schemas import (
     AgentAttribution,
     Atom,
+    Clarification,
     OperandRef,
     OperandTypeSchema,
     ParagraphEntry,
@@ -198,3 +199,52 @@ def planted_manifest_workspace(
     """Workspace with one planted source-mirror manifest."""
     manifest = _plant_manifest(web_substrate, SOURCE_ID)
     return web_workspace, manifest
+
+
+def _plant_clarification(
+    substrate: Substrate, *, atom: Atom, prov: ProvenanceRecord, source_id: str
+) -> Clarification:
+    """Plant one open clarification under ``source_id``.
+
+    Mirrors ``tests/cli/conftest._planted_atom_substrate``'s clarification
+    helper but exposes the fixture flavor the web POST tests want: an
+    open clarification whose id can be looked up across distillations
+    without a CLI shim.
+    """
+    raising_agent = AgentAttribution(kind="llm", identifier="auditor-test", role="auditor")
+    payload: dict[str, Any] = {
+        "id": "c-" + "0" * 16,
+        "status": "open",
+        "raised_at": datetime(2026, 5, 30, 12, 5, 0, tzinfo=UTC),
+        "raised_by": raising_agent,
+        "raised_by_activity": "audit_v1",
+        "context_refs": [atom.id],
+        "question": "Is ACME the parent or a subsidiary?",
+        "options": ["parent", "subsidiary"],
+        "resolved_at": None,
+        "resolved_by": None,
+        "resolution": None,
+        "raised_provenance_id": prov.id,
+        "resolved_provenance_id": None,
+        "schema_version": 1,
+    }
+    draft = Clarification(**payload)
+    payload["id"] = compute_id(draft)
+    clar = Clarification(**payload)
+    substrate.add_clarification(source_id, clar)
+    return clar
+
+
+@pytest.fixture
+def planted_clarification_workspace(
+    web_workspace: Path, web_substrate: Substrate
+) -> tuple[Path, Clarification, Atom, ProvenanceRecord]:
+    """Workspace with one atom + one open clarification.
+
+    Returns ``(workspace_path, clarification, atom, atom_prov)``. The
+    atom + its provenance are also returned so a test can build a
+    plausible context-ref payload without re-walking the substrate.
+    """
+    atom, prov = _plant_atom(web_substrate, SOURCE_ID)
+    clar = _plant_clarification(web_substrate, atom=atom, prov=prov, source_id=SOURCE_ID)
+    return web_workspace, clar, atom, prov
