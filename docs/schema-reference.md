@@ -38,6 +38,21 @@ Phase 2b (Connect) adds two more **content-addressable** types:
 | `CrossDocRelation` | `schemas/cross_doc_relation.py` | `x-` | `{provenance_id}` |
 | `CrossDocRelationSupersede` | `schemas/cross_doc_relation_supersede.py` | `v-` | `{provenance_id, at}` |
 
+Phase 2c (Hierarchize) adds four more **content-addressable** types:
+
+| Type | Module | Prefix | Volatile fields |
+| --- | --- | --- | --- |
+| `Probandum` | `schemas/probandum.py` | `p-` | `{provenance_id}` |
+| `ProbandumEdge` | `schemas/probandum_edge.py` | `q-` | `{provenance_id}` |
+| `ProbandumSupersede` | `schemas/probandum_supersede.py` | `u-` | `{provenance_id, at}` |
+| `ProbandumEdgeSupersede` | `schemas/probandum_edge_supersede.py` | `o-` | `{provenance_id, at}` |
+
+The `Probandum` id prefix `p-` is shared with `ProvenanceRecord` —
+that collision is intentional and safe: PROV records live under
+`<distillation>/provenance/` or `mappings/provenance/`, while probanda
+live under `mappings/probanda/`, so the prefix is namespaced by
+directory.
+
 The remaining Phase 1 schemas — `ReplayLogEntry`, `Vocabulary`,
 `VocabularyEntry`, `OperandTypeSchema` — are NOT content-addressable.
 See [Non-content-addressable types](#non-content-addressable-types).
@@ -52,10 +67,11 @@ which rejects naive timestamps with error type `timezone_aware`.
 
 ## Schema reference (per-model)
 
-The twelve Phase 1 model classes plus four Phase 2a (Resolve) model
-classes, in dependency order. Each entry lists the model's purpose,
-its fields (required and optional), and validation rules beyond plain
-Pydantic typing.
+The twelve Phase 1 model classes plus four Phase 2a (Resolve), two
+Phase 2b (Connect), and four Phase 2c (Hierarchize) model classes, in
+dependency order. Each entry lists the model's purpose, its fields
+(required and optional), and validation rules beyond plain Pydantic
+typing.
 
 ### `AgentAttribution` (`schemas/_shared.py`)
 
@@ -463,6 +479,314 @@ On-disk: `mappings/supersedes/v-<hash>.yaml` — pure YAML.
 
 ---
 
+### `Probandum` (`schemas/probandum.py`)
+
+A node in a Phase 2c argument tree. Probanda decompose an ultimate
+proposition (what the corpus is trying to prove) into penultimate
+hypotheses (immediately above the evidence layer) and interim
+sub-propositions (intermediate decomposition). The leaves of the
+probandum tree connect via `ProbandumEdge` records to Phase 1 `Atom`
+records, Phase 2b `CrossDocRelation` records, or further probanda.
+Content-addressable.
+
+| Field | Type | Required | Volatile? | Notes |
+| --- | --- | --- | --- | --- |
+| `id` | `str` | yes | universal | `p-<16 hex chars>`. Prefix `p-` is shared with `ProvenanceRecord`; the namespace separation is the on-disk directory (`mappings/probanda/` vs `provenance/`). |
+| `statement` | `str` | yes | no | The proposition this node asserts. Persisted as markdown body; frontmatter carries the structured fields. |
+| `kind` | `Literal["ultimate", "penultimate", "interim"]` | yes | no | Tree position. The Hierarchize role only proposes `interim` nodes; `ultimate` and `penultimate` are supervisor-only (authored via `amanuensis map probandum add`). |
+| `scheme` | `str` | yes | no | Walton-scheme id. MUST appear in `mappings/walton-scheme-snapshot.yaml`. INV-18 closed-vocab gate is enforced by `Substrate.add_probandum`; the schema layer accepts any string. |
+| `alternatives_considered` | `list[str]` | yes | no | Competing hypotheses (ACH discipline). MUST be non-empty for `kind in {"penultimate", "interim"}`; the substrate's `AchAlternativesGateViolation` enforces this at write-time. Schema layer accepts any list including empty. |
+| `confidence` | `Literal["high", "medium", "low"]` | yes | no | |
+| `provenance_id` | `str` | yes | yes | Volatile under canonical-form hashing; same rationale as `Atom.provenance_id`. |
+| `role_attributions` | `list[RoleAttribution]` | yes | no | |
+| `schema_version` | `int` | no (default `1`) | no | |
+
+**Volatile fields:** `{"provenance_id"}`.
+
+**Validators:** none beyond Pydantic field-shape enforcement. The
+substrate-layer gates (INV-13, INV-18, INV-19) are NOT schema
+validators; they live on `Substrate.add_probandum`.
+
+**Invariants enforced:**
+
+- **[INV-13](../INVARIANTS.md#inv-13--entity-and-resolution-records-are-immutable-once-written)**:
+  Probanda are immutable once written; corrections flow through
+  `ProbandumSupersede`. Same atomic-write-then-add discipline that
+  protects entities, resolutions, and cross-doc relations.
+- **[INV-16](../INVARIANTS.md#inv-16--probandum-hierarchy-is-a-tree-no-cycles-no-multi-parent)**
+  and **[INV-17](../INVARIANTS.md#inv-17--probandum-lineage-completes-to-an-ultimate)**:
+  enforced by `Substrate.add_probandum_edge` (the edge-add path is
+  where tree-shape and lineage are checked) — a probandum on its own
+  cannot violate INV-16/17 without an edge.
+- **[INV-18](../INVARIANTS.md#inv-18--closed-walton-scheme-vocabulary)**:
+  `scheme` must appear in the pinned
+  `mappings/walton-scheme-snapshot.yaml`. Enforced at write-time by
+  `Substrate.add_probandum`; raises `WaltonSchemeGateViolation`. Absence
+  of the snapshot raises `SubstrateNotFound`.
+- **ACH alternatives gate (Phase 2c write-time, not yet a charter
+  INV):** for `kind in {"penultimate", "interim"}`,
+  `alternatives_considered` MUST be non-empty. Enforced by
+  `Substrate.add_probandum`; raises `AchAlternativesGateViolation`.
+  Promoting this to charter status (INV-19) is a Phase 2c.5 candidate.
+
+**Content-addressable id algorithm:** SHA-256 over canonical form
+(see [Content-addressable IDs](#content-addressable-ids) for the
+algorithm); first 8 bytes (16 hex chars) prefixed with `p-`. Drop
+universal `id` and per-class volatile `provenance_id` before hashing.
+
+On-disk: `mappings/probanda/p-<hash>.md` — YAML frontmatter for
+structured fields; markdown body for `statement`.
+
+Example YAML frontmatter:
+
+```yaml
+id: p-3a9b12ff4c6d8e10
+statement: Smith breached the 2018 contract.
+kind: penultimate
+scheme: argument-from-evidence-to-hypothesis
+alternatives_considered:
+  - "Smith and ACME mutually agreed to defer the April 2024 delivery."
+  - "The shipment was tendered but rejected by ACME for unrelated quality reasons."
+confidence: medium
+provenance_id: p-7f2a9b1234567890
+role_attributions:
+  - agent:
+      kind: human
+      identifier: dschmidt
+      role: human_supervisor
+    activity: proposed
+    at: "2026-06-01T12:00:00.000000Z"
+schema_version: 1
+```
+
+---
+
+### `ProbandumEdge` (`schemas/probandum_edge.py`)
+
+A directed warrant-bearing edge from a parent `Probandum` to a child
+node. The child may be another `Probandum` (interior edge in the
+hierarchy), an `Atom` (leaf edge into Phase 1 substrate), or a
+`CrossDocRelation` (leaf edge into Phase 2b substrate). Phase 2c
+(Hierarchize) schema. Content-addressable.
+
+| Field | Type | Required | Volatile? | Notes |
+| --- | --- | --- | --- | --- |
+| `id` | `str` | yes | universal | `q-<16 hex chars>`. Prefix `q-` (`r-`, `s-`, `t-`, `u-` already taken; `q-` is the natural neighbour). |
+| `parent_probandum_id` | `str` | yes | no | Parent probandum id (`p-`). Existence is checked by `Substrate.add_probandum_edge`. |
+| `child_id` | `str` | yes | no | Child id. Prefix dispatches the child shape: `p-` → probandum, `a-` → atom, `x-` → cross-doc-relation. |
+| `child_kind` | `Literal["probandum", "atom", "cross-doc-relation"]` | yes | no | Discriminator for the child shape. |
+| `child_source_id` | `str \| None` | yes | no | MUST be populated when `child_kind == "atom"` (atoms are source-scoped) and MUST be `None` otherwise. Enforced by the model validator `_child_source_id_matches_kind` at the schema layer. |
+| `kind` | `Literal["supports", "attacks", "undercuts"]` | yes | no | Same closed set as Phase 1 `Relation` and Phase 2b `CrossDocRelation`. |
+| `warrant` | `str` | yes | no | One-paragraph generalization licensing the edge. |
+| `warrant_defensibility` | `Literal["literature-backed", "methodology-derived", "conventional", "contested"]` | yes | no | When `"contested"`, the Map-Auditor (Phase 2c-extended) flags the edge; the reconciler may auto-raise a clarification. |
+| `warrant_basis` | `str` | yes | no | One-line rationale / citation. |
+| `confidence` | `Literal["high", "medium", "low"]` | yes | no | |
+| `provenance_id` | `str` | yes | yes | Volatile under canonical-form hashing; same rationale as `Atom.provenance_id`. |
+| `role_attributions` | `list[RoleAttribution]` | yes | no | |
+| `schema_version` | `int` | no (default `1`) | no | |
+
+**Volatile fields:** `{"provenance_id"}`.
+
+**Validators:** `_child_source_id_matches_kind` model validator —
+rejects `child_source_id` set without `child_kind == "atom"`, and
+rejects `child_source_id == None` with `child_kind == "atom"`.
+
+**Invariants enforced:**
+
+- **[INV-13](../INVARIANTS.md#inv-13--entity-and-resolution-records-are-immutable-once-written)**:
+  Edges are immutable once written; corrections flow through
+  `ProbandumEdgeSupersede`.
+- **[INV-16](../INVARIANTS.md#inv-16--probandum-hierarchy-is-a-tree-no-cycles-no-multi-parent)**:
+  The directed graph induced by probandum-only edges (`child_kind ==
+  "probandum"`) MUST be acyclic AND tree-shaped (each non-root node has
+  exactly one active parent). Enforced at write-time by
+  `Substrate.add_probandum_edge`; raises `ProbandumTreeViolation`.
+  Superseded edges are excluded from both checks.
+- **[INV-17](../INVARIANTS.md#inv-17--probandum-lineage-completes-to-an-ultimate)**:
+  `parent_probandum_id` MUST trace upward (via existing incoming
+  probandum-edges) to at least one `Probandum` with `kind == "ultimate"`.
+  Walk is depth-capped at 100 and excludes superseded edges. Enforced
+  at write-time; raises `LineageIncomplete`.
+
+**Content-addressable id algorithm:** SHA-256 over canonical form;
+first 8 bytes prefixed with `q-`. Drop universal `id` and per-class
+volatile `provenance_id` before hashing.
+
+On-disk: `mappings/probandum-edges/q-<hash>.yaml` — pure YAML.
+
+Example YAML:
+
+```yaml
+id: q-aabb112233445566
+parent_probandum_id: p-pen-smith-breach
+child_id: a-acme-001
+child_kind: atom
+child_source_id: src-acme-brief
+kind: supports
+warrant: |
+  The atom directly attests the missed delivery date; under the
+  contract's §3 performance obligation, that attestation supports the
+  parent claim of breach.
+warrant_defensibility: methodology-derived
+warrant_basis: "Direct attestation in the source narrative."
+confidence: high
+provenance_id: p-cd1234aabbccddee
+schema_version: 1
+```
+
+---
+
+### `ProbandumSupersede` (`schemas/probandum_supersede.py`)
+
+Records a supervisor correction at the probandum level — a restatement,
+rescoping, or rejection. The superseded probandum record remains on
+disk (immutability); this record is the correction pointer.
+Content-addressable.
+
+| Field | Type | Required | Volatile? | Notes |
+| --- | --- | --- | --- | --- |
+| `id` | `str` | yes | universal | `u-<16 hex chars>`. Prefix `u-` = "update". |
+| `supersedes_id` | `str` | yes | no | The probandum id (`p-`) being replaced. |
+| `superseded_by_id` | `str` | yes | no | The replacement probandum id (`p-`). |
+| `kind` | `Literal["probandum"]` | yes (default `"probandum"`) | no | Discriminator distinguishing from `ProbandumEdgeSupersede`. |
+| `reason` | `str` | yes | no | Non-empty reason. Validator `_reason_non_empty` rejects blank strings. |
+| `provenance_id` | `str` | yes | yes | Volatile under canonical-form hashing. |
+| `role_attributions` | `list[RoleAttribution]` | yes | no | |
+| `at` | `AwareDatetime` | yes | yes | Volatile under canonical-form hashing (observational metadata, not identity content). |
+| `schema_version` | `int` | no (default `1`) | no | |
+
+**Volatile fields:** `{"provenance_id", "at"}`. The `at` timestamp is
+observational — replays of the same logical correction carry different
+wall-clock timestamps and must not perturb identity.
+
+**Validators:** `_reason_non_empty` (rejects blank `reason`).
+
+**Invariants enforced:**
+
+- **[INV-13](../INVARIANTS.md#inv-13--entity-and-resolution-records-are-immutable-once-written)**:
+  Probandum corrections do NOT rewrite the superseded record; they
+  append a supersede record alongside it. The supersede chain is walked
+  at read-time via `Substrate.latest_probandum_for(probandum_id)` to
+  surface the current probandum.
+
+**Content-addressable id algorithm:** SHA-256 over canonical form;
+first 8 bytes prefixed with `u-`. Drop universal `id` and per-class
+volatile `{provenance_id, at}` before hashing.
+
+On-disk: `mappings/supersedes/u-<hash>.yaml` — pure YAML.
+
+---
+
+### `ProbandumEdgeSupersede` (`schemas/probandum_edge_supersede.py`)
+
+Records a supervisor correction at the probandum-edge level — a warrant
+tightening, a flipped edge kind, or a retracted edge. The superseded
+edge record remains on disk; this record is the correction pointer.
+Content-addressable.
+
+| Field | Type | Required | Volatile? | Notes |
+| --- | --- | --- | --- | --- |
+| `id` | `str` | yes | universal | `o-<16 hex chars>`. Prefix `o-` = "obsolete". |
+| `supersedes_id` | `str` | yes | no | The probandum-edge id (`q-`) being replaced. |
+| `superseded_by_id` | `str` | yes | no | The replacement probandum-edge id (`q-`). |
+| `kind` | `Literal["probandum-edge"]` | yes (default `"probandum-edge"`) | no | Discriminator distinguishing from the other supersede types. |
+| `reason` | `str` | yes | no | Non-empty reason. Validator `_reason_non_empty` rejects blank strings. |
+| `provenance_id` | `str` | yes | yes | Volatile under canonical-form hashing. |
+| `role_attributions` | `list[RoleAttribution]` | yes | no | |
+| `at` | `AwareDatetime` | yes | yes | Volatile under canonical-form hashing. |
+| `schema_version` | `int` | no (default `1`) | no | |
+
+**Volatile fields:** `{"provenance_id", "at"}`.
+
+**Validators:** `_reason_non_empty` (rejects blank `reason`).
+
+**Invariants enforced:**
+
+- **[INV-13](../INVARIANTS.md#inv-13--entity-and-resolution-records-are-immutable-once-written)**:
+  Edge corrections do NOT rewrite the superseded record; they append a
+  supersede record alongside it. The chain is walked via
+  `Substrate.latest_probandum_edge_for(edge_id)`. Superseded edges are
+  excluded from INV-16 (tree) and INV-17 (lineage) walks — they
+  represent retracted state.
+
+**Content-addressable id algorithm:** SHA-256 over canonical form;
+first 8 bytes prefixed with `o-`. Drop universal `id` and per-class
+volatile `{provenance_id, at}` before hashing.
+
+On-disk: `mappings/supersedes/o-<hash>.yaml` — pure YAML.
+
+---
+
+### `WaltonSchemeRegistry` (vocabulary; not content-addressable)
+
+The Walton-scheme registry is the Phase 2c closed-vocabulary backing
+for `Probandum.scheme` (INV-18). Like the Phase 1 predicate registry
+(INV-5 / INV-10) and the Phase 2a entity-kind registry (INV-12), it is
+pinned per-engagement as a snapshot under `mappings/`.
+
+**Snapshot file:** `mappings/walton-scheme-snapshot.yaml`. Loaded by
+`amanuensis.vocabulary.walton_schemes.load_walton_scheme_registry`;
+cached per `Substrate` instance and invalidated on every snapshot pin.
+
+**Snapshot shape (YAML):**
+
+```yaml
+schemes:
+  - id: argument-from-expert-opinion
+    name: Argument from Expert Opinion
+    description: |
+      An expert E asserts proposition A within E's domain of expertise;
+      therefore A.
+  - id: argument-from-evidence-to-hypothesis
+    name: Argument from Evidence to Hypothesis
+    description: |
+      Observed fact F is best explained by hypothesis H; therefore H.
+  - id: argument-from-witness-testimony
+    name: Argument from Witness Testimony
+    description: |
+      Witness W testifies to fact F; therefore F.
+  # ... etc.
+```
+
+**Generic catalogue:** Phase 2c ships a generic catalogue at
+`vocabularies/generic/walton-schemes.yaml` containing the
+project-standard Walton schemes. The catalogue is the bundled template;
+`amanuensis map walton-scheme snapshot` copies it into the workspace as
+the pinned snapshot. The generic catalogue is a starting template —
+adding engagement-specific schemes goes through
+`amanuensis map walton-scheme snapshot --extend` with a customised
+template, which archives the prior snapshot under
+`mappings/walton-scheme-archive/<sha16>.yaml`.
+
+**Snapshot pinning pattern.** Mirrors INV-10 (per-distillation
+vocabulary snapshot) and the Phase 2a entity-vocabulary snapshot
+(INV-12 family):
+
+1. On first run, `amanuensis map walton-scheme snapshot` (or any
+   `Substrate.snapshot_walton_schemes(extend=False)` call) writes the
+   bundled generic catalogue at the canonical snapshot path. Idempotent
+   for byte-identical content; raises `MappingVocabularyAlreadyPinned`
+   if a different snapshot is already pinned.
+2. To evolve the registry mid-engagement, the supervisor runs
+   `amanuensis map walton-scheme snapshot --extend [--template PATH]`.
+   The prior snapshot is moved to
+   `mappings/walton-scheme-archive/<sha16>.yaml` (the SHA-16 is the
+   first 16 hex chars of SHA-256 over the snapshot bytes) and the new
+   template is written as the active snapshot. Substrate's cached
+   registry is invalidated.
+3. All `Substrate.add_probandum` calls read the active snapshot;
+   archived snapshots are never read at validation time (they are kept
+   as an audit trail).
+
+**Why pin per-engagement:** vocabulary evolution between engagements
+(adding a scheme, renaming one) would otherwise silently retroactively
+change what existing probanda mean. The snapshot makes substrate-as-
+truth (INV-8) hold across vocabulary evolution — INV-18's gate test
+verifies each probandum's `scheme` field against the snapshot active
+when it was written, not the current generic catalogue.
+
+---
+
 ### `ReplayLogEntry` (`schemas/replay_log.py`)
 
 One append-only entry in a workspace's replay log. **NOT
@@ -573,14 +897,20 @@ section mirrors them. (Plan source: §5.)
 
   cache/<input-hash>.yaml                    content-addressable LLM-call cache
 
-  mappings/                                  Phase 2a + 2b cross-document layer (INV-12)
+  mappings/                                  Phase 2a + 2b + 2c cross-document layer (INV-12)
     entity-vocabulary-snapshot.yaml          active entity-kind registry (INV-12)
+    walton-scheme-snapshot.yaml              Phase 2c active Walton-scheme registry (INV-18)
+    walton-scheme-archive/<hash>.yaml        prior Walton-scheme snapshots
     entities/e-<hash>.md                     canonical Entity records (frontmatter + notes)
     resolutions/j-<hash>.yaml                Resolution records (pure YAML)
     relations/x-<hash>.yaml                  Phase 2b CrossDocRelation records (pure YAML; INV-15)
+    probanda/p-<hash>.md                     Phase 2c Probandum records (frontmatter + statement; INV-16/17/18)
+    probandum-edges/q-<hash>.yaml            Phase 2c ProbandumEdge records (pure YAML; INV-16/17)
     supersedes/t-<hash>.yaml                 EntitySupersede records
     supersedes/s-<hash>.yaml                 ResolutionSupersede records
     supersedes/v-<hash>.yaml                 Phase 2b CrossDocRelationSupersede records
+    supersedes/u-<hash>.yaml                 Phase 2c ProbandumSupersede records
+    supersedes/o-<hash>.yaml                 Phase 2c ProbandumEdgeSupersede records
     provenance/<prov-id>.yaml                PROV-O records for mapping-phase artifacts
     replay-log/                              mappings-scoped replay log
 ```
@@ -727,6 +1057,10 @@ Given a Pydantic model instance:
 | `ResolutionSupersede` | `{"provenance_id"}` | Same rationale. |
 | `CrossDocRelation` | `{"provenance_id"}` | Cross-doc relation identity is the (from, to, kind, warrant) tuple plus `shared_entities`. Provenance pointer is observational. |
 | `CrossDocRelationSupersede` | `{"provenance_id", "at"}` | Supersede identity is the old → new pointer + reason. The wall-clock `at` is volatile because replays of the same logical correction carry different timestamps. |
+| `Probandum` | `{"provenance_id"}` | Probandum identity is the statement + kind + scheme + alternatives + confidence tuple. Same PROV-O direction argument as Atom. |
+| `ProbandumEdge` | `{"provenance_id"}` | Edge identity is the (parent, child, child_kind, child_source_id, kind, warrant, ...) tuple. Same PROV-O direction argument as Atom. |
+| `ProbandumSupersede` | `{"provenance_id", "at"}` | Supersede identity is the old → new pointer + reason. Same volatility argument as `CrossDocRelationSupersede`. |
+| `ProbandumEdgeSupersede` | `{"provenance_id", "at"}` | Same rationale as `ProbandumSupersede`. |
 
 The "lifecycle-completion" volatility on `Clarification` and
 `IterationDirective` is the spec's intent: resolving a clarification
@@ -879,7 +1213,7 @@ content-addressable id. `compute_id()` rejects all four with a
   (substrate-as-truth, three surfaces, determinism boundary,
   harness-aware module, module decomposition).
 - [`../INVARIANTS.md`](../INVARIANTS.md) — invariants charter (INV-1
-  through INV-10).
+  through INV-18, with INV-16 / INV-17 / INV-18 added in Phase 2c).
 - `~/Documents/Projects/.plans/amanuensis/phase1-distill-foundation-2026-05-29.md` —
   authoritative Phase 1 plan; §4 is the schema spec, §5 is the layout,
   §11 is the invariant gate-test catalogue.
