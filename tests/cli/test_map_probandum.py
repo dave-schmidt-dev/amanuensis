@@ -248,3 +248,62 @@ def test_list_filters_by_scheme(
     assert result.exit_code == 0, result.output
     assert expert_id in result.stdout
     assert sign_id not in result.stdout
+
+
+# ---------------------------------------------------------------------------
+# T9.3: amanuensis map probandum show <id>
+# ---------------------------------------------------------------------------
+
+
+def test_show_renders_all_fields(
+    tmp_workspace_with_walton_snapshot: Path,
+) -> None:
+    """``probandum show <id>`` renders statement, kind, scheme, alternatives, confidence."""
+    workspace = tmp_workspace_with_walton_snapshot
+    pen_id = _add_probandum(
+        workspace,
+        "ACME failed to pay on the due date.",
+        "penultimate",
+        scheme="argument-from-sign",
+        alternatives=["ACME paid on time", "Payment was waived"],
+    )
+    result = runner.invoke(
+        map_app,
+        ["probandum", "show", pen_id, "--workspace", str(workspace)],
+    )
+    assert result.exit_code == 0, result.output
+    out = result.stdout
+    # Statement body appears.
+    assert "ACME failed to pay on the due date." in out
+    # Frontmatter fields rendered (markdown body + section headers).
+    assert "argument-from-sign" in out
+    assert "ACME paid on time" in out
+    assert "Payment was waived" in out
+    # Section headers.
+    assert "Alternatives considered" in out
+    assert "Confidence" in out
+    assert "Lineage (incoming)" in out
+    assert "Lineage (outgoing)" in out
+    assert "Provenance" in out
+    assert "Supersede chain" in out
+    # No incoming / outgoing edges yet.
+    assert "(none)" in out
+
+
+def test_show_returns_error_for_unknown_id(
+    tmp_workspace_with_walton_snapshot: Path,
+) -> None:
+    """``probandum show`` on an unknown id exits non-zero with a 'not found' message."""
+    result = runner.invoke(
+        map_app,
+        [
+            "probandum",
+            "show",
+            "p-doesnotexist01",
+            "--workspace",
+            str(tmp_workspace_with_walton_snapshot),
+        ],
+    )
+    assert result.exit_code != 0
+    haystack = (result.stdout or "") + (result.stderr or "")
+    assert "not found" in haystack.lower()

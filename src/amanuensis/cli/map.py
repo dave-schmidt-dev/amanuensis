@@ -43,6 +43,7 @@ from amanuensis.schemas import (
     CrossDocRelationSupersede,
     EntitySupersede,
     Probandum,
+    ProbandumSupersede,
     ProvenanceRecord,
     Resolution,
     ResolutionSupersede,
@@ -2429,3 +2430,121 @@ def probandum_list_command(
     )
     for p in substrate.list_probanda(kind=kind_lit, scheme=scheme):
         typer.echo(_format_probandum_line(p))
+
+
+@probandum_app.command("show")
+@require_marker
+def probandum_show_command(
+    probandum_id: Annotated[
+        str,
+        typer.Argument(help="Probandum id (e.g. p-<hash>)."),
+    ],
+    workspace: Annotated[
+        Path | None,
+        typer.Option(
+            "--workspace",
+            "-w",
+            help="Workspace root (must contain amanuensis.yaml). Defaults to CWD.",
+        ),
+    ] = None,
+) -> None:
+    """Print a Probandum's frontmatter + lineage + supersede chain (read-only; T9.3).
+
+    Sections rendered:
+
+    - Raw on-disk markdown (frontmatter + body — the statement).
+    - Alternatives considered (one per line).
+    - Confidence.
+    - Lineage incoming (probandum-edges where this is the child).
+    - Lineage outgoing (probandum-edges where this is the parent).
+    - Provenance id.
+    - Supersede chain (forward + back).
+    """
+    from amanuensis.fs._errors import (
+        SubstrateNotFound,
+        SupersedeChainTooDeep,
+        SupersedeCycleDetected,
+    )
+
+    workspace_path = workspace_from_kwargs({"workspace": workspace})
+    substrate = Substrate(workspace_path)
+
+    path = substrate.probandum_path(probandum_id)
+    if not path.is_file():
+        typer.secho(
+            f"probandum '{probandum_id}' not found in mappings/probanda/",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+    # Raw on-disk content (frontmatter + statement body).
+    typer.echo(path.read_text(encoding="utf-8"), nl=False)
+
+    p = substrate.get_probandum(probandum_id)
+
+    # Alternatives section (rendered explicitly even when the raw
+    # markdown already lists them, so the operator sees a uniform "one
+    # per line" form).
+    typer.echo("\n## Alternatives considered")
+    if p.alternatives_considered:
+        for alt in p.alternatives_considered:
+            typer.echo(f"- {alt}")
+    else:
+        typer.echo("(none)")
+
+    typer.echo(f"\n## Confidence\n{p.confidence}")
+
+    # Lineage: incoming edges (where this is the child).
+    typer.echo("\n## Lineage (incoming)")
+    incoming_found = False
+    for edge in substrate.list_probandum_edges():
+        if edge.child_id == probandum_id and edge.child_kind == "probandum":
+            typer.echo(f"{edge.id}  kind={edge.kind}  parent={edge.parent_probandum_id}")
+            incoming_found = True
+    if not incoming_found:
+        typer.echo("(none)")
+
+    # Lineage: outgoing edges (where this is the parent).
+    typer.echo("\n## Lineage (outgoing)")
+    outgoing_found = False
+    for edge in substrate.list_probandum_edges(parent_probandum_id=probandum_id):
+        suffix = f" source={edge.child_source_id}" if edge.child_source_id is not None else ""
+        typer.echo(
+            f"{edge.id}  kind={edge.kind}  "
+            f"child_kind={edge.child_kind}  child={edge.child_id}{suffix}"
+        )
+        outgoing_found = True
+    if not outgoing_found:
+        typer.echo("(none)")
+
+    typer.echo(f"\n## Provenance\n{p.provenance_id}")
+
+    # Supersede chain (forward + back).
+    typer.echo("\n## Supersede chain")
+    chain_entries: list[str] = []
+    for record in substrate.list_supersedes(kind="probandum"):
+        if not isinstance(record, ProbandumSupersede):
+            continue  # type-narrowing for Pyright; runtime is already filtered
+        if record.supersedes_id == probandum_id:
+            chain_entries.append(
+                f"superseded by {record.id} -> probandum {record.superseded_by_id}"
+                f" (reason: {record.reason})"
+            )
+        if record.superseded_by_id == probandum_id:
+            chain_entries.append(f"supersedes {record.supersedes_id} (reason: {record.reason})")
+    if chain_entries:
+        for entry in chain_entries:
+            typer.echo(entry)
+    else:
+        typer.echo("(no supersede chain)")
+
+    # Latest-in-chain line (mirrors ``relation show``).
+    try:
+        latest = substrate.latest_probandum_for(probandum_id)
+    except (SubstrateNotFound, SupersedeCycleDetected, SupersedeChainTooDeep) as exc:
+        typer.echo(f"(error walking chain: {exc})")
+        return
+    if latest is not None and latest.id == probandum_id:
+        typer.echo("(this probandum is the latest in its chain)")
+    elif latest is not None:
+        typer.echo(f"Latest in chain: {latest.id}")
