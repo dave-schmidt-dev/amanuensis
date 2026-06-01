@@ -39,17 +39,19 @@ logger so a supervisor can spot the orphan.
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
 import yaml
 
 from amanuensis.fs import Substrate
-from amanuensis.fs._errors import SubstrateInvalidId
-from amanuensis.fs.substrate import (  # pyright: ignore[reportPrivateUsage]
-    _validate_id_component,
-)
 from amanuensis.schemas import SourceMirrorManifest
+
+# Mirrors the path-safety rule in amanuensis.fs.substrate._validate_id_component.
+# Inlined to avoid a private-symbol import (reportPrivateUsage); the rule is
+# small + stable and the substrate enforces it on its own surface anyway.
+_PATH_SAFE_ID = re.compile(r"^[A-Za-z0-9_.-]+$")
 
 _log = logging.getLogger("amanuensis.web")
 
@@ -89,13 +91,11 @@ def list_distillation_source_ids(substrate: Substrate) -> list[str]:
     for entry in distillations_root.iterdir():
         if not entry.is_dir():
             continue
-        try:
-            _validate_id_component(entry.name, label="source_id")
-        except SubstrateInvalidId as exc:
+        if not _PATH_SAFE_ID.match(entry.name):
             _log.warning(
-                "ignored non-path-safe distillation directory: %r (%s)",
+                "ignored non-path-safe distillation directory: %r "
+                "(contains characters outside [A-Za-z0-9_.-])",
                 entry.name,
-                exc,
             )
             continue
         valid.append(entry.name)
