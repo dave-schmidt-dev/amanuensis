@@ -151,6 +151,13 @@ class ReconcileResult:
         errors: ``(path, reason)`` pairs for output files that failed to
             parse or process. The offending file is left in place at the
             original location so the operator can triage manually.
+        connect_relations_committed: Ids of ``CrossDocRelation`` records
+            committed by the **connect** role specifically. Phase 2b
+            cleanup-3: filtered counter so per-phase reports
+            (``ConnectPhaseReport``) do not leak ids from non-connect
+            outputs reconciled in the same drain.
+        connect_clarifications_raised: Ids of clarifications auto-raised
+            by the **connect** role specifically (Phase 2b cleanup-3).
     """
 
     atoms_committed: list[str] = field(default_factory=list)
@@ -158,6 +165,8 @@ class ReconcileResult:
     clarifications_raised: list[str] = field(default_factory=list)
     outputs_consumed: list[Path] = field(default_factory=list)
     errors: list[tuple[Path, str]] = field(default_factory=list)
+    connect_relations_committed: list[str] = field(default_factory=list)
+    connect_clarifications_raised: list[str] = field(default_factory=list)
 
 
 # --- Public entry point ------------------------------------------------
@@ -1584,6 +1593,10 @@ def _process_connect_output(
             clar_id = build.clarification_id
             if clar_id is not None:
                 result.clarifications_raised.append(clar_id)
+                # Phase 2b cleanup-3: also record on the connect-only list
+                # so ConnectPhaseReport counters don't leak in non-connect
+                # ids reconciled in the same drain.
+                result.connect_clarifications_raised.append(clar_id)
                 from_source = _coerce_optional_str(candidate.get("from_source_id"))
                 if from_source:
                     clar_path = (
@@ -1601,6 +1614,9 @@ def _process_connect_output(
         # Happy path: record the committed relation.
         rel = build.cross_doc_relation
         result.relations_committed.append(rel.id)
+        # Phase 2b cleanup-3: also record on the connect-only list (see
+        # the cleanup-3 comment on the rejection-path append above).
+        result.connect_relations_committed.append(rel.id)
         rel_path = substrate.cross_doc_relation_path(rel.id)
         substrate_changes.append(str(rel_path.relative_to(workspace_root)))
 

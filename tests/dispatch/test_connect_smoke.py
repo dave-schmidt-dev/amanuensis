@@ -262,6 +262,98 @@ def test_two_inv15_failures_in_one_drain_track_distinct_ids(
     assert sorted(result.clarifications_raised) == on_disk
 
 
+# --- Phase 2b cleanup-3: ConnectPhaseReport counters filter to connect role ---
+
+
+def test_connect_phase_report_filters_out_non_connect_clarifications(
+    tmp_workspace_with_bilateral_resolutions: Path,
+) -> None:
+    """Mixed-role drain → ConnectPhaseReport counters only see connect-role ids.
+
+    Pre-cleanup-3, ``ConnectPhaseReport.relations_committed`` and
+    ``clarifications_raised`` were copied wholesale from
+    ``reconcile_outputs``'s aggregate counters. A pending map-audit
+    output landing in the same drain as the connect outputs would leak
+    its raised clarifications into the connect report — internally
+    inconsistent with ``outputs_consumed`` (which IS filtered).
+
+    Post-cleanup-3 the connect report reads from the new
+    ``connect_*`` per-role counters on ``ReconcileResult``, so a
+    map-audit clarification raised in the same drain stays out of the
+    connect report.
+
+    Scenario:
+        1. Plant a connect output that commits one CrossDocRelation.
+        2. Plant a map-audit output that raises one clarification.
+        3. Run ``run_connect_phase``.
+        4. Assert: the connect report's ``relations_committed`` has
+           exactly one id (the connect-committed relation), and its
+           ``clarifications_raised`` is empty (the map-audit
+           clarification does NOT leak in).
+    """
+    from amanuensis.dispatch.connect_orchestrator import run_connect_phase
+
+    workspace = tmp_workspace_with_bilateral_resolutions
+    sub = Substrate(workspace)
+
+    # (1) connect output → commits a relation
+    connect_hash = "cleanup3connect" + "a" * 8
+    _place_connect_output(
+        workspace,
+        inputs_hash=connect_hash,
+        proposed_relations=[_valid_candidate()],
+    )
+
+    # (2) map-audit output → raises a plain clarification under FROM_SOURCE_ID
+    audit_hash = "cleanup3audit" + "b" * 8
+    audit_dir = workspace / "dispatch" / "outputs" / f"map-audit-{audit_hash}"
+    audit_dir.mkdir(parents=True, exist_ok=True)
+    audit_payload = {
+        "accepted_entities": [],
+        "accepted_resolutions": [],
+        "clarifications": [
+            {
+                "kind": "resolution-disputed",
+                "source_id": FROM_SOURCE_ID,
+                "question": (
+                    "Map-audit-raised clarification that should NOT leak into connect report."
+                ),
+            }
+        ],
+    }
+    (audit_dir / "output.yaml").write_text(
+        yaml.safe_dump(audit_payload, sort_keys=True, default_flow_style=False),
+        encoding="utf-8",
+    )
+
+    report = run_connect_phase(sub)
+
+    # The connect-committed relation landed in the substrate.
+    rels = list(sub.list_cross_doc_relations())
+    assert len(rels) == 1, f"expected exactly one CrossDocRelation; got {rels!r}"
+
+    # Both outputs were drained, but the report only counts connect ones.
+    assert report.outputs_consumed == 1, (
+        f"expected outputs_consumed=1 (connect only); got {report.outputs_consumed}"
+    )
+
+    # The connect relation is reported.
+    assert report.relations_committed == [rels[0].id]
+
+    # The map-audit clarification is on disk but NOT in the connect report.
+    on_disk = list(
+        (workspace / "distillations" / FROM_SOURCE_ID / "clarifications" / "open").iterdir()
+    )
+    assert len(on_disk) == 1, (
+        "expected exactly one open clarification on disk (from map-audit); "
+        f"got {[p.name for p in on_disk]}"
+    )
+    assert report.clarifications_raised == [], (
+        "cleanup-3 contract: the connect report's clarifications_raised must "
+        f"NOT include map-audit-raised ids; got {report.clarifications_raised!r}"
+    )
+
+
 def test_build_cross_doc_relation_returns_clarification_id_on_inv15(
     tmp_workspace_with_partial_resolutions: Path,
     role_attribution: RoleAttribution,

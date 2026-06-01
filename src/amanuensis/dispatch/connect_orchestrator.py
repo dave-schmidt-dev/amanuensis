@@ -312,14 +312,17 @@ def run_connect_phase(substrate: Substrate) -> ConnectPhaseReport:
     )
     # Filter reconcile counters down to the connect role: ``reconcile_outputs``
     # drains EVERY pending output, so we count just the connect-role
-    # consumption for the phase report.
+    # consumption for the phase report. Phase 2b cleanup-3 extended this
+    # filter to relations_committed and clarifications_raised — those
+    # used to be copied wholesale from reconcile_result and could leak
+    # ids from co-drained non-connect outputs.
     connect_consumed = [
         p for p in reconcile_result.outputs_consumed if p.parent.name.startswith("connect-")
     ]
     return ConnectPhaseReport(
         enqueued=enqueued,
         outputs_consumed=len(connect_consumed),
-        relations_committed=list(reconcile_result.relations_committed),
-        clarifications_raised=list(reconcile_result.clarifications_raised),
+        relations_committed=list(reconcile_result.connect_relations_committed),
+        clarifications_raised=list(reconcile_result.connect_clarifications_raised),
         errors=list(reconcile_result.errors),
     )
