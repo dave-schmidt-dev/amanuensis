@@ -17,7 +17,7 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
-from amanuensis.schemas import RoleAttribution
+from amanuensis.schemas import RoleAttribution, compute_id
 from amanuensis.schemas.cross_doc_relation import CrossDocRelation
 
 
@@ -83,3 +83,23 @@ def test_rejects_invalid_kind(
     with pytest.raises(ValidationError) as exc:
         CrossDocRelation(**cross_doc_relation_payload)
     assert any(err["loc"] == ("kind",) for err in exc.value.errors())
+
+
+def test_id_is_stable_across_provenance_id_changes(
+    cross_doc_relation_payload: dict[str, Any],
+) -> None:
+    """``provenance_id`` is volatile; changing it must not change ``compute_id``."""
+    rel_a = CrossDocRelation(**cross_doc_relation_payload)
+    cross_doc_relation_payload["provenance_id"] = "p-different-0002"
+    rel_b = CrossDocRelation(**cross_doc_relation_payload)
+    assert compute_id(rel_a) == compute_id(rel_b)
+    assert compute_id(rel_a).startswith("x-")
+
+
+def test_id_changes_when_kind_changes(
+    cross_doc_relation_payload: dict[str, Any],
+) -> None:
+    rel_a = CrossDocRelation(**cross_doc_relation_payload)
+    cross_doc_relation_payload["kind"] = "attacks"
+    rel_b = CrossDocRelation(**cross_doc_relation_payload)
+    assert compute_id(rel_a) != compute_id(rel_b)
