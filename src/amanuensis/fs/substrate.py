@@ -726,10 +726,28 @@ class Substrate:
     # --- T3.5: Supersede add / get / list --------------------------------
 
     def add_resolution_supersede(self, rs: ResolutionSupersede) -> None:
-        """Write a ResolutionSupersede record atomically."""
+        """Write a ResolutionSupersede record atomically.
+
+        Gates enforced (mirrors Phase 2b's
+        ``add_cross_doc_relation_supersede`` per cleanup-4):
+
+        1. **Id discipline** — ``rs.id == compute_id(rs)``.
+        2. **INV-13 immutability** — if the canonical path exists, reads
+           the existing bytes. If byte-identical, no-op (idempotent). If
+           divergent, raises ``MutationOfImmutableRecord``.
+        """
         self._require_id_matches(rs)
         path = self.supersede_path(rs.id)
-        atomic_write_text(path, serialize_resolution_supersede_yaml(rs))
+        serialized = serialize_resolution_supersede_yaml(rs)
+        if path.is_file():
+            existing_bytes = path.read_bytes()
+            if existing_bytes == serialized.encode("utf-8"):
+                return  # idempotent
+            raise MutationOfImmutableRecord(
+                f"ResolutionSupersede at {path} already exists with "
+                f"different content; refusing to overwrite (INV-13)"
+            )
+        atomic_write_text(path, serialized)
 
     def get_resolution_supersede(self, supersede_id: str) -> ResolutionSupersede:
         """Read and return a ResolutionSupersede by its id."""
@@ -739,10 +757,28 @@ class Substrate:
         return parse_resolution_supersede_yaml(path.read_text(encoding="utf-8"))
 
     def add_entity_supersede(self, es: EntitySupersede) -> None:
-        """Write an EntitySupersede record atomically."""
+        """Write an EntitySupersede record atomically.
+
+        Gates enforced (mirrors Phase 2b's
+        ``add_cross_doc_relation_supersede`` per cleanup-4):
+
+        1. **Id discipline** — ``es.id == compute_id(es)``.
+        2. **INV-13 immutability** — if the canonical path exists, reads
+           the existing bytes. If byte-identical, no-op (idempotent). If
+           divergent, raises ``MutationOfImmutableRecord``.
+        """
         self._require_id_matches(es)
         path = self.supersede_path(es.id)
-        atomic_write_text(path, serialize_entity_supersede_yaml(es))
+        serialized = serialize_entity_supersede_yaml(es)
+        if path.is_file():
+            existing_bytes = path.read_bytes()
+            if existing_bytes == serialized.encode("utf-8"):
+                return  # idempotent
+            raise MutationOfImmutableRecord(
+                f"EntitySupersede at {path} already exists with "
+                f"different content; refusing to overwrite (INV-13)"
+            )
+        atomic_write_text(path, serialized)
 
     def get_entity_supersede(self, supersede_id: str) -> EntitySupersede:
         """Read and return an EntitySupersede by its id."""

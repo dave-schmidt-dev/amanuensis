@@ -47,6 +47,8 @@ from amanuensis.fs._errors import MutationOfImmutableRecord
 from amanuensis.fs._serialize import (
     serialize_cross_doc_relation_yaml,
     serialize_entity_md,
+    serialize_entity_supersede_yaml,
+    serialize_resolution_supersede_yaml,
     serialize_yaml,
 )
 from amanuensis.schemas import AgentAttribution, RoleAttribution
@@ -60,6 +62,7 @@ from tests.invariants.conftest import (
     _MAPPINGS_SOURCE_ID,
     _build_cross_doc_relation_supersede,
     _build_entity,
+    _build_entity_supersede,
     _build_resolution,
     _build_resolution_supersede,
     _inv15_build_relation,
@@ -334,3 +337,155 @@ def test_cross_doc_relation_supersede_chain_allows_correction(tmp_path: Path) ->
     assert s.cross_doc_relation_path(rel_v1.id).is_file(), (
         "cross-doc relation v1 should still exist on disk (immutability: no deletion)"
     )
+
+
+# ---------------------------------------------------------------------------
+# Phase 2b cleanup-4 — INV-13 extended to Phase 2a supersede records
+# ---------------------------------------------------------------------------
+#
+# Phase 2a's add_entity_supersede / add_resolution_supersede wrote
+# unconditionally via atomic_write_text. Phase 2b's
+# add_cross_doc_relation_supersede gained an immutability guard
+# (idempotent on identical content; MutationOfImmutableRecord on
+# divergent content). cleanup-4 backports the guard to the Phase 2a
+# pair so the supersede write surface is uniform across all three
+# kinds (s-, t-, v-).
+
+
+def _populated_supersede_pair_workspace(tmp_path: Path, project_name: str) -> Substrate:
+    """Build a workspace + Substrate populated with the entities and
+    resolutions needed to write s- and t- supersede records.
+
+    Two entities (ent_old, ent_new); two resolutions on the same atom
+    at distinct operand indexes (res_old, res_new); supersede records
+    pointing res_old → res_new and ent_old → ent_new are NOT pre-written
+    — the caller decides when to call add_*_supersede.
+    """
+    marker = tmp_path / "amanuensis.yaml"
+    marker.write_text(f"schema_version: 1\nproject_name: {project_name}\n", encoding="utf-8")
+    s = Substrate(tmp_path)
+    return s
+
+
+def test_resolution_supersede_idempotent(tmp_path: Path) -> None:
+    """add_resolution_supersede is a no-op on second write of identical content."""
+    s = _populated_supersede_pair_workspace(tmp_path, "inv13-rs-idempotent")
+
+    entity, entity_prov = _build_entity(_RA, _AGENT)
+    atomic_write_text(s.mappings_provenance_path(entity_prov.id), serialize_yaml(entity_prov))
+    s.add_entity(entity)
+
+    res_old, prov_old = _build_resolution(
+        _RA, _AGENT, source_id=_MAPPINGS_SOURCE_ID, atom_id=_MAPPINGS_ATOM_ID, entity_id=entity.id
+    )
+    res_new, prov_new = _build_resolution(
+        _RA,
+        _AGENT,
+        source_id=_MAPPINGS_SOURCE_ID,
+        atom_id=_MAPPINGS_ATOM_ID,
+        entity_id=entity.id,
+        operand_index=1,
+    )
+    atomic_write_text(s.mappings_provenance_path(prov_old.id), serialize_yaml(prov_old))
+    atomic_write_text(s.mappings_provenance_path(prov_new.id), serialize_yaml(prov_new))
+    s.add_resolution(res_old)
+    s.add_resolution(res_new)
+
+    supersede, sup_prov = _build_resolution_supersede(
+        _RA, _AGENT, superseded_resolution_id=res_old.id, replacement_resolution_id=res_new.id
+    )
+    atomic_write_text(s.mappings_provenance_path(sup_prov.id), serialize_yaml(sup_prov))
+
+    s.add_resolution_supersede(supersede)
+    # Re-adding the byte-identical record must not raise (cleanup-4).
+    s.add_resolution_supersede(supersede)
+    assert s.supersede_path(supersede.id).is_file()
+
+
+def test_resolution_supersede_mutation_raises(tmp_path: Path) -> None:
+    """add_resolution_supersede raises MutationOfImmutableRecord on tampered content."""
+    s = _populated_supersede_pair_workspace(tmp_path, "inv13-rs-mutation")
+
+    entity, entity_prov = _build_entity(_RA, _AGENT)
+    atomic_write_text(s.mappings_provenance_path(entity_prov.id), serialize_yaml(entity_prov))
+    s.add_entity(entity)
+
+    res_old, prov_old = _build_resolution(
+        _RA, _AGENT, source_id=_MAPPINGS_SOURCE_ID, atom_id=_MAPPINGS_ATOM_ID, entity_id=entity.id
+    )
+    res_new, prov_new = _build_resolution(
+        _RA,
+        _AGENT,
+        source_id=_MAPPINGS_SOURCE_ID,
+        atom_id=_MAPPINGS_ATOM_ID,
+        entity_id=entity.id,
+        operand_index=1,
+    )
+    atomic_write_text(s.mappings_provenance_path(prov_old.id), serialize_yaml(prov_old))
+    atomic_write_text(s.mappings_provenance_path(prov_new.id), serialize_yaml(prov_new))
+    s.add_resolution(res_old)
+    s.add_resolution(res_new)
+
+    supersede, sup_prov = _build_resolution_supersede(
+        _RA, _AGENT, superseded_resolution_id=res_old.id, replacement_resolution_id=res_new.id
+    )
+    atomic_write_text(s.mappings_provenance_path(sup_prov.id), serialize_yaml(sup_prov))
+    s.add_resolution_supersede(supersede)
+
+    # Forge: same id, different non-volatile content (reason).
+    forged = supersede.model_copy(update={"reason": "FORGED by hand"})
+    atomic_write_text(
+        s.supersede_path(supersede.id),
+        serialize_resolution_supersede_yaml(forged),
+    )
+    with pytest.raises(MutationOfImmutableRecord):
+        s.add_resolution_supersede(supersede)
+
+
+def test_entity_supersede_idempotent(tmp_path: Path) -> None:
+    """add_entity_supersede is a no-op on second write of identical content."""
+    s = _populated_supersede_pair_workspace(tmp_path, "inv13-es-idempotent")
+
+    ent_old, ent_old_prov = _build_entity(_RA, _AGENT)
+    ent_new, ent_new_prov = _build_entity(_RA, _AGENT, canonical_name="New Corp.")
+    atomic_write_text(s.mappings_provenance_path(ent_old_prov.id), serialize_yaml(ent_old_prov))
+    atomic_write_text(s.mappings_provenance_path(ent_new_prov.id), serialize_yaml(ent_new_prov))
+    s.add_entity(ent_old)
+    s.add_entity(ent_new)
+
+    supersede, sup_prov = _build_entity_supersede(
+        _RA, _AGENT, superseded_entity_id=ent_old.id, replacement_entity_id=ent_new.id
+    )
+    atomic_write_text(s.mappings_provenance_path(sup_prov.id), serialize_yaml(sup_prov))
+
+    s.add_entity_supersede(supersede)
+    # Re-adding the byte-identical record must not raise (cleanup-4).
+    s.add_entity_supersede(supersede)
+    assert s.supersede_path(supersede.id).is_file()
+
+
+def test_entity_supersede_mutation_raises(tmp_path: Path) -> None:
+    """add_entity_supersede raises MutationOfImmutableRecord on tampered content."""
+    s = _populated_supersede_pair_workspace(tmp_path, "inv13-es-mutation")
+
+    ent_old, ent_old_prov = _build_entity(_RA, _AGENT)
+    ent_new, ent_new_prov = _build_entity(_RA, _AGENT, canonical_name="New Corp.")
+    atomic_write_text(s.mappings_provenance_path(ent_old_prov.id), serialize_yaml(ent_old_prov))
+    atomic_write_text(s.mappings_provenance_path(ent_new_prov.id), serialize_yaml(ent_new_prov))
+    s.add_entity(ent_old)
+    s.add_entity(ent_new)
+
+    supersede, sup_prov = _build_entity_supersede(
+        _RA, _AGENT, superseded_entity_id=ent_old.id, replacement_entity_id=ent_new.id
+    )
+    atomic_write_text(s.mappings_provenance_path(sup_prov.id), serialize_yaml(sup_prov))
+    s.add_entity_supersede(supersede)
+
+    # Forge: same id, different non-volatile content (reason).
+    forged = supersede.model_copy(update={"reason": "FORGED by hand"})
+    atomic_write_text(
+        s.supersede_path(supersede.id),
+        serialize_entity_supersede_yaml(forged),
+    )
+    with pytest.raises(MutationOfImmutableRecord):
+        s.add_entity_supersede(supersede)

@@ -20,7 +20,12 @@ from typing import Any
 
 import pytest
 
-from amanuensis.fs import Substrate, SubstrateNotFound
+from amanuensis.fs import MutationOfImmutableRecord, Substrate, SubstrateNotFound
+from amanuensis.fs._atomic import atomic_write_text
+from amanuensis.fs._serialize import (
+    serialize_entity_supersede_yaml,
+    serialize_resolution_supersede_yaml,
+)
 from amanuensis.schemas import (
     CrossDocRelationSupersede,
     EntitySupersede,
@@ -316,3 +321,100 @@ def test_get_entity_supersede_raises_on_missing(tmp_workspace: Path) -> None:
     sub = _new(tmp_workspace)
     with pytest.raises(SubstrateNotFound):
         sub.get_entity_supersede("t-notexistent00000")
+
+
+# --- Phase 2b cleanup-4: INV-13 immutability guard on Phase 2a supersede writes
+
+
+def test_add_resolution_supersede_idempotent_on_identical_content(
+    tmp_workspace: Path, role_attribution: RoleAttribution
+) -> None:
+    """Re-adding a byte-identical ResolutionSupersede is a no-op (INV-13).
+
+    Phase 2b's add_cross_doc_relation_supersede has carried this guard
+    since M2; cleanup-4 backports it to Phase 2a's
+    add_resolution_supersede so the supersede surface is uniform.
+    """
+    sub = _new(tmp_workspace)
+    ent = make_entity(role_attribution)
+    sub.add_entity(ent)
+    res_old = make_resolution(role_attribution, ent, operand_index=0)
+    sub.add_resolution(res_old)
+    res_new = make_resolution(role_attribution, ent, operand_index=1)
+    sub.add_resolution(res_new)
+    rs = make_resolution_supersede(role_attribution, res_old, res_new)
+
+    sub.add_resolution_supersede(rs)
+    # Re-adding the byte-identical record must NOT raise.
+    sub.add_resolution_supersede(rs)
+
+    path = sub.supersede_path(rs.id)
+    assert path.is_file()
+    # Exactly one record on disk after the idempotent re-add.
+    assert len(list(sub.list_supersedes(kind="resolution"))) == 1
+
+
+def test_add_resolution_supersede_rejects_divergent_content(
+    tmp_workspace: Path, role_attribution: RoleAttribution
+) -> None:
+    """Tampered on-disk ResolutionSupersede content trips the guard."""
+    sub = _new(tmp_workspace)
+    ent = make_entity(role_attribution)
+    sub.add_entity(ent)
+    res_old = make_resolution(role_attribution, ent, operand_index=0)
+    sub.add_resolution(res_old)
+    res_new = make_resolution(role_attribution, ent, operand_index=1)
+    sub.add_resolution(res_new)
+    rs = make_resolution_supersede(role_attribution, res_old, res_new)
+    sub.add_resolution_supersede(rs)
+
+    # Forge: same id (so we hit the immutability guard, not the id check),
+    # different non-volatile content (reason).
+    forged = rs.model_copy(update={"reason": "FORGED reason by hand"})
+    atomic_write_text(
+        sub.supersede_path(rs.id),
+        serialize_resolution_supersede_yaml(forged),
+    )
+    with pytest.raises(MutationOfImmutableRecord):
+        sub.add_resolution_supersede(rs)
+
+
+def test_add_entity_supersede_idempotent_on_identical_content(
+    tmp_workspace: Path, role_attribution: RoleAttribution
+) -> None:
+    """Re-adding a byte-identical EntitySupersede is a no-op (INV-13)."""
+    sub = _new(tmp_workspace)
+    ent_old = make_entity(role_attribution, canonical_name="Old Corp.")
+    ent_new = make_entity(role_attribution, canonical_name="New Corp.", aliases=["New"])
+    sub.add_entity(ent_old)
+    sub.add_entity(ent_new)
+    es = make_entity_supersede(role_attribution, ent_old, ent_new)
+
+    sub.add_entity_supersede(es)
+    # Re-adding the byte-identical record must NOT raise.
+    sub.add_entity_supersede(es)
+
+    path = sub.supersede_path(es.id)
+    assert path.is_file()
+    assert len(list(sub.list_supersedes(kind="entity"))) == 1
+
+
+def test_add_entity_supersede_rejects_divergent_content(
+    tmp_workspace: Path, role_attribution: RoleAttribution
+) -> None:
+    """Tampered on-disk EntitySupersede content trips the guard."""
+    sub = _new(tmp_workspace)
+    ent_old = make_entity(role_attribution, canonical_name="Old Corp.")
+    ent_new = make_entity(role_attribution, canonical_name="New Corp.", aliases=["New"])
+    sub.add_entity(ent_old)
+    sub.add_entity(ent_new)
+    es = make_entity_supersede(role_attribution, ent_old, ent_new)
+    sub.add_entity_supersede(es)
+
+    forged = es.model_copy(update={"reason": "FORGED reason by hand"})
+    atomic_write_text(
+        sub.supersede_path(es.id),
+        serialize_entity_supersede_yaml(forged),
+    )
+    with pytest.raises(MutationOfImmutableRecord):
+        sub.add_entity_supersede(es)
