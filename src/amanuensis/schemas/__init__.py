@@ -14,6 +14,20 @@ Phase 1 types:
 - ``Vocabulary`` / ``VocabularyEntry`` / ``OperandTypeSchema`` — closed
   predicate registry
 
+Phase 2a types (Map / Resolve):
+
+- ``Entity`` — canonical entity in the mappings namespace
+- ``Resolution`` — (source, atom, surface_form) → entity binding
+- ``EntitySupersede`` — supervisor correction at the entity level
+- ``ResolutionSupersede`` — supervisor correction at the resolution level
+
+Phase 2b types (Connect):
+
+- ``CrossDocRelation`` — cross-document warrant-bearing edge between
+  atoms in DIFFERENT distillations, grounded by shared resolved entities
+- ``CrossDocRelationSupersede`` — supervisor correction for a
+  cross-doc relation
+
 Public helpers:
 
 - ``compute_id`` — content-addressable id computation for the five
@@ -26,6 +40,8 @@ from ._hashing import compute_id
 from ._shared import AgentAttribution, OperandRef, RoleAttribution
 from .atom import Atom
 from .clarification import Clarification
+from .cross_doc_relation import CrossDocRelation
+from .cross_doc_relation_supersede import CrossDocRelationSupersede
 from .entity import Entity
 from .entity_supersede import EntitySupersede
 from .iteration import IterationDirective
@@ -41,6 +57,8 @@ __all__ = [
     "AgentAttribution",
     "Atom",
     "Clarification",
+    "CrossDocRelation",
+    "CrossDocRelationSupersede",
     "Entity",
     "EntitySupersede",
     "IterationDirective",
