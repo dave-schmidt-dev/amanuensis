@@ -1525,7 +1525,7 @@ def _pick_probandum_clarification_source_id(substrate: Substrate) -> str:
     return _MAPPINGS_CLARIFICATION_SENTINEL
 
 
-def _build_probandum(
+def _build_probandum(  # pyright: ignore[reportUnusedFunction]
     candidate: dict[str, Any],
     substrate: Substrate,
     prov: ProvenanceRecord,
@@ -1697,7 +1697,7 @@ def _auto_raise_scheme_clarification(
     return clar_id
 
 
-def _build_probandum_edge(
+def _build_probandum_edge(  # pyright: ignore[reportUnusedFunction]
     candidate: dict[str, Any],
     substrate: Substrate,
     prov: ProvenanceRecord,
