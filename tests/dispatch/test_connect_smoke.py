@@ -208,3 +208,93 @@ def test_connector_smoke_inv15_failure_raises_clarification(
         "expected the connect-reconcile path to record the auto-raised "
         "clarification id in result.clarifications_raised"
     )
+
+
+# --- Phase 2b cleanup-2: clarification id plumbed through return ------
+
+
+def test_two_inv15_failures_in_one_drain_track_distinct_ids(
+    tmp_workspace_with_partial_resolutions: Path,
+) -> None:
+    """Two candidates failing INV-15 under the same from_source record both clar ids.
+
+    Regression for the mtime-scan bug: the old impl scanned
+    ``clarifications/open/`` and picked the freshest ``c-*.md``, so two
+    clusters writing under the same from_source in a single drain could
+    each pick up the OTHER cluster's id (mtime granularity is 1s on
+    macOS HFS+ → both files often share a timestamp). The cleanup-2 fix
+    threads each ``Clarification.id`` back from ``_build_cross_doc_relation``
+    so the reconciler records each id exactly once and correctly.
+
+    Two distinct candidates → two distinct INV-15 rejections → two
+    distinct clarifications on disk → both ids in
+    ``result.clarifications_raised``.
+    """
+    workspace = tmp_workspace_with_partial_resolutions
+    sub = Substrate(workspace)
+
+    # Two candidates that differ in warrant so their auto-raised
+    # clarifications hash to different ids. Both fail INV-15 because the
+    # partial-resolutions fixture has no from-endpoint Resolution.
+    candidate_a = _valid_candidate()
+    candidate_b = {**_valid_candidate(), "warrant": "alternate warrant for second cluster"}
+
+    inputs_hash = "twoclusters" + "a" * 8
+    _place_connect_output(
+        workspace,
+        inputs_hash=inputs_hash,
+        proposed_relations=[candidate_a, candidate_b],
+    )
+
+    result = reconcile_outputs(substrate=sub, workspace_root=workspace)
+
+    # No CrossDocRelation committed (both rejected).
+    assert list(sub.list_cross_doc_relations()) == []
+
+    # Two clarification files on disk.
+    clar_dir = workspace / "distillations" / FROM_SOURCE_ID / "clarifications" / "open"
+    on_disk = sorted(p.stem for p in clar_dir.iterdir() if p.suffix == ".md")
+    assert len(on_disk) == 2, f"expected two clarifications on disk; got {on_disk}"
+
+    # Both clarification ids must be in ReconcileResult and each must be
+    # one of the on-disk ids. The set equality is the cleanup-2 contract:
+    # no spurious id, no missed id, no duplicate.
+    assert sorted(result.clarifications_raised) == on_disk
+
+
+def test_build_cross_doc_relation_returns_clarification_id_on_inv15(
+    tmp_workspace_with_partial_resolutions: Path,
+    role_attribution: RoleAttribution,
+    fake_provenance: ProvenanceRecord,
+) -> None:
+    """Cleanup-2 contract: ``_build_cross_doc_relation`` returns the clar id on INV-15.
+
+    The helper used to return ``None`` on the auto-raise path, forcing
+    the reconciler to mtime-scan ``clarifications/open/`` to recover
+    the id. Post-cleanup-2 the helper returns a ``BuildResult`` with the
+    clarification id populated, eliminating the brittle scan.
+    """
+    from amanuensis.dispatch.reconcile import _build_cross_doc_relation
+
+    sub = Substrate(tmp_workspace_with_partial_resolutions)
+
+    build = _build_cross_doc_relation(
+        _valid_candidate(),
+        sub,
+        fake_provenance,
+        role_attributions=[role_attribution],
+    )
+    assert build.cross_doc_relation is None
+    assert build.clarification_id is not None
+    assert build.clarification_id.startswith("c-")
+
+    # The id must match the file that landed on disk.
+    clar_dir = (
+        tmp_workspace_with_partial_resolutions
+        / "distillations"
+        / FROM_SOURCE_ID
+        / "clarifications"
+        / "open"
+    )
+    on_disk = [p.stem for p in clar_dir.iterdir() if p.suffix == ".md"]
+    assert build.clarification_id in on_disk

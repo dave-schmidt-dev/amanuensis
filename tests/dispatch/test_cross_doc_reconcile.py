@@ -72,13 +72,15 @@ def test_valid_candidate_builds_record(
     """A Connector candidate that satisfies INV-15 commits a CrossDocRelation."""
     sub = Substrate(tmp_workspace_with_bilateral_resolutions)
 
-    rel = _build_cross_doc_relation(
+    build = _build_cross_doc_relation(
         _base_candidate(),
         sub,
         fake_provenance,
         role_attributions=[role_attribution],
     )
+    rel = build.cross_doc_relation
     assert rel is not None
+    assert build.clarification_id is None
     assert rel.kind == "supports"
     assert rel.provenance_id == fake_provenance.id
     # The substrate now has the record (read-back path).
@@ -101,7 +103,9 @@ def test_inv15_failure_writes_resolution_ambiguous_clarification(
 
     Asserts:
 
-    1. ``_build_cross_doc_relation`` returns ``None`` (NOT an exception).
+    1. ``_build_cross_doc_relation`` returns a ``CrossDocBuildResult``
+       with ``cross_doc_relation=None`` (NOT an exception) and a
+       populated ``clarification_id``.
     2. No CrossDocRelation lands in the substrate.
     3. Exactly one open ``resolution-ambiguous`` Clarification is filed
        under the from-endpoint distillation.
@@ -112,13 +116,14 @@ def test_inv15_failure_writes_resolution_ambiguous_clarification(
     """
     sub = Substrate(tmp_workspace_with_partial_resolutions)
 
-    result = _build_cross_doc_relation(
+    build = _build_cross_doc_relation(
         _base_candidate(),
         sub,
         fake_provenance,
         role_attributions=[role_attribution],
     )
-    assert result is None
+    assert build.cross_doc_relation is None
+    assert build.clarification_id is not None
     # No CrossDocRelation was written.
     assert list(sub.list_cross_doc_relations()) == []
     # A Clarification of kind resolution-ambiguous was written under from-source.
@@ -128,6 +133,8 @@ def test_inv15_failure_writes_resolution_ambiguous_clarification(
     assert len(open_clarifications) == 1
     c = open_clarifications[0]
     assert c.kind == "resolution-ambiguous"
+    # The returned id matches the on-disk record (cleanup-2 contract).
+    assert c.id == build.clarification_id
     # Both atom ids and the shared entity id are referenced (in question
     # text or in context_refs) so a human resolving the clarification
     # can navigate.
@@ -159,15 +166,17 @@ def test_supersede_flow_writes_supersede_record(
     sub = Substrate(tmp_workspace_with_bilateral_resolutions)
 
     candidate_v1 = _base_candidate()
-    rel_v1 = _build_cross_doc_relation(
+    build_v1 = _build_cross_doc_relation(
         candidate_v1, sub, fake_provenance, role_attributions=[role_attribution]
     )
+    rel_v1 = build_v1.cross_doc_relation
     assert rel_v1 is not None
 
     candidate_v2 = {**candidate_v1, "warrant": "REVISED warrant after clarification"}
-    rel_v2 = _build_cross_doc_relation(
+    build_v2 = _build_cross_doc_relation(
         candidate_v2, sub, fake_provenance, role_attributions=[role_attribution]
     )
+    rel_v2 = build_v2.cross_doc_relation
     assert rel_v2 is not None
     assert rel_v2.id != rel_v1.id
 
@@ -222,13 +231,16 @@ def test_re_add_after_resolution_lands(
     """
     sub = Substrate(tmp_workspace_with_partial_resolutions)
 
-    result_1 = _build_cross_doc_relation(
+    build_1 = _build_cross_doc_relation(
         _base_candidate(),
         sub,
         fake_provenance,
         role_attributions=[role_attribution],
     )
-    assert result_1 is None  # rejected — from-endpoint Resolution missing
+    # rejected — from-endpoint Resolution missing; the helper auto-raised
+    # a clarification + returned its id (cleanup-2 contract).
+    assert build_1.cross_doc_relation is None
+    assert build_1.clarification_id is not None
 
     # Supervisor resolves the clarification by adding the missing
     # Resolution. Build it with a real content-addressable id via
@@ -249,11 +261,12 @@ def test_re_add_after_resolution_lands(
     sub.add_resolution(res)
 
     # Re-run reconciler with the same candidate.
-    result_2 = _build_cross_doc_relation(
+    build_2 = _build_cross_doc_relation(
         _base_candidate(),
         sub,
         fake_provenance,
         role_attributions=[role_attribution],
     )
-    assert result_2 is not None
-    assert result_2.shared_entities == [SHARED_ENTITY_ID]
+    rel_2 = build_2.cross_doc_relation
+    assert rel_2 is not None
+    assert rel_2.shared_entities == [SHARED_ENTITY_ID]

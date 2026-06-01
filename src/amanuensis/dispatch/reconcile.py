@@ -1218,12 +1218,38 @@ def _build_resolution(
 # It is also exercised directly by ``tests/dispatch/test_cross_doc_reconcile.py``.
 
 
+@dataclass(slots=True)
+class CrossDocBuildResult:
+    """Outcome of one ``_build_cross_doc_relation`` call (Phase 2b cleanup-2).
+
+    Exactly one of ``cross_doc_relation`` / ``clarification_id`` is
+    populated on the non-error paths:
+
+    - ``cross_doc_relation`` set, ``clarification_id`` None — the
+      candidate satisfied INV-15 and was committed.
+    - ``cross_doc_relation`` None, ``clarification_id`` set — INV-15
+      rejected the candidate and the helper auto-raised a
+      ``resolution-ambiguous`` Clarification under the from-endpoint
+      distillation. ``clarification_id`` is the id of that record.
+
+    The Phase 2b ship recovered the auto-raised id by mtime-scanning
+    ``clarifications/open/`` after the call. That works for one
+    candidate per drain but is brittle when two candidates from the
+    same from_source raise clarifications within the same mtime tick
+    (1s precision on macOS HFS+). cleanup-2 plumbs the id back
+    directly so the reconciler does not have to guess.
+    """
+
+    cross_doc_relation: CrossDocRelation | None = None
+    clarification_id: str | None = None
+
+
 def _build_cross_doc_relation(
     candidate: dict[str, Any],
     substrate: Substrate,
     prov: ProvenanceRecord,
     role_attributions: list[RoleAttribution],
-) -> CrossDocRelation | None:
+) -> CrossDocBuildResult:
     """Build a ``CrossDocRelation`` from a Connector-role candidate dict.
 
     Mirrors :func:`_build_resolution` (Phase 2a) for the validation +
@@ -1254,8 +1280,12 @@ def _build_cross_doc_relation(
             on the rejection path so the auditor trail stays unified.
 
     Returns:
-        The committed ``CrossDocRelation`` on success, or ``None`` if
-        INV-15 rejected the candidate and a clarification was raised.
+        A :class:`CrossDocBuildResult` carrying either the committed
+        ``CrossDocRelation`` (happy path) or the id of the auto-raised
+        ``resolution-ambiguous`` Clarification (INV-15 rejection path).
+        Phase 2b cleanup-2 replaced the prior ``CrossDocRelation | None``
+        return so the reconciler no longer has to mtime-scan
+        ``clarifications/open/`` to recover the clarification id.
 
     Raises:
         CandidateShapeError: The candidate dict cannot be coerced into
@@ -1305,14 +1335,16 @@ def _build_cross_doc_relation(
         substrate.add_cross_doc_relation(rel)
     except SharedEntityGateViolation:
         # INV-15: ambiguous substrate state. Surface as a clarification
-        # for human supervision; do NOT propagate.
-        _auto_raise_resolution_clarification(
+        # for human supervision; do NOT propagate. Phase 2b cleanup-2:
+        # capture the clarification id from the helper rather than
+        # leaving the caller to mtime-scan to recover it.
+        clar_id = _auto_raise_resolution_clarification(
             rel,
             substrate=substrate,
             prov=prov,
             role_attributions=role_attributions,
         )
-        return None
+        return CrossDocBuildResult(cross_doc_relation=None, clarification_id=clar_id)
     except CrossSourceConstraintViolation as exc:
         # The Connector should never propose intra-source edges — they
         # belong to the Phase 1 extractor surface. Treat this as a shape
@@ -1327,7 +1359,7 @@ def _build_cross_doc_relation(
     # immutability error indicates real corruption (divergent content on
     # an existing id) which a clarification cannot fix.
 
-    return rel
+    return CrossDocBuildResult(cross_doc_relation=rel, clarification_id=None)
 
 
 def _auto_raise_resolution_clarification(
@@ -1336,7 +1368,7 @@ def _auto_raise_resolution_clarification(
     substrate: Substrate,
     prov: ProvenanceRecord,
     role_attributions: list[RoleAttribution],
-) -> None:
+) -> str:
     """Auto-raise a ``resolution-ambiguous`` clarification for a rejected edge.
 
     Called by :func:`_build_cross_doc_relation` when the INV-15 gate
@@ -1344,6 +1376,12 @@ def _auto_raise_resolution_clarification(
     from-endpoint's distillation (``rel.from_source_id``) so a
     supervisor browsing one source's open queue sees the edge proposal
     without having to cross-reference the to-endpoint.
+
+    Returns:
+        The id of the Clarification that was written. Phase 2b
+        cleanup-2: the caller uses this id to record the raise in
+        ``ReconcileResult.clarifications_raised`` without scanning the
+        open-clarifications directory.
 
     Notes:
         - The clarification's ``raised_provenance_id`` is the SAME
@@ -1417,6 +1455,7 @@ def _auto_raise_resolution_clarification(
     clar_id = compute_id(clar_draft)
     clar = clar_draft.model_copy(update={"id": clar_id})
     substrate.add_clarification(rel.from_source_id, clar)
+    return clar_id
 
 
 # --- Phase 2b M5: Connector output reconciliation ----------------------
@@ -1520,7 +1559,7 @@ def _process_connect_output(
             continue
         candidate: dict[str, Any] = cast("dict[str, Any]", raw_candidate)
         try:
-            rel = _build_cross_doc_relation(
+            build = _build_cross_doc_relation(
                 candidate,
                 substrate,
                 prov,
@@ -1534,40 +1573,33 @@ def _process_connect_output(
             result.errors.append((Path("(in-memory-cross-doc-relation)"), str(exc)))
             continue
 
-        if rel is None:
+        if build.cross_doc_relation is None:
             # INV-15 rejection path. ``_build_cross_doc_relation`` already
-            # raised the clarification under the from-endpoint
-            # distillation; we record the clarification's footprint via
-            # the substrate-changes list. The actual clarification id is
-            # not returned by the helper, so we walk the from-endpoint's
-            # open clarifications and pick the most recent one filed by
-            # this activity. (Cheap: O(open clarifications under one
-            # source); the alternative is plumbing the id back through
-            # the helper, which we defer until M6/M7 demands it.)
-            from_source = _coerce_optional_str(candidate.get("from_source_id"))
-            if from_source:
-                # The clarification path lives under the from-endpoint;
-                # add the directory itself to substrate_changes so the
-                # replay-log records the boundary crossing.
-                clar_dir = (
-                    substrate.root / "distillations" / from_source / "clarifications" / "open"
-                )
-                if clar_dir.is_dir():
-                    # Record the freshest .md as the changed path. (We
-                    # do not have direct access to the id; tests assert
-                    # on substrate.list_clarifications instead.)
-                    md_files = sorted(
-                        clar_dir.glob("c-*.md"),
-                        key=lambda p: p.stat().st_mtime,
-                        reverse=True,
+            # auto-raised the clarification under the from-endpoint
+            # distillation and threaded its id back to us (Phase 2b
+            # cleanup-2 replaced the prior mtime-scan recovery). Record
+            # the id in ReconcileResult + add the clarification's path to
+            # substrate_changes so the replay-log captures the boundary
+            # crossing.
+            clar_id = build.clarification_id
+            if clar_id is not None:
+                result.clarifications_raised.append(clar_id)
+                from_source = _coerce_optional_str(candidate.get("from_source_id"))
+                if from_source:
+                    clar_path = (
+                        substrate.root
+                        / "distillations"
+                        / from_source
+                        / "clarifications"
+                        / "open"
+                        / f"{clar_id}.md"
                     )
-                    if md_files:
-                        substrate_changes.append(str(md_files[0].relative_to(workspace_root)))
-                        # Best-effort: record the id from the filename.
-                        result.clarifications_raised.append(md_files[0].stem)
+                    if clar_path.is_file():
+                        substrate_changes.append(str(clar_path.relative_to(workspace_root)))
             continue
 
         # Happy path: record the committed relation.
+        rel = build.cross_doc_relation
         result.relations_committed.append(rel.id)
         rel_path = substrate.cross_doc_relation_path(rel.id)
         substrate_changes.append(str(rel_path.relative_to(workspace_root)))
