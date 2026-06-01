@@ -687,3 +687,103 @@ def test_supersede_already_superseded_rejected(
         ],
     )
     assert second.exit_code != 0
+
+
+# ---------------------------------------------------------------------------
+# T9.7: amanuensis map probandum-edge supersede <old-id> <new-id> --reason "..."
+# ---------------------------------------------------------------------------
+
+
+def _add_edge_via_cli(
+    workspace: Path,
+    parent_id: str,
+    child_id: str,
+    *,
+    warrant: str = "warrant",
+) -> str:
+    """CLI-driven helper: write a probandum-edge and return its id."""
+    result = runner.invoke(
+        map_app,
+        [
+            "probandum",
+            "link",
+            parent_id,
+            child_id,
+            "--kind",
+            "supports",
+            "--warrant",
+            warrant,
+            "--warrant-basis",
+            "fixture",
+            "--workspace",
+            str(workspace),
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    return result.stdout.strip().splitlines()[-1]
+
+
+def test_probandum_edge_supersede_writes_supersede_record(
+    tmp_workspace_with_walton_snapshot: Path,
+) -> None:
+    """The probandum-edge supersede verb writes a record and re-routes the chain."""
+    workspace = tmp_workspace_with_walton_snapshot
+    ult_id = _add_probandum(workspace, "Ultimate.", "ultimate")
+    pen_id = _add_probandum(
+        workspace,
+        "Penultimate.",
+        "penultimate",
+        alternatives=["Alt"],
+    )
+    # Two distinct edges (different warrants -> different ids).
+    old_edge_id = _add_edge_via_cli(workspace, ult_id, pen_id, warrant="original warrant")
+    new_edge_id = _add_edge_via_cli(workspace, ult_id, pen_id, warrant="refined warrant")
+    result = runner.invoke(
+        map_app,
+        [
+            "probandum-edge",
+            "supersede",
+            old_edge_id,
+            new_edge_id,
+            "--reason",
+            "supervisor tightened warrant",
+            "--workspace",
+            str(workspace),
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    sub = Substrate(workspace)
+    terminus = sub.latest_probandum_edge_for(old_edge_id)
+    assert terminus is not None
+    assert terminus.id == new_edge_id
+
+
+def test_probandum_edge_supersede_rejects_unknown_old_id(
+    tmp_workspace_with_walton_snapshot: Path,
+) -> None:
+    """An unknown old probandum-edge id is rejected before any write."""
+    workspace = tmp_workspace_with_walton_snapshot
+    ult_id = _add_probandum(workspace, "Ultimate.", "ultimate")
+    pen_id = _add_probandum(
+        workspace,
+        "Penultimate.",
+        "penultimate",
+        alternatives=["Alt"],
+    )
+    real_edge_id = _add_edge_via_cli(workspace, ult_id, pen_id)
+    result = runner.invoke(
+        map_app,
+        [
+            "probandum-edge",
+            "supersede",
+            "q-doesnotexist01",
+            real_edge_id,
+            "--reason",
+            "r",
+            "--workspace",
+            str(workspace),
+        ],
+    )
+    assert result.exit_code != 0
+    haystack = (result.stdout or "") + (result.stderr or "")
+    assert "not found" in haystack.lower()
