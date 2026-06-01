@@ -1595,6 +1595,47 @@ Format: dated entries, newest first. Bug entries cite the area touched:
     tests/e2e/{_fixture_builder.py,test_phase2c_tree_flow.py,
     test_phase2c_tree_flow.spec.ts}
 
+- **Phase 2c cleanup pass — two follow-ups from the Phase 2c ship.**
+  Closed the two open items flagged in the Phase 2c entry above; each
+  is a focused change with tests; no behavior regressions on the 1274-
+  case fast suite. (1) INV-19 charter entry retrofitted. The substrate
+  gate (``Substrate.add_probandum`` raises ``AchAlternativesGateViolation``
+  when ``kind in ("penultimate", "interim")`` and
+  ``alternatives_considered`` is empty) landed in Phase 2c M-foundation
+  but the charter row was forgotten. INVARIANTS.md now has the INV-19
+  block (Status: active, gated at substrate-construction surface;
+  Property + Rationale matching INV-5 / INV-18 closed-vocabulary style)
+  and a new parametric gate test at
+  ``tests/invariants/test_probandum_alternatives.py`` (5 cases:
+  clean-workspace round-trip, planted-penultimate-empty caught,
+  planted-interim-empty caught, ultimate-empty exempt, and an on-disk
+  walker that mirrors INV-16/17/18's "audit-time vs. write-time"
+  pattern to catch records that bypass the substrate write path —
+  e.g., manually authored YAML). ``tests/invariants/`` now runs 103
+  tests (was 98). Substrate code and exception class unchanged.
+  (2) Auto-raised clarification id plumbed through ``_build_probandum``
+  and ``_build_probandum_edge`` returns (new ``ProbandumBuildResult``
+  and ``ProbandumEdgeBuildResult`` dataclasses on
+  ``src/amanuensis/dispatch/reconcile.py``, mirroring the Phase 2b
+  cleanup-2 ``CrossDocBuildResult`` precedent) instead of recovered
+  by mtime-scan in ``_process_hierarchize_output`` — eliminates the
+  deterministic-with-1s-precision-only race when two probanda raise
+  scheme-missing or lineage-incomplete clarifications under the same
+  drain. ``_recover_latest_clarification_id`` deleted (grep confirms
+  zero remaining callers across ``src/`` and ``tests/``). New regression
+  test at
+  ``tests/dispatch/test_hierarchize_smoke.py::test_two_scheme_missing_failures_in_one_drain_track_distinct_ids``
+  drives two scheme-missing interim probanda through one drain and
+  asserts both ids land in ``ReconcileResult.clarifications_raised``
+  (and the per-role ``hierarchize_clarifications_raised`` list).
+  Existing rejection-path tests in
+  ``tests/dispatch/test_probandum_reconcile.py`` gained
+  ``clarification_id`` assertions on the returned dataclass to lock
+  the cleanup contract at the unit-test level too.
+  | files: src/amanuensis/dispatch/reconcile.py,
+  tests/dispatch/{test_probandum_reconcile,test_hierarchize_smoke}.py,
+  tests/invariants/test_probandum_alternatives.py, INVARIANTS.md
+
 ## 2026-05-31
 
 - **Phase 2a (Resolve) — SHIPPED.** All 82 tasks complete across 11

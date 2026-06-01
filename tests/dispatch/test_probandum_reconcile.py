@@ -175,14 +175,16 @@ def test_valid_candidate_builds_probandum(
     """A Hierarchize candidate that satisfies INV-18/19 commits a Probandum."""
     sub = Substrate(tmp_workspace_with_walton_snapshot)
 
-    prob = _build_probandum(
+    build = _build_probandum(
         _base_probandum_candidate(),
         sub,
         hierarchize_provenance,
         role_attributions=[hierarchize_role_attribution],
     )
 
+    prob = build.probandum
     assert prob is not None
+    assert build.clarification_id is None
     assert prob.statement == "ACME breached the contract."
     assert prob.scheme == "argument-from-expert-opinion"
     assert prob.provenance_id == hierarchize_provenance.id
@@ -201,7 +203,9 @@ def test_unknown_scheme_raises_clarification(
 
     Asserts:
 
-    1. ``_build_probandum`` returns ``None`` (NOT an exception).
+    1. ``_build_probandum`` returns a :class:`ProbandumBuildResult` with
+       ``probandum=None`` and a populated ``clarification_id`` (Phase 2c
+       cleanup contract; pre-cleanup the helper returned ``None``).
     2. No Probandum lands in the substrate.
     3. Exactly one open ``scheme-missing`` Clarification is filed under
        the first distillation (the helper's source-id picker prefers a
@@ -210,6 +214,7 @@ def test_unknown_scheme_raises_clarification(
        proposed scheme name and probandum statement excerpt so a human
        supervisor can extend the snapshot or mark the candidate as a
        false positive.
+    5. The plumbed ``clarification_id`` matches the on-disk record's id.
     """
     sub = Substrate(tmp_workspace_with_walton_snapshot_and_distillation)
 
@@ -218,14 +223,16 @@ def test_unknown_scheme_raises_clarification(
         scheme="argument-from-pure-fabrication",  # not in catalogue
     )
 
-    result = _build_probandum(
+    build = _build_probandum(
         candidate,
         sub,
         hierarchize_provenance,
         role_attributions=[hierarchize_role_attribution],
     )
 
-    assert result is None
+    assert build.probandum is None
+    assert build.clarification_id is not None
+    assert build.clarification_id.startswith("c-")
     # No Probandum was written.
     assert list(sub.list_probanda()) == []
     # The clarification landed under the first distillation.
@@ -233,6 +240,7 @@ def test_unknown_scheme_raises_clarification(
     assert len(open_clarifications) == 1
     c = open_clarifications[0]
     assert c.kind == "scheme-missing"
+    assert c.id == build.clarification_id  # cleanup contract.
     haystack = c.question + " " + " ".join(c.context_refs)
     assert "argument-from-pure-fabrication" in haystack
     assert "ACME failed to perform" in haystack
@@ -272,7 +280,7 @@ def _seed_ultimate_and_penultimate(
     when proposing edges.
     """
     sub = Substrate(workspace)
-    ultimate = _build_probandum(
+    ultimate_build = _build_probandum(
         _base_probandum_candidate(
             statement="ACME breached the contract.",
             kind="ultimate",
@@ -282,9 +290,10 @@ def _seed_ultimate_and_penultimate(
         hierarchize_provenance,
         role_attributions=[hierarchize_role_attribution],
     )
+    ultimate = ultimate_build.probandum
     assert ultimate is not None
 
-    penultimate = _build_probandum(
+    penultimate_build = _build_probandum(
         _base_probandum_candidate(
             statement="ACME failed to pay on the due date.",
             kind="penultimate",
@@ -294,6 +303,7 @@ def _seed_ultimate_and_penultimate(
         hierarchize_provenance,
         role_attributions=[hierarchize_role_attribution],
     )
+    penultimate = penultimate_build.probandum
     assert penultimate is not None
     return ultimate.id, penultimate.id
 
@@ -333,14 +343,16 @@ def test_valid_edge_candidate_builds(
         hierarchize_provenance,
     )
 
-    edge = _build_probandum_edge(
+    build = _build_probandum_edge(
         _base_edge_candidate(parent_probandum_id=ult_id, child_id=pen_id),
         sub,
         hierarchize_provenance,
         role_attributions=[hierarchize_role_attribution],
     )
 
+    edge = build.probandum_edge
     assert edge is not None
+    assert build.clarification_id is None
     assert edge.parent_probandum_id == ult_id
     assert edge.child_id == pen_id
     # The substrate now has the edge (read-back path).
@@ -358,16 +370,20 @@ def test_lineage_incomplete_raises_clarification(
 
     Asserts:
 
-    1. ``_build_probandum_edge`` returns ``None``.
+    1. ``_build_probandum_edge`` returns a
+       :class:`ProbandumEdgeBuildResult` with ``probandum_edge=None`` and
+       a populated ``clarification_id`` (Phase 2c cleanup contract;
+       pre-cleanup the helper returned ``None``).
     2. No ProbandumEdge lands in the substrate.
     3. Exactly one open ``lineage-incomplete`` Clarification is filed
        under the first distillation.
     4. The clarification's context_refs carries both the parent and
        child ids so a human supervisor can navigate either way.
+    5. The plumbed ``clarification_id`` matches the on-disk record's id.
     """
     sub = Substrate(tmp_workspace_with_walton_snapshot_and_distillation)
     # Two penultimate probanda — neither linked to an ultimate.
-    orphan_parent = _build_probandum(
+    orphan_parent_build = _build_probandum(
         _base_probandum_candidate(
             statement="Orphan parent — no ultimate lineage.",
             kind="penultimate",
@@ -377,7 +393,7 @@ def test_lineage_incomplete_raises_clarification(
         hierarchize_provenance,
         role_attributions=[hierarchize_role_attribution],
     )
-    orphan_child = _build_probandum(
+    orphan_child_build = _build_probandum(
         _base_probandum_candidate(
             statement="Orphan child — also has no lineage path.",
             kind="penultimate",
@@ -387,10 +403,12 @@ def test_lineage_incomplete_raises_clarification(
         hierarchize_provenance,
         role_attributions=[hierarchize_role_attribution],
     )
+    orphan_parent = orphan_parent_build.probandum
+    orphan_child = orphan_child_build.probandum
     assert orphan_parent is not None
     assert orphan_child is not None
 
-    result = _build_probandum_edge(
+    build = _build_probandum_edge(
         _base_edge_candidate(
             parent_probandum_id=orphan_parent.id,
             child_id=orphan_child.id,
@@ -400,7 +418,9 @@ def test_lineage_incomplete_raises_clarification(
         role_attributions=[hierarchize_role_attribution],
     )
 
-    assert result is None
+    assert build.probandum_edge is None
+    assert build.clarification_id is not None
+    assert build.clarification_id.startswith("c-")
     # No edge was written.
     assert list(sub.list_probandum_edges()) == []
     open_clarifications = list_open_clarifications_for_source(
@@ -409,6 +429,7 @@ def test_lineage_incomplete_raises_clarification(
     assert len(open_clarifications) == 1
     c = open_clarifications[0]
     assert c.kind == "lineage-incomplete"
+    assert c.id == build.clarification_id  # cleanup contract.
     # Both endpoints appear in context_refs.
     haystack_refs = " ".join(c.context_refs)
     assert orphan_parent.id in haystack_refs
@@ -435,7 +456,7 @@ def test_probandum_supersede_flow_end_to_end(
     """
     sub = Substrate(tmp_workspace_with_walton_snapshot)
 
-    prob_v1 = _build_probandum(
+    prob_v1_build = _build_probandum(
         _base_probandum_candidate(
             statement="ACME breached the contract.",
             kind="ultimate",
@@ -444,9 +465,10 @@ def test_probandum_supersede_flow_end_to_end(
         hierarchize_provenance,
         role_attributions=[hierarchize_role_attribution],
     )
+    prob_v1 = prob_v1_build.probandum
     assert prob_v1 is not None
 
-    prob_v2 = _build_probandum(
+    prob_v2_build = _build_probandum(
         _base_probandum_candidate(
             statement="ACME breached §3.2 of the contract.",  # revised wording
             kind="ultimate",
@@ -455,6 +477,7 @@ def test_probandum_supersede_flow_end_to_end(
         hierarchize_provenance,
         role_attributions=[hierarchize_role_attribution],
     )
+    prob_v2 = prob_v2_build.probandum
     assert prob_v2 is not None
     assert prob_v2.id != prob_v1.id
 
@@ -506,7 +529,7 @@ def test_re_add_after_lineage_resolved(
     """
     sub = Substrate(tmp_workspace_with_walton_snapshot_and_distillation)
 
-    ultimate = _build_probandum(
+    ultimate_build = _build_probandum(
         _base_probandum_candidate(
             statement="Ultimate proposition.",
             kind="ultimate",
@@ -515,10 +538,11 @@ def test_re_add_after_lineage_resolved(
         hierarchize_provenance,
         role_attributions=[hierarchize_role_attribution],
     )
+    ultimate = ultimate_build.probandum
     assert ultimate is not None
 
     # Penultimate without a linking edge from ultimate yet (orphan).
-    orphan_pen = _build_probandum(
+    orphan_pen_build = _build_probandum(
         _base_probandum_candidate(
             statement="Penultimate proposition — orphaned at first.",
             kind="penultimate",
@@ -528,11 +552,12 @@ def test_re_add_after_lineage_resolved(
         hierarchize_provenance,
         role_attributions=[hierarchize_role_attribution],
     )
+    orphan_pen = orphan_pen_build.probandum
     assert orphan_pen is not None
 
     # Child interim probandum the Hierarchize role wants to attach
     # under the orphan penultimate.
-    child = _build_probandum(
+    child_build = _build_probandum(
         _base_probandum_candidate(
             statement="Interim sub-proposition under the penultimate.",
             kind="interim",
@@ -542,6 +567,7 @@ def test_re_add_after_lineage_resolved(
         hierarchize_provenance,
         role_attributions=[hierarchize_role_attribution],
     )
+    child = child_build.probandum
     assert child is not None
 
     # Step 2: propose orphan_pen -> child. Rejected (orphan_pen's
@@ -555,14 +581,15 @@ def test_re_add_after_lineage_resolved(
         hierarchize_provenance,
         role_attributions=[hierarchize_role_attribution],
     )
-    assert edge_attempt_1 is None
+    assert edge_attempt_1.probandum_edge is None
+    assert edge_attempt_1.clarification_id is not None
     assert list(sub.list_probandum_edges()) == []
     # A lineage-incomplete clarification was raised.
     open_clars = list_open_clarifications_for_source(sub, "src-A", kind="lineage-incomplete")
     assert len(open_clars) == 1
 
     # Step 3: supervisor lands the missing linking edge ultimate -> orphan_pen.
-    linking_edge = _build_probandum_edge(
+    linking_edge_build = _build_probandum_edge(
         _base_edge_candidate(
             parent_probandum_id=ultimate.id,
             child_id=orphan_pen.id,
@@ -571,7 +598,8 @@ def test_re_add_after_lineage_resolved(
         hierarchize_provenance,
         role_attributions=[hierarchize_role_attribution],
     )
-    assert linking_edge is not None  # ultimate parent always passes lineage gate.
+    # ultimate parent always passes the lineage gate.
+    assert linking_edge_build.probandum_edge is not None
 
     # Step 4: re-attempt orphan_pen -> child. Now succeeds because
     # orphan_pen's lineage reaches ultimate via the new linking edge.
@@ -584,9 +612,10 @@ def test_re_add_after_lineage_resolved(
         hierarchize_provenance,
         role_attributions=[hierarchize_role_attribution],
     )
-    assert edge_attempt_2 is not None
-    assert edge_attempt_2.parent_probandum_id == orphan_pen.id
-    assert edge_attempt_2.child_id == child.id
+    edge_2 = edge_attempt_2.probandum_edge
+    assert edge_2 is not None
+    assert edge_2.parent_probandum_id == orphan_pen.id
+    assert edge_2.child_id == child.id
 
     # Two edges total now: the linking edge and the original retried edge.
     all_edges = list(sub.list_probandum_edges())

@@ -408,3 +408,87 @@ def test_hierarchize_smoke_scheme_missing_rejection(
         "expected the hierarchize-reconcile path to record the "
         "auto-raised clarification id in result.clarifications_raised"
     )
+
+
+# --- Phase 2c cleanup: clarification id plumbed through return --------
+
+
+def test_two_scheme_missing_failures_in_one_drain_track_distinct_ids(
+    tmp_hierarchize_workspace: tuple[Path, str, str],
+) -> None:
+    """Two interim probanda failing INV-18 in one drain record both clar ids.
+
+    Regression for the mtime-scan bug parallel to Phase 2b cleanup-2's
+    ``test_two_inv15_failures_in_one_drain_track_distinct_ids``: the
+    pre-cleanup impl scanned ``clarifications/open/`` and returned the
+    freshest ``c-*.md`` of the requested kind. When two scheme-missing
+    rejections in one drain landed in the same filesystem mtime tick
+    (1s precision on macOS HFS+), both could resolve to the SAME id —
+    losing one raise and double-counting the other. The Phase 2c
+    cleanup threads each ``Clarification.id`` back from
+    :func:`_build_probandum` so the reconciler records each id exactly
+    once and correctly.
+
+    Two distinct interim probanda → two distinct INV-18 rejections →
+    two distinct clarifications on disk → both ids in
+    ``result.clarifications_raised``.
+
+    Note on race coverage: we do NOT call ``os.utime`` to force the
+    same mtime — on a fast machine both files often land in the same
+    tick naturally. The test is a regression-against-the-bug-returning
+    rather than a guaranteed-fail-before-fix: post-cleanup the
+    plumbed-id contract makes filesystem mtimes irrelevant.
+    """
+    workspace, _, _penultimate_id = tmp_hierarchize_workspace
+    sub = Substrate(workspace)
+    pre_count_probanda = len(list(sub.list_probanda()))
+
+    inputs_hash = "twoschememissing" + "a" * 8
+    # Two interim probanda with different statements so the auto-raised
+    # clarifications hash to different ids (the clarification's
+    # context_refs carries the probandum id + statement excerpt; both
+    # diverge between the two candidates).
+    interim_probanda = [
+        {
+            "statement": "Smith violated fabricated obligation alpha.",
+            "kind": "interim",
+            "scheme": "argument-from-pure-fabrication",  # not in snapshot
+            "alternatives_considered": ["Alpha alternative."],
+            "confidence": "low",
+        },
+        {
+            "statement": "Smith violated fabricated obligation beta.",
+            "kind": "interim",
+            "scheme": "argument-from-different-fabrication",  # also not in snapshot
+            "alternatives_considered": ["Beta alternative."],
+            "confidence": "low",
+        },
+    ]
+    # No edges — this test isolates the scheme-missing path.
+    probandum_edges: list[dict[str, Any]] = []
+    _place_hierarchize_output(
+        workspace,
+        inputs_hash=inputs_hash,
+        interim_probanda=interim_probanda,
+        probandum_edges=probandum_edges,
+    )
+
+    result = reconcile_outputs(substrate=sub, workspace_root=workspace)
+
+    # Neither interim landed in the substrate.
+    post_probanda = list(sub.list_probanda())
+    assert len(post_probanda) == pre_count_probanda, (
+        f"probanda count changed (expected stable); got {len(post_probanda)}"
+    )
+
+    # Two clarification files on disk under src-A's open queue.
+    clar_dir = workspace / "distillations" / "src-A" / "clarifications" / "open"
+    on_disk = sorted(p.stem for p in clar_dir.iterdir() if p.suffix == ".md")
+    assert len(on_disk) == 2, f"expected two clarifications on disk; got {on_disk}"
+
+    # Both clarification ids must be in ReconcileResult and each must be
+    # one of the on-disk ids. The set equality is the cleanup contract:
+    # no spurious id, no missed id, no duplicate.
+    assert sorted(result.clarifications_raised) == on_disk
+    # Same contract on the hierarchize-only counter.
+    assert sorted(result.hierarchize_clarifications_raised) == on_disk

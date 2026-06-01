@@ -54,19 +54,31 @@ Prior plan: `~/Documents/Projects/.plans/amanuensis/phase1-distill-foundation-20
   defects caught + remediated, and full validation transcript.
 - [done] **Phase 2c (Hierarchize) — SHIPPED 2026-06-01.** All ~85
   tasks complete across 13 milestones. 1274 fast pytest cases +
-  64+ invariants (INV-1..18, +INV-19 substrate-level) + integration
-  + 18 Playwright specs pass; pyright strict (0 NEW errors) + ruff
-  + vulture clean. 4 new schemas (Probandum, ProbandumEdge,
-  ProbandumSupersede, ProbandumEdgeSupersede); new role
-  (``amanuensis:map:hierarchize``); 9 new CLI sub-commands (map
+  64+ invariants (INV-1..19, INV-19 charter row added in cleanup
+  pass) + integration + 18 Playwright specs pass; pyright strict
+  (0 NEW errors) + ruff + vulture clean. 4 new schemas (Probandum,
+  ProbandumEdge, ProbandumSupersede, ProbandumEdgeSupersede); new
+  role (``amanuensis:map:hierarchize``); 9 new CLI sub-commands (map
   probandum + map walton-scheme + --hierarchize-only flag); 3 new
   web routes (/probanda list + detail + tree) with Cytoscape dagre
   visualization; static export probandum-tree.html appendix +
-  per-probandum lineage pages; 3 new invariants (INV-16
+  per-probandum lineage pages; 4 new invariants (INV-16
   tree-not-DAG, INV-17 lineage-to-ultimate, INV-18 closed Walton-
-  scheme vocabulary). See HISTORY.md 2026-06-01 entry for the
+  scheme vocabulary, INV-19 ACH alternatives required on non-
+  ultimate probanda). See HISTORY.md 2026-06-01 entry for the
   per-milestone breakdown, defects caught + remediated, and full
   validation transcript.
+- [done] **Phase 2c cleanup pass — SHIPPED 2026-06-01.** Two
+  follow-ups closed: (1) INV-19 charter entry retrofitted with new
+  parametric on-disk gate test at
+  ``tests/invariants/test_probandum_alternatives.py``; (2)
+  clarification id plumbed through ``_build_probandum`` /
+  ``_build_probandum_edge`` returns via new ``ProbandumBuildResult``
+  + ``ProbandumEdgeBuildResult`` dataclasses (mirrors Phase 2b
+  cleanup-2's ``CrossDocBuildResult``); ``_recover_latest_clarification_id``
+  deleted; regression test added for the two-probanda-one-drain race.
+  See HISTORY.md 2026-06-01 entry "Phase 2c cleanup pass" for the
+  bullet-level breakdown.
 - [pending] Phase 3 (Extend) — not blocked; full brainstorm cycle
   required. Phase 2 complete (Phase 2a/2b/2c all shipped).
 - [pending] Phase 4 (Synthesize) — packaging into agent-usable

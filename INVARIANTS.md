@@ -403,3 +403,35 @@ Status legend: `active` (gate enforced) | `near-threshold` (warn) | `waived` (ex
   matrix and break downstream lookup; the per-engagement snapshot keeps
   vocabulary evolution from retroactively changing the meaning of probanda
   already on disk.
+
+## INV-19 — ACH alternatives are required on non-ultimate probanda
+
+- **Status:** active (gated at substrate-construction surface)
+- **Established:** 2026-06-01 (Phase 2c M-cleanup; gate landed during
+  Phase 2c, charter entry retrofitted in cleanup pass)
+- **Property:** Every `Probandum` with `kind in ("penultimate", "interim")`
+  MUST have a non-empty `alternatives_considered` list (Analysis of
+  Competing Hypotheses discipline). `ultimate` probanda are exempt —
+  they ARE the alternatives the corpus picks between, not nodes that
+  pick between sub-alternatives. `Substrate.add_probandum` raises
+  `AchAlternativesGateViolation` (defined in
+  `src/amanuensis/fs/_errors.py`; inherits from both `SubstrateError`
+  and `ValueError`) when the gate trips.
+- **Gate test:** `tests/fs/test_probandum_io.py` —
+  `test_rejects_empty_alternatives_on_penultimate` +
+  `test_rejects_empty_alternatives_on_interim` +
+  `test_accepts_empty_alternatives_on_ultimate` exercise the
+  substrate write-time gate directly. `tests/invariants/test_probandum_alternatives.py`
+  additionally walks every probandum on disk via
+  `Substrate.list_probanda` and re-runs the gate through
+  `Substrate.add_probandum`, catching records that bypass the substrate
+  write path (e.g., manually authored YAML).
+- **Rationale:** ACH (Analysis of Competing Hypotheses, Heuer) is the
+  structural discipline that prevents single-hypothesis tunnel vision
+  in the probandum tree. An interim or penultimate finding without
+  enumerated alternatives is by construction an unfalsified claim — it
+  has nowhere on disk to record what other hypotheses were considered
+  and rejected. The gate forces the operator to record the comparison
+  set at write-time. `ultimate` probanda are exempt because they sit
+  at the top of the lineage and ARE the alternative set the engagement
+  is choosing among.

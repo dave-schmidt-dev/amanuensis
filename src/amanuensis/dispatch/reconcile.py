@@ -1295,6 +1295,58 @@ class CrossDocBuildResult:
     clarification_id: str | None = None
 
 
+@dataclass(slots=True)
+class ProbandumBuildResult:
+    """Outcome of one ``_build_probandum`` call (Phase 2c cleanup).
+
+    Mirrors :class:`CrossDocBuildResult` (Phase 2b cleanup-2).
+    Exactly one of ``probandum`` / ``clarification_id`` is populated
+    on the non-error paths:
+
+    - ``probandum`` set, ``clarification_id`` None — the candidate
+      satisfied INV-18 (closed Walton vocabulary) and was committed.
+    - ``probandum`` None, ``clarification_id`` set — INV-18 rejected
+      the candidate and the helper auto-raised a
+      ``scheme-missing`` Clarification. ``clarification_id``
+      is the id of that record.
+
+    Replaces the mtime-scan recovery in
+    :func:`_process_hierarchize_output` (parallel to the Phase 2b
+    cleanup-2 replacement for the Connect path). Same race motive:
+    two probanda raising scheme-missing clarifications within one
+    mtime tick are both deterministically recorded.
+    """
+
+    probandum: Probandum | None = None
+    clarification_id: str | None = None
+
+
+@dataclass(slots=True)
+class ProbandumEdgeBuildResult:
+    """Outcome of one ``_build_probandum_edge`` call (Phase 2c cleanup).
+
+    Mirrors :class:`CrossDocBuildResult` (Phase 2b cleanup-2).
+    Exactly one of ``probandum_edge`` / ``clarification_id`` is
+    populated on the non-error paths:
+
+    - ``probandum_edge`` set, ``clarification_id`` None — the
+      candidate satisfied INV-17 (lineage-complete) and was committed.
+    - ``probandum_edge`` None, ``clarification_id`` set — INV-17
+      rejected the candidate and the helper auto-raised a
+      ``lineage-incomplete`` Clarification. ``clarification_id`` is
+      the id of that record.
+
+    Replaces the mtime-scan recovery in
+    :func:`_process_hierarchize_output` (parallel to the Phase 2b
+    cleanup-2 replacement for the Connect path). Same race motive:
+    two edges raising lineage-incomplete clarifications within one
+    mtime tick are both deterministically recorded.
+    """
+
+    probandum_edge: ProbandumEdge | None = None
+    clarification_id: str | None = None
+
+
 def _build_cross_doc_relation(
     candidate: dict[str, Any],
     substrate: Substrate,
@@ -1552,7 +1604,7 @@ def _build_probandum(  # pyright: ignore[reportUnusedFunction]
     substrate: Substrate,
     prov: ProvenanceRecord,
     role_attributions: list[RoleAttribution],
-) -> Probandum | None:
+) -> ProbandumBuildResult:
     """Build a ``Probandum`` from a Hierarchize-role candidate dict.
 
     Mirrors :func:`_build_cross_doc_relation`: pydantic shape check ->
@@ -1578,9 +1630,12 @@ def _build_probandum(  # pyright: ignore[reportUnusedFunction]
             probandum and forwarded onto any auto-raised Clarification.
 
     Returns:
-        The committed ``Probandum`` (happy path) or ``None`` when INV-18
-        rejected the candidate and the helper auto-raised a
-        ``scheme-missing`` Clarification.
+        A :class:`ProbandumBuildResult` carrying either the committed
+        ``Probandum`` (happy path) or the id of the auto-raised
+        ``scheme-missing`` Clarification (INV-18 rejection path).
+        Phase 2c cleanup replaced the prior ``Probandum | None`` return
+        so the reconciler no longer has to mtime-scan
+        ``clarifications/open/`` to recover the clarification id.
 
     Raises:
         CandidateShapeError: pydantic validation failed on the candidate
@@ -1613,19 +1668,21 @@ def _build_probandum(  # pyright: ignore[reportUnusedFunction]
         # ``scheme-missing`` Clarification for human supervision; do NOT
         # propagate. Recovery path: supervisor extends the snapshot via
         # ``amanuensis map walton-scheme snapshot --extend`` and the
-        # reconciler retries.
-        _auto_raise_scheme_clarification(
+        # reconciler retries. Phase 2c cleanup: capture the
+        # clarification id from the helper rather than leaving the
+        # caller to mtime-scan to recover it.
+        clar_id = _auto_raise_scheme_clarification(
             prob,
             substrate=substrate,
             prov=prov,
             role_attributions=role_attributions,
         )
-        return None
+        return ProbandumBuildResult(probandum=None, clarification_id=clar_id)
     # AchAlternativesGateViolation and MutationOfImmutableRecord propagate
     # as-is — INV-19 is a shape-class invariant the auditor pre-checks,
     # and INV-13 divergence indicates real corruption.
 
-    return prob
+    return ProbandumBuildResult(probandum=prob, clarification_id=None)
 
 
 def _auto_raise_scheme_clarification(
@@ -1722,7 +1779,7 @@ def _build_probandum_edge(  # pyright: ignore[reportUnusedFunction]
     substrate: Substrate,
     prov: ProvenanceRecord,
     role_attributions: list[RoleAttribution],
-) -> ProbandumEdge | None:
+) -> ProbandumEdgeBuildResult:
     """Build a ``ProbandumEdge`` from a Hierarchize-role candidate dict.
 
     Mirrors :func:`_build_cross_doc_relation` and :func:`_build_probandum`:
@@ -1737,9 +1794,13 @@ def _build_probandum_edge(  # pyright: ignore[reportUnusedFunction]
     clarification cannot magically make a missing record appear.
 
     Returns:
-        The committed ``ProbandumEdge`` (happy path) or ``None`` when
-        INV-17 rejected the candidate and the helper auto-raised a
-        ``lineage-incomplete`` Clarification.
+        A :class:`ProbandumEdgeBuildResult` carrying either the
+        committed ``ProbandumEdge`` (happy path) or the id of the
+        auto-raised ``lineage-incomplete`` Clarification (INV-17
+        rejection path). Phase 2c cleanup replaced the prior
+        ``ProbandumEdge | None`` return so the reconciler no longer has
+        to mtime-scan ``clarifications/open/`` to recover the
+        clarification id.
 
     Raises:
         CandidateShapeError: pydantic validation failed on the candidate.
@@ -1772,18 +1833,20 @@ def _build_probandum_edge(  # pyright: ignore[reportUnusedFunction]
         # do NOT propagate. Recovery path: supervisor lands the missing
         # parent-edge linking the parent up to an ultimate via
         # ``amanuensis map probandum link <parent> <ultimate>`` and the
-        # reconciler retries.
-        _auto_raise_lineage_clarification(
+        # reconciler retries. Phase 2c cleanup: capture the
+        # clarification id from the helper rather than leaving the
+        # caller to mtime-scan to recover it.
+        clar_id = _auto_raise_lineage_clarification(
             edge,
             substrate=substrate,
             prov=prov,
             role_attributions=role_attributions,
         )
-        return None
+        return ProbandumEdgeBuildResult(probandum_edge=None, clarification_id=clar_id)
     # ProbandumTreeViolation / ParentProbandumMissing / EdgeChildMissing
     # / MutationOfImmutableRecord propagate as-is.
 
-    return edge
+    return ProbandumEdgeBuildResult(probandum_edge=edge, clarification_id=None)
 
 
 def _auto_raise_lineage_clarification(
@@ -2127,7 +2190,7 @@ def _process_hierarchize_output(
             continue
         candidate: dict[str, Any] = cast("dict[str, Any]", raw_candidate)
         try:
-            prob = _build_probandum(
+            prob_build = _build_probandum(
                 candidate,
                 substrate,
                 prov,
@@ -2137,19 +2200,16 @@ def _process_hierarchize_output(
             result.errors.append((Path("(in-memory-probandum)"), str(exc)))
             continue
 
-        if prob is None:
+        if prob_build.probandum is None:
             # INV-18 rejection path. ``_build_probandum`` already
             # auto-raised a ``scheme-missing`` Clarification under the
-            # first available distillation. Recover the id by scanning
-            # the open clarifications dir (the helper does not yet
-            # plumb the id back — that's a follow-up cleanup parallel
-            # to Phase 2b's cleanup-2).
-            #
-            # Phase 2c M7 keeps things simple: the smoke test asserts
-            # the clarification landed on disk; per-id plumbing into
-            # ReconcileResult can land alongside the Connector's
-            # cleanup-2 parallel in a later sweep.
-            clar_id = _recover_latest_clarification_id(substrate, kind="scheme-missing")
+            # first available distillation and threaded its id back to
+            # us (Phase 2c cleanup replaced the prior mtime-scan
+            # recovery, mirroring Phase 2b cleanup-2 for the Connect
+            # path). Record the id in ReconcileResult so the operator
+            # sees both the raise and the (still-pending) candidate in
+            # one summary.
+            clar_id = prob_build.clarification_id
             if clar_id is not None:
                 result.clarifications_raised.append(clar_id)
                 # Phase 2c M8: also record on the hierarchize-only list
@@ -2159,6 +2219,7 @@ def _process_hierarchize_output(
             continue
 
         # Happy path: record the committed probandum + map its index.
+        prob = prob_build.probandum
         index_to_probandum_id[str(idx)] = prob.id
         result.hierarchize_probanda_committed.append(prob.id)
         prob_path = substrate.probandum_path(prob.id)
@@ -2184,7 +2245,7 @@ def _process_hierarchize_output(
             resolved["child_id"] = index_to_probandum_id[child_ref]
 
         try:
-            edge = _build_probandum_edge(
+            edge_build = _build_probandum_edge(
                 resolved,
                 substrate,
                 prov,
@@ -2194,16 +2255,20 @@ def _process_hierarchize_output(
             result.errors.append((Path("(in-memory-probandum-edge)"), str(exc)))
             continue
 
-        if edge is None:
+        if edge_build.probandum_edge is None:
             # INV-17 rejection path. ``_build_probandum_edge``
-            # auto-raised a ``lineage-incomplete`` Clarification.
-            clar_id = _recover_latest_clarification_id(substrate, kind="lineage-incomplete")
+            # auto-raised a ``lineage-incomplete`` Clarification and
+            # threaded its id back to us (Phase 2c cleanup replaced the
+            # prior mtime-scan recovery, mirroring Phase 2b cleanup-2
+            # for the Connect path).
+            clar_id = edge_build.clarification_id
             if clar_id is not None:
                 result.clarifications_raised.append(clar_id)
                 # Phase 2c M8: also record on the hierarchize-only list.
                 result.hierarchize_clarifications_raised.append(clar_id)
             continue
 
+        edge = edge_build.probandum_edge
         result.hierarchize_edges_committed.append(edge.id)
         edge_path = substrate.probandum_edge_path(edge.id)
         substrate_changes.append(str(edge_path.relative_to(workspace_root)))
@@ -2215,59 +2280,6 @@ def _process_hierarchize_output(
         activity="hierarchize-reconcile",
         actor_role="hierarchize",
     )
-
-
-def _recover_latest_clarification_id(substrate: Substrate, *, kind: str) -> str | None:
-    """Scan open clarifications and return the most recent id of ``kind``.
-
-    Used by :func:`_process_hierarchize_output` to recover the id of a
-    Clarification auto-raised by :func:`_build_probandum` /
-    :func:`_build_probandum_edge`. The M6 helpers do not yet plumb the
-    id back through their return values; this scan is the bridge
-    until a follow-up parallel to Phase 2b's cleanup-2 lands.
-
-    The scan walks every distillation's open-clarifications directory
-    plus the ``_mappings`` sentinel (where Phase 2c clarifications
-    land when no real distillation exists). Returns the id of the
-    most-recently-modified Clarification matching ``kind``, or
-    ``None`` when no match exists.
-
-    Note: this is a best-effort recovery. A drain that auto-raises two
-    Hierarchize clarifications of the same kind within the same
-    mtime tick (1s on macOS HFS+) may attribute both raises to the
-    same id. Production scale should land the cleanup-2 parallel
-    (return-the-id-from-the-builder) before this matters.
-    """
-    from amanuensis.fs._serialize import (
-        parse_clarification_md,  # pyright: ignore[reportPrivateUsage]
-    )
-
-    candidates: list[tuple[float, str]] = []
-    dist_root = substrate.root / "distillations"
-    if not dist_root.is_dir():
-        return None
-    for source_dir in dist_root.iterdir():
-        if not source_dir.is_dir():
-            continue
-        open_dir = source_dir / "clarifications" / "open"
-        if not open_dir.is_dir():
-            continue
-        for clar_path in open_dir.iterdir():
-            if not clar_path.is_file() or not clar_path.name.endswith(".md"):
-                continue
-            if ".tmp." in clar_path.name:
-                continue
-            try:
-                clar = parse_clarification_md(clar_path.read_text(encoding="utf-8"))
-            except (ValueError, OSError):
-                continue
-            if clar.kind != kind:
-                continue
-            candidates.append((clar_path.stat().st_mtime, clar.id))
-    if not candidates:
-        return None
-    candidates.sort(reverse=True)
-    return candidates[0][1]
 
 
 def _append_mappings_replay(
