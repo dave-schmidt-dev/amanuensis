@@ -1,4 +1,4 @@
-"""Shared fixtures for ``tests/export/`` — workspace builders for M9 tests.
+"""Shared fixtures for ``tests/export/`` — workspace builders for M9 / M11 tests.
 
 Provides three workspace fixtures:
 
@@ -10,6 +10,10 @@ Provides three workspace fixtures:
 - ``tmp_workspace_with_two_cross_doc_relations`` — Phase 2b M9 fixture: 2
   distillation dirs + shared canonical Entity ``e-smith`` + bilateral
   Resolutions + 2 ``CrossDocRelation`` records (supports + attacks).
+- ``tmp_workspace_with_probandum_tree_for_export`` — Phase 2c M11 fixture:
+  Walton snapshot + 1 ultimate + 1 penultimate + 1 interim + 1 atom +
+  1 cross-doc-relation + 4 probandum-edges spanning the three child
+  kinds (probandum / atom / cross-doc-relation).
 """
 
 from __future__ import annotations
@@ -23,6 +27,7 @@ import pytest
 from amanuensis.fs import Substrate
 from amanuensis.fs._atomic import atomic_write_text
 from amanuensis.fs._serialize import (
+    serialize_atom_md,
     serialize_entity_md,
     serialize_paragraph_md,
     serialize_resolution_yaml,
@@ -37,6 +42,8 @@ from amanuensis.schemas import (
     OperandRef,
     OperandTypeSchema,
     ParagraphEntry,
+    Probandum,
+    ProbandumEdge,
     ProvenanceRecord,
     Resolution,
     RoleAttribution,
@@ -544,4 +551,332 @@ def tmp_workspace_with_two_cross_doc_relations(tmp_path: Path) -> Path:
     )
     substrate.add_cross_doc_relation(rel_supports)
     substrate.add_cross_doc_relation(rel_attacks)
+    return tmp_path
+
+
+# ---------------------------------------------------------------------------
+# Phase 2c M11 — Probandum tree export fixtures
+# ---------------------------------------------------------------------------
+#
+# A self-contained workspace shaped per the M11 spec:
+#
+#   * Walton snapshot pinned (so ``Substrate.add_probandum`` INV-18 passes).
+#   * Two distillation directories (``src-A`` / ``src-B``) so the
+#     cross-doc-relation INV-15 gate has both endpoints.
+#   * One canonical Entity + bilateral Resolutions so the cross-doc
+#     relation passes the INV-15 shared-entity gate.
+#   * One atom living under ``src-A`` (the atom-child of an edge).
+#   * One ``CrossDocRelation`` (the cross-doc-relation-child of an edge).
+#   * Three probanda: 1 ultimate + 1 penultimate + 1 interim.
+#   * Four probandum-edges:
+#       - ultimate → penultimate (child_kind=probandum)
+#       - penultimate → interim (child_kind=probandum)
+#       - interim → atom (child_kind=atom)
+#       - interim → cross-doc-relation (child_kind=cross-doc-relation)
+#
+# The fixture returns the workspace ``Path`` (the export tests instantiate
+# their own Substrate from it). Helper ids are exposed via the
+# ``_M11_*`` module constants so the tests can address atoms / probanda
+# without re-deriving content hashes.
+
+_M11_SOURCE_A = "src-A"
+_M11_SOURCE_B = "src-B"
+_M11_ATOM_ID = "a-m11atom00000001"
+_M11_SHARED_ENTITY = "e-m11smith"
+_M11_FROM_ATOM = "a-m11from00000001"
+_M11_TO_ATOM = "a-m11to0000000001"
+_M11_STABLE_AT = datetime(2026, 6, 1, 12, 0, 0, tzinfo=UTC)
+
+
+def _m11_role_attribution() -> RoleAttribution:
+    return RoleAttribution(
+        agent=AgentAttribution(kind="llm", identifier="hierarchize", role="hierarchize"),
+        activity="proposed",
+        at=_M11_STABLE_AT,
+    )
+
+
+def _m11_build_atom(*, atom_id: str, source_id: str, narrative: str) -> Atom:
+    """Build a Phase-1-shaped Atom for the M11 probandum tree fixture.
+
+    Mirrors ``tests/dispatch/conftest.py::_build_hierarchize_atom`` but
+    self-contained so the export conftest doesn't share state with the
+    dispatch tests' module-scoped helpers.
+    """
+    return Atom(
+        id=atom_id,
+        source_id=source_id,
+        section_path=["body"],
+        paragraph_index=0,
+        sentence_index=None,
+        char_span=(0, 30),
+        scale_anchor="paragraph",
+        kind="claim",
+        predicate="alleges",
+        operands=[OperandRef(role="subject", kind="entity", value="e-x", type_hint=None)],
+        narrative=narrative,
+        qualifier_level=None,
+        qualifier_basis=None,
+        provenance_id="p-m11fixture00001",
+        role_attributions=[_m11_role_attribution()],
+        schema_version=1,
+    )
+
+
+def _m11_plant_atom(workspace: Path, atom: Atom) -> None:
+    """Plant an atom .md file under its source's distillations dir."""
+    path = workspace / "distillations" / atom.source_id / "atoms" / f"{atom.id}.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    atomic_write_text(path, serialize_atom_md(atom))
+
+
+def _m11_build_probandum(
+    *,
+    statement: str,
+    kind: str,
+    scheme: str,
+    alternatives_considered: list[str],
+    confidence: str = "high",
+) -> Probandum:
+    """Build a Probandum with a content-addressable id."""
+    role_attr = _m11_role_attribution()
+    draft = Probandum(
+        id="p-placeholder0001",
+        statement=statement,
+        kind=kind,  # pyright: ignore[reportArgumentType]
+        scheme=scheme,
+        alternatives_considered=alternatives_considered,
+        confidence=confidence,  # pyright: ignore[reportArgumentType]
+        provenance_id="p-m11fixture00001",
+        role_attributions=[role_attr],
+        schema_version=1,
+    )
+    return draft.model_copy(update={"id": compute_id(draft)})
+
+
+def _m11_build_edge(
+    *,
+    parent_probandum_id: str,
+    child_id: str,
+    child_kind: str,
+    child_source_id: str | None,
+    warrant_suffix: str,
+) -> ProbandumEdge:
+    """Build a ProbandumEdge with a content-addressable id."""
+    role_attr = _m11_role_attribution()
+    draft = ProbandumEdge(
+        id="q-placeholder0001",
+        parent_probandum_id=parent_probandum_id,
+        child_id=child_id,
+        child_kind=child_kind,  # pyright: ignore[reportArgumentType]
+        child_source_id=child_source_id,
+        kind="supports",
+        warrant=f"Decomposition warrant for {warrant_suffix}.",
+        warrant_defensibility="methodology-derived",
+        warrant_basis="Wigmore §III decomposition.",
+        confidence="high",
+        provenance_id="p-m11fixture00001",
+        role_attributions=[role_attr],
+        schema_version=1,
+    )
+    return draft.model_copy(update={"id": compute_id(draft)})
+
+
+def _m11_plant_entity_literal(workspace: Path, entity: Entity) -> None:
+    """Plant an Entity record at its literal id (no provenance scaffolding)."""
+    path = workspace / "mappings" / "entities" / f"{entity.id}.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    atomic_write_text(path, serialize_entity_md(entity))
+
+
+def _m11_plant_resolution_literal(workspace: Path, resolution: Resolution) -> None:
+    """Plant a Resolution record at its literal id (no provenance scaffolding)."""
+    path = workspace / "mappings" / "resolutions" / f"{resolution.id}.yaml"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    atomic_write_text(path, serialize_resolution_yaml(resolution))
+
+
+def _m11_plant_shared_scaffold_for_cross_doc(workspace: Path) -> None:
+    """Plant the INV-15 prerequisites for one cross-doc-relation.
+
+    Shared canonical entity ``e-m11smith`` + bilateral Resolutions
+    binding the two cross-doc atoms (``from`` under ``src-A``, ``to``
+    under ``src-B``) to that entity.
+    """
+    role_attr = _m11_role_attribution()
+    entity = Entity(
+        id=_M11_SHARED_ENTITY,
+        kind="party",
+        canonical_name="Smith",
+        aliases=[],
+        notes=None,
+        provenance_id="p-m11fixture00001",
+        role_attributions=[role_attr],
+        schema_version=1,
+    )
+    _m11_plant_entity_literal(workspace, entity)
+
+    for slug, source_id, atom_id in (
+        ("from", _M11_SOURCE_A, _M11_FROM_ATOM),
+        ("to", _M11_SOURCE_B, _M11_TO_ATOM),
+    ):
+        res = Resolution(
+            id=f"j-m11fixture-{slug}",
+            source_id=source_id,
+            atom_id=atom_id,
+            operand_index=0,
+            entity_id=_M11_SHARED_ENTITY,
+            confidence="high",
+            basis="fixture-planted for M11 export tests",
+            provenance_id="p-m11fixture00001",
+            role_attributions=[role_attr],
+            schema_version=1,
+        )
+        _m11_plant_resolution_literal(workspace, res)
+
+
+def _m11_build_cross_doc_relation(
+    *,
+    role_attribution: RoleAttribution,
+) -> CrossDocRelation:
+    """Build a CrossDocRelation whose id matches ``compute_id`` for its content."""
+    payload: dict[str, Any] = {
+        "id": "x-placeholder000001",
+        "from_atom_id": _M11_FROM_ATOM,
+        "from_source_id": _M11_SOURCE_A,
+        "to_atom_id": _M11_TO_ATOM,
+        "to_source_id": _M11_SOURCE_B,
+        "kind": "supports",
+        "warrant": "Both atoms cite the Smith role in matching positions.",
+        "warrant_defensibility": "conventional",
+        "warrant_basis": "Both atoms reference the same canonical Smith entity.",
+        "confidence": "medium",
+        "shared_entities": [_M11_SHARED_ENTITY],
+        "provenance_id": "p-m11fixture00001",
+        "role_attributions": [role_attribution],
+        "schema_version": 1,
+    }
+    draft = CrossDocRelation(**payload)
+    payload["id"] = compute_id(draft)
+    return CrossDocRelation(**payload)
+
+
+@pytest.fixture
+def tmp_workspace_with_probandum_tree_for_export(tmp_path: Path) -> Path:
+    """Self-contained M11 workspace with a complete probandum tree.
+
+    Layout:
+
+        ultimate
+            └─ supports ─> penultimate
+                                └─ supports ─> interim
+                                                    ├─ supports ─> atom (under src-A)
+                                                    └─ supports ─> cross-doc-relation
+
+    The cross-doc-relation links ``src-A:a-m11from00000001`` to
+    ``src-B:a-m11to0000000001`` via the shared canonical entity
+    ``e-m11smith``; bilateral resolutions are planted to satisfy
+    INV-15. Walton scheme snapshot is pinned so INV-18 passes.
+    """
+    marker = tmp_path / "amanuensis.yaml"
+    marker.write_text(
+        "schema_version: 1\nproject_name: m11-probandum-tree-export\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "distillations" / _M11_SOURCE_A).mkdir(parents=True, exist_ok=True)
+    (tmp_path / "distillations" / _M11_SOURCE_B).mkdir(parents=True, exist_ok=True)
+
+    substrate = Substrate(tmp_path)
+    substrate.snapshot_walton_schemes()
+
+    # 1. Plant the atom that will be an edge's atom-child.
+    atom = _m11_build_atom(
+        atom_id=_M11_ATOM_ID,
+        source_id=_M11_SOURCE_A,
+        narrative="Smith failed to deliver the April 2024 shipment.",
+    )
+    _m11_plant_atom(tmp_path, atom)
+
+    # 2. Plant the cross-doc atoms + shared entity + resolutions so
+    #    the cross-doc-relation write passes INV-15.
+    for atom_id in (_M11_FROM_ATOM, _M11_TO_ATOM):
+        source_id = _M11_SOURCE_A if atom_id == _M11_FROM_ATOM else _M11_SOURCE_B
+        cross_atom = _m11_build_atom(
+            atom_id=atom_id,
+            source_id=source_id,
+            narrative=f"Stub narrative for {atom_id}.",
+        )
+        _m11_plant_atom(tmp_path, cross_atom)
+    _m11_plant_shared_scaffold_for_cross_doc(tmp_path)
+    cross_doc_rel = _m11_build_cross_doc_relation(role_attribution=_m11_role_attribution())
+    substrate.add_cross_doc_relation(cross_doc_rel)
+
+    # 3. Plant three probanda (ultimate / penultimate / interim).
+    ultimate = _m11_build_probandum(
+        statement="ACME prevails on its breach claim against Smith.",
+        kind="ultimate",
+        scheme="argument-from-expert-opinion",
+        alternatives_considered=[],
+    )
+    substrate.add_probandum(ultimate)
+
+    penultimate = _m11_build_probandum(
+        statement="Smith breached §3 by failing to deliver the April 2024 shipment.",
+        kind="penultimate",
+        scheme="argument-from-sign",
+        alternatives_considered=[
+            "Smith tendered but ACME rejected for unrelated quality reasons.",
+            "Smith and ACME mutually deferred the April 2024 delivery.",
+        ],
+    )
+    substrate.add_probandum(penultimate)
+
+    interim = _m11_build_probandum(
+        statement="Smith never tendered the April 2024 shipment under §3.",
+        kind="interim",
+        scheme="argument-from-sign",
+        alternatives_considered=[
+            "Smith tendered late but ACME's records mis-dated the receipt.",
+        ],
+        confidence="medium",
+    )
+    substrate.add_probandum(interim)
+
+    # 4. Wire the four edges (probandum→probandum, then leaves).
+    edge_ult_pen = _m11_build_edge(
+        parent_probandum_id=ultimate.id,
+        child_id=penultimate.id,
+        child_kind="probandum",
+        child_source_id=None,
+        warrant_suffix="ultimate to penultimate",
+    )
+    substrate.add_probandum_edge(edge_ult_pen)
+
+    edge_pen_int = _m11_build_edge(
+        parent_probandum_id=penultimate.id,
+        child_id=interim.id,
+        child_kind="probandum",
+        child_source_id=None,
+        warrant_suffix="penultimate to interim",
+    )
+    substrate.add_probandum_edge(edge_pen_int)
+
+    edge_int_atom = _m11_build_edge(
+        parent_probandum_id=interim.id,
+        child_id=atom.id,
+        child_kind="atom",
+        child_source_id=atom.source_id,
+        warrant_suffix="interim to atom",
+    )
+    substrate.add_probandum_edge(edge_int_atom)
+
+    edge_int_cdr = _m11_build_edge(
+        parent_probandum_id=interim.id,
+        child_id=cross_doc_rel.id,
+        child_kind="cross-doc-relation",
+        child_source_id=None,
+        warrant_suffix="interim to cross-doc-relation",
+    )
+    substrate.add_probandum_edge(edge_int_cdr)
+
     return tmp_path

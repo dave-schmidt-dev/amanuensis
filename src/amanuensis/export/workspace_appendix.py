@@ -1,10 +1,13 @@
-"""Workspace-level static export bundle — Phase 2b M9.
+"""Workspace-level static export bundle — Phase 2b M9 + Phase 2c M11.
 
 Phase 1's :func:`amanuensis.export.export_static_html` is a per-source
 single-file exporter: one HTML file per distillation, with that
 distillation's paragraphs / atoms / relations inline. Phase 2b adds
 cross-document content (``CrossDocRelation`` records) that has no
 single-source home — by definition each one touches two sources.
+Phase 2c adds argument-hierarchy content (``Probandum`` /
+``ProbandumEdge`` records) that lives in the mappings namespace and
+likewise has no single-source home.
 
 This module emits a workspace-level *bundle*: a directory containing
 
@@ -16,6 +19,11 @@ This module emits a workspace-level *bundle*: a directory containing
   terminal node of every supersede chain), with a "Cross-doc edges
   touching this entity" section that mirrors the web app's
   ``entity_detail.html`` layout.
+- ``probandum-tree.html`` (Phase 2c M11) — appendix rendering each
+  ultimate probandum's subtree as nested HTML5 ``<details>`` blocks.
+  Atoms link to ``../<source_id>.html#atom-<id>`` (Phase 1 per-source
+  pages); cross-doc-relation leaves link to
+  ``cross-doc-relations.html#relation-<id>``.
 
 The bundle is *self-contained*: same CSS-in-`<style>` discipline as
 Phase 1, no CDN URLs, no external network references. Pages link to
@@ -26,7 +34,8 @@ entity pages).
 INV-8 (substrate is source of truth; renderings are pure functions of
 state) is the load-bearing invariant: two runs over the same substrate
 must produce byte-identical files. Tests in
-``tests/export/test_static_export_cross_doc.py`` assert this.
+``tests/export/test_static_export_cross_doc.py`` and (from Phase 2c)
+``tests/export/test_static_export_probandum.py`` assert this.
 
 Output mode is ``0644`` to match the per-source exporter — bundles are
 meant to be shared.
@@ -43,7 +52,7 @@ from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
 from amanuensis.fs import Substrate
-from amanuensis.schemas import CrossDocRelation, Entity
+from amanuensis.schemas import Atom, CrossDocRelation, Entity, Probandum, ProbandumEdge
 
 # Output file mode — group / world readable; owner writable. Matches
 # the per-source exporter so the bundle's files share a single mode.
@@ -53,6 +62,17 @@ _OUTPUT_MODE: int = 0o644
 # Rendering iterates this in a fixed order so the produced HTML is
 # deterministic regardless of dict-iteration order.
 _CROSS_DOC_KINDS: tuple[str, ...] = ("supports", "attacks", "undercuts")
+
+# Maximum chars for excerpted probandum / atom statements in the tree
+# view. Long statements are truncated at the nearest word boundary with
+# an ellipsis suffix so the nested ``<details>`` summaries stay scannable.
+_PROBANDUM_EXCERPT_CHARS: int = 140
+
+# Defensive depth-cap on subtree traversal. Wigmore trees in practice
+# are shallow; this guards against any pathological graph the write-time
+# gates failed to catch (INV-16 acyclicity is already enforced, but the
+# renderer must not lock up regardless).
+_TREE_MAX_DEPTH: int = 100
 
 
 def _package_version() -> str:
@@ -152,6 +172,54 @@ a.entity-link {
   border-bottom: 1px dashed #e07b39;
 }
 a.entity-link:hover { text-decoration: underline; }
+a.probandum-link {
+  color: #4fb286;
+  text-decoration: none;
+  border-bottom: 1px dashed #4fb286;
+}
+a.probandum-link:hover { text-decoration: underline; }
+details.probandum-node {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.4rem 0.7rem;
+  margin: 0.4rem 0;
+}
+details.probandum-node > summary {
+  cursor: pointer;
+  font-weight: 500;
+  margin: 0.1rem 0;
+}
+details.probandum-node ul.children {
+  list-style: none;
+  padding-left: 0.8rem;
+  margin: 0.3rem 0 0;
+  border-left: 2px solid var(--border);
+}
+details.probandum-node ul.children > li {
+  margin: 0.3rem 0;
+}
+.edge-meta {
+  font-size: 0.8rem;
+  color: var(--muted);
+  margin: 0.2rem 0 0.2rem 0.2rem;
+}
+.kind-badge {
+  display: inline-block;
+  font-size: 0.7rem;
+  padding: 0.05rem 0.4rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  margin-right: 0.4rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+.kind-badge.ultimate { color: #c97aff; border-color: #c97aff; }
+.kind-badge.penultimate { color: #7aa2f7; border-color: #7aa2f7; }
+.kind-badge.interim { color: #4fb286; border-color: #4fb286; }
+.kind-badge.atom { color: #e0b343; border-color: #e0b343; }
+.kind-badge.cross-doc-relation { color: #e07b39; border-color: #e07b39; }
+.probandum-statement { display: block; margin: 0.2rem 0; }
 footer {
   margin-top: 3rem;
   padding-top: 1rem;
@@ -431,6 +499,359 @@ def _render_entity_page(
     )
 
 
+# ---------------------------------------------------------------------
+# Phase 2c M11 — Probandum tree + per-probandum lineage page renderers
+# ---------------------------------------------------------------------
+
+
+def _excerpt(text: str, max_chars: int = _PROBANDUM_EXCERPT_CHARS) -> str:
+    """Return ``text`` trimmed at the nearest word boundary near ``max_chars``.
+
+    Empty or short strings pass through unchanged. Falls back to a hard
+    cut if no whitespace appears in the first ``max_chars`` chars.
+    Mirrors the web app's ``_statement_excerpt`` helper.
+    """
+    if len(text) <= max_chars:
+        return text
+    cutoff = text.rfind(" ", 0, max_chars)
+    if cutoff <= 0:
+        cutoff = max_chars
+    return text[:cutoff].rstrip() + "…"
+
+
+def _list_probanda(substrate: Substrate) -> list[Probandum]:
+    """Return every probandum in the workspace, sorted by id.
+
+    Sorting is by ``id`` for determinism — content-addressable hashes
+    are unique per content, so this gives a stable order regardless of
+    filesystem iteration. Same shape as ``_canonical_entities`` returns.
+    """
+    return sorted(substrate.list_probanda(), key=lambda p: p.id)
+
+
+def _list_probandum_edges(substrate: Substrate) -> list[ProbandumEdge]:
+    """Return every probandum-edge in the workspace, sorted by id.
+
+    Sorting is by ``id`` so per-probandum child rows render in the same
+    order on every run. Mirrors ``_list_probanda``.
+    """
+    return sorted(substrate.list_probandum_edges(), key=lambda e: e.id)
+
+
+def _index_edges_by_parent(
+    edges: list[ProbandumEdge],
+) -> dict[str, list[ProbandumEdge]]:
+    """Group edges by ``parent_probandum_id`` with deterministic per-parent order.
+
+    Per-parent ordering is by edge ``id`` so the rendered tree is
+    byte-identical across runs (INV-8). Empty groups are omitted; a
+    parent with no edges is simply absent from the returned dict.
+    """
+    by_parent: dict[str, list[ProbandumEdge]] = defaultdict(list)
+    for edge in edges:
+        by_parent[edge.parent_probandum_id].append(edge)
+    for parent_id in by_parent:
+        by_parent[parent_id].sort(key=lambda e: e.id)
+    return by_parent
+
+
+def _kind_badge(label: str, css_class: str | None = None) -> str:
+    """Render a ``<span class="kind-badge ...">`` tag for a probandum/edge kind."""
+    classes = "kind-badge"
+    if css_class:
+        classes = f"{classes} {css_class}"
+    return f'<span class="{classes}">{_esc(label)}</span>'
+
+
+def _probandum_link(
+    probandum_id: str,
+    label: str,
+    *,
+    prefix: str,
+) -> str:
+    """Render an ``<a class="probandum-link">`` to ``probanda/<id>.html``.
+
+    ``prefix`` lets the appendix page emit ``"probanda/<id>.html"``
+    while the per-probandum pages use the empty prefix (siblings under
+    the same directory).
+    """
+    return f'<a class="probandum-link" href="{prefix}{_esc(probandum_id)}.html">{_esc(label)}</a>'
+
+
+def _render_edge_child_summary(
+    edge: ProbandumEdge,
+    *,
+    probandum_by_id: dict[str, Probandum],
+    atom_by_id: dict[str, Atom],
+    cross_doc_by_id: dict[str, CrossDocRelation],
+    probandum_link_prefix: str,
+    atom_link_prefix: str,
+    cross_doc_link_prefix: str,
+) -> str:
+    """Render the label cell for the child end of a probandum-edge.
+
+    Picks a label per ``child_kind``:
+
+    - ``probandum``: short statement excerpt + link to ``probanda/<id>.html``.
+    - ``atom``: short narrative excerpt + link to
+      ``<source_id>.html#atom-<id>`` (Phase 1 per-source export page).
+    - ``cross-doc-relation``: short warrant excerpt + link to
+      ``cross-doc-relations.html#relation-<id>``.
+
+    Children that cannot be loaded (missing from substrate) render as
+    plain ``<code>`` ids so a stale edge never disappears silently.
+    """
+    if edge.child_kind == "probandum":
+        child = probandum_by_id.get(edge.child_id)
+        if child is None:
+            return (
+                f"{_kind_badge('probandum', 'probandum')}"
+                f"<code>&lt;missing: {_esc(edge.child_id)}&gt;</code>"
+            )
+        label = _excerpt(child.statement)
+        link = _probandum_link(child.id, label, prefix=probandum_link_prefix)
+        return f"{_kind_badge(child.kind, child.kind)}{link}"
+    if edge.child_kind == "atom":
+        atom = atom_by_id.get(edge.child_id)
+        if atom is None or edge.child_source_id is None:
+            return (
+                f"{_kind_badge('atom', 'atom')}<code>&lt;missing: {_esc(edge.child_id)}&gt;</code>"
+            )
+        label = _excerpt(atom.narrative)
+        href = f"{atom_link_prefix}{_esc(edge.child_source_id)}.html#atom-{_esc(atom.id)}"
+        return f'{_kind_badge("atom", "atom")}<a class="atom-link" href="{href}">{_esc(label)}</a>'
+    # cross-doc-relation
+    rel = cross_doc_by_id.get(edge.child_id)
+    if rel is None:
+        return (
+            f"{_kind_badge('cross-doc-relation', 'cross-doc-relation')}"
+            f"<code>&lt;missing: {_esc(edge.child_id)}&gt;</code>"
+        )
+    label = _excerpt(rel.warrant)
+    href = f"{cross_doc_link_prefix}cross-doc-relations.html#relation-{_esc(rel.id)}"
+    return (
+        f"{_kind_badge('cross-doc-relation', 'cross-doc-relation')}"
+        f'<a href="{href}">{_esc(label)}</a>'
+    )
+
+
+def _render_subtree(
+    *,
+    probandum: Probandum,
+    edges_by_parent: dict[str, list[ProbandumEdge]],
+    probandum_by_id: dict[str, Probandum],
+    atom_by_id: dict[str, Atom],
+    cross_doc_by_id: dict[str, CrossDocRelation],
+    probandum_link_prefix: str,
+    atom_link_prefix: str,
+    cross_doc_link_prefix: str,
+    visited: set[str] | None = None,
+    depth: int = 0,
+) -> str:
+    """Recursively render ``probandum`` + its subtree as nested ``<details>`` blocks.
+
+    Each level is a ``<details open>`` so the bundle renders fully
+    expanded by default; users can collapse subtrees interactively. The
+    HTML5 ``<details>`` element requires no JavaScript — fits the
+    bundle's "no external deps" discipline.
+
+    ``visited`` defends against pathological graphs (cycles would have
+    been gated at write-time by INV-16, but the renderer must not lock
+    up if a stale edge leaks through). ``depth`` enforces
+    ``_TREE_MAX_DEPTH`` as a belt-and-braces guard.
+    """
+    if visited is None:
+        visited = set()
+    if probandum.id in visited or depth > _TREE_MAX_DEPTH:
+        return (
+            f'<details class="probandum-node"><summary>'
+            f"{_kind_badge(probandum.kind, probandum.kind)}"
+            f"<code>&lt;cycle or depth-cap at {_esc(probandum.id)}&gt;</code>"
+            "</summary></details>"
+        )
+    visited = visited | {probandum.id}
+
+    statement = _excerpt(probandum.statement)
+    summary = (
+        f"<summary>{_kind_badge(probandum.kind, probandum.kind)}"
+        f'<span class="probandum-statement">'
+        f"{_probandum_link(probandum.id, statement, prefix=probandum_link_prefix)}"
+        f"</span></summary>"
+    )
+
+    child_edges = edges_by_parent.get(probandum.id, [])
+    if not child_edges:
+        body = '<p class="empty">No outgoing edges.</p>'
+    else:
+        items: list[str] = []
+        for edge in child_edges:
+            edge_meta = (
+                f'<div class="edge-meta">'
+                f'<span class="tag">{_esc(edge.kind)}</span>'
+                f'<span class="tag">defensibility={_esc(edge.warrant_defensibility)}</span>'
+                f'<span class="tag">conf={_esc(edge.confidence)}</span>'
+                f" warrant: {_esc(edge.warrant)}"
+                f"</div>"
+            )
+            child_summary = _render_edge_child_summary(
+                edge,
+                probandum_by_id=probandum_by_id,
+                atom_by_id=atom_by_id,
+                cross_doc_by_id=cross_doc_by_id,
+                probandum_link_prefix=probandum_link_prefix,
+                atom_link_prefix=atom_link_prefix,
+                cross_doc_link_prefix=cross_doc_link_prefix,
+            )
+            # Recurse only into probandum children. Atoms and cross-doc
+            # relations are leaves in the probandum graph.
+            if edge.child_kind == "probandum":
+                child = probandum_by_id.get(edge.child_id)
+                if child is not None:
+                    nested = _render_subtree(
+                        probandum=child,
+                        edges_by_parent=edges_by_parent,
+                        probandum_by_id=probandum_by_id,
+                        atom_by_id=atom_by_id,
+                        cross_doc_by_id=cross_doc_by_id,
+                        probandum_link_prefix=probandum_link_prefix,
+                        atom_link_prefix=atom_link_prefix,
+                        cross_doc_link_prefix=cross_doc_link_prefix,
+                        visited=visited,
+                        depth=depth + 1,
+                    )
+                    items.append(f"<li>{child_summary}{edge_meta}{nested}</li>")
+                    continue
+            items.append(f"<li>{child_summary}{edge_meta}</li>")
+        body = '<ul class="children">' + "".join(items) + "</ul>"
+
+    return f'<details open class="probandum-node">{summary}{body}</details>'
+
+
+def _gather_atoms_for_edges(substrate: Substrate, edges: list[ProbandumEdge]) -> dict[str, Atom]:
+    """Return a dict mapping atom-child-id → Atom for every atom-leaf edge.
+
+    Missing atoms (e.g. stale edge to a removed atom) are simply absent
+    from the dict; the renderer falls back to a ``<missing>`` label.
+    Done in one pass so the recursive renderer does not re-hit disk per
+    child.
+    """
+    atoms: dict[str, Atom] = {}
+    for edge in edges:
+        if edge.child_kind != "atom":
+            continue
+        if edge.child_source_id is None:
+            continue  # schema-impossible but be defensive
+        if edge.child_id in atoms:
+            continue
+        try:
+            atoms[edge.child_id] = substrate.get_atom(edge.child_source_id, edge.child_id)
+        except Exception:
+            continue
+    return atoms
+
+
+def _gather_cross_doc_for_edges(
+    substrate: Substrate, edges: list[ProbandumEdge]
+) -> dict[str, CrossDocRelation]:
+    """Return a dict mapping cross-doc-child-id → CrossDocRelation."""
+    rels: dict[str, CrossDocRelation] = {}
+    for edge in edges:
+        if edge.child_kind != "cross-doc-relation":
+            continue
+        if edge.child_id in rels:
+            continue
+        try:
+            rels[edge.child_id] = substrate.get_cross_doc_relation(edge.child_id)
+        except Exception:
+            continue
+    return rels
+
+
+def _render_probandum_tree_page(
+    *,
+    probanda: list[Probandum],
+    edges: list[ProbandumEdge],
+    atom_by_id: dict[str, Atom],
+    cross_doc_by_id: dict[str, CrossDocRelation],
+    generated_at: datetime,
+    version_string: str,
+) -> str:
+    """Render the ``probandum-tree.html`` appendix page.
+
+    For each ``ultimate`` probandum (sorted by id) render a section
+    anchored ``#ultimate-<id>`` containing the full subtree as nested
+    ``<details>`` blocks. If no ultimate exists, render a placeholder
+    section pointing the supervisor at the CLI command that creates one.
+    """
+    probandum_by_id = {p.id: p for p in probanda}
+    edges_by_parent = _index_edges_by_parent(edges)
+    ultimates = sorted([p for p in probanda if p.kind == "ultimate"], key=lambda p: p.id)
+
+    summary = (
+        '<header class="summary">'
+        "<h1>Probandum tree</h1>"
+        "<dl>"
+        f"<dt>total probanda</dt><dd>{len(probanda)}</dd>"
+        f"<dt>ultimate probanda</dt><dd>{len(ultimates)}</dd>"
+        f"<dt>probandum-edges</dt><dd>{len(edges)}</dd>"
+        "</dl>"
+        "</header>"
+    )
+
+    sections: list[str] = []
+    if not ultimates:
+        sections.append(
+            '<section id="no-ultimate">'
+            "<h2>No probandum tree yet</h2>"
+            '<p class="empty">'
+            "No ultimate probandum has been declared in this workspace. "
+            "A supervisor must declare one via "
+            "<code>amanuensis map probandum add --kind ultimate</code> "
+            "before the tree can be rendered."
+            "</p>"
+            "</section>"
+        )
+    else:
+        for ultimate in ultimates:
+            tree_html = _render_subtree(
+                probandum=ultimate,
+                edges_by_parent=edges_by_parent,
+                probandum_by_id=probandum_by_id,
+                atom_by_id=atom_by_id,
+                cross_doc_by_id=cross_doc_by_id,
+                # Page sits at bundle root: links to probanda/<id>.html
+                # use the ``probanda/`` prefix; atom links go to
+                # ``../<source>.html`` (per-source pages live one dir up
+                # from the appendix bundle by convention); cross-doc
+                # link is a sibling, no prefix needed.
+                probandum_link_prefix="probanda/",
+                atom_link_prefix="../",
+                cross_doc_link_prefix="",
+            )
+            sections.append(
+                f'<section id="ultimate-{_esc(ultimate.id)}">'
+                f"<h2>Ultimate: {_esc(_excerpt(ultimate.statement, 80))}</h2>"
+                f'<p class="probandum-id">id: <code>{_esc(ultimate.id)}</code></p>'
+                f"{tree_html}"
+                "</section>"
+            )
+
+    footer = _render_footer(generated_at, version_string)
+    return (
+        "<!DOCTYPE html>\n"
+        '<html lang="en">\n'
+        "<head>\n"
+        '<meta charset="utf-8">\n'
+        "<title>amanuensis — probandum tree</title>\n"
+        f"<style>{_BUNDLE_CSS}</style>\n"
+        "</head>\n"
+        "<body>\n"
+        f"{summary}\n" + "\n".join(sections) + f"\n{footer}\n"
+        "</body>\n"
+        "</html>\n"
+    )
+
+
 # --- Public API -------------------------------------------------------
 
 
@@ -440,7 +861,7 @@ def export_workspace_appendix(
     out_dir: Path,
     now: datetime | None = None,
 ) -> Path:
-    """Render a workspace-level bundle of cross-doc + per-entity pages.
+    """Render a workspace-level bundle of cross-doc + per-entity + probandum-tree pages.
 
     Emits a directory at ``out_dir`` containing:
 
@@ -448,6 +869,8 @@ def export_workspace_appendix(
       ``CrossDocRelation`` in the substrate, grouped by ``kind``.
     - ``entities/<id>.html`` — one page per canonical entity, with a
       "Cross-doc edges touching this entity" section.
+    - ``probandum-tree.html`` (Phase 2c M11) — per-ultimate-probandum
+      subtree rendered as nested ``<details>`` blocks.
 
     Args:
         substrate: Bound Substrate for the workspace.
@@ -467,11 +890,14 @@ def export_workspace_appendix(
       runs over the same substrate must produce byte-identical files.
       Relation ordering is by ``id``; kind ordering is the fixed
       ``_CROSS_DOC_KINDS`` tuple; entity ordering is by
-      ``(canonical_name, id)``.
+      ``(canonical_name, id)``; probandum + probandum-edge ordering is
+      by ``id``.
     - **Self-contained**: no CDN URLs, no inline JavaScript, no
       external network references. CSS is inlined in a ``<style>``
       block per page (duplicated; the bundle is small enough that
-      this is fine and lets each page be opened standalone).
+      this is fine and lets each page be opened standalone). The
+      probandum tree uses native HTML5 ``<details>`` for collapsing
+      so no JS is required.
     - **Mode 0644**: every file is chmod'd 0644 so the bundle is
       shareable (emailed, posted, archived).
     """
@@ -519,5 +945,23 @@ def export_workspace_appendix(
         page_path = entities_dir / f"{entity.id}.html"
         page_path.write_text(page_html, encoding="utf-8")
         os.chmod(page_path, stat.S_IMODE(_OUTPUT_MODE))
+
+    # 3. Probandum tree appendix (Phase 2c M11).
+    probanda = _list_probanda(substrate)
+    probandum_edges = _list_probandum_edges(substrate)
+    atom_by_id = _gather_atoms_for_edges(substrate, probandum_edges)
+    cross_doc_by_edges = _gather_cross_doc_for_edges(substrate, probandum_edges)
+
+    tree_html = _render_probandum_tree_page(
+        probanda=probanda,
+        edges=probandum_edges,
+        atom_by_id=atom_by_id,
+        cross_doc_by_id=cross_doc_by_edges,
+        generated_at=generated_at,
+        version_string=version_string,
+    )
+    tree_path = out_dir / "probandum-tree.html"
+    tree_path.write_text(tree_html, encoding="utf-8")
+    os.chmod(tree_path, stat.S_IMODE(_OUTPUT_MODE))
 
     return out_dir
