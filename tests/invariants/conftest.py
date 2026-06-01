@@ -36,6 +36,8 @@ from amanuensis.schemas import (
     EntitySupersede,
     OperandRef,
     OperandTypeSchema,
+    Probandum,
+    ProbandumEdge,
     ProvenanceRecord,
     Relation,
     Resolution,
@@ -1157,4 +1159,190 @@ def tmp_workspace_with_probandum_edge_in_wrong_place(tmp_path: Path) -> Path:
     stray = workspace / "distillations" / "src-A" / "relations" / "q-fake000000000002.yaml"
     stray.parent.mkdir(parents=True, exist_ok=True)
     stray.write_text("# placeholder probandum-edge -- content irrelevant\n", encoding="utf-8")
+    return workspace
+
+
+# ---------------------------------------------------------------------------
+# Phase 2c INV-12 extension — probandum-edge missing endpoint references
+# ---------------------------------------------------------------------------
+#
+# The fixtures below plant a probandum-edge YAML directly (bypassing
+# Substrate.add_probandum_edge so the endpoint-existence gates do not
+# fire at write-time). The INV-12 gate walks ``mappings/probandum-edges/``
+# at re-read time and asserts that every parent_probandum_id / child_id
+# resolves to an on-disk record in the appropriate namespace.
+
+_INV12_PE_PARENT_PROB_ID = "p-fixturepar00001"
+_INV12_PE_CHILD_PROB_ID = "p-fixturechild001"
+_INV12_PE_ATOM_SOURCE = "src-inv12-pe"
+_INV12_PE_ATOM_ID = "a-fixtureatom0001"
+_INV12_PE_XREL_ID = "x-fixturexrel0001"
+
+
+def _inv12_pe_forged_probandum(probandum_id: str, role_attribution: RoleAttribution) -> Probandum:
+    """Build a Probandum carrying a literal id (bypasses content-addressability).
+
+    Local helper to ``conftest.py``; used by the Phase 2c INV-12 fixtures
+    so the planted probanda referenced by the planted probandum-edges
+    have stable, predictable ids.
+    """
+    return Probandum(
+        id=probandum_id,
+        statement="Fixture probandum for INV-12 gate.",
+        kind="ultimate",
+        scheme="argument-from-expert-opinion",
+        alternatives_considered=[],
+        confidence="high",
+        provenance_id="p-inv12-pe-prob",
+        role_attributions=[role_attribution],
+        schema_version=1,
+    )
+
+
+def _inv12_pe_plant_probandum(workspace: Path, probandum: Probandum) -> None:
+    """Write a Probandum directly under ``mappings/probanda/<id>.md``."""
+    from amanuensis.fs._serialize import serialize_probandum_md
+
+    path = workspace / "mappings" / "probanda" / f"{probandum.id}.md"
+    atomic_write_text(path, serialize_probandum_md(probandum))
+
+
+def _inv12_pe_forged_edge(
+    *,
+    edge_id: str,
+    parent_probandum_id: str,
+    child_id: str,
+    child_kind: Literal["probandum", "atom", "cross-doc-relation"],
+    child_source_id: str | None,
+    role_attribution: RoleAttribution,
+) -> ProbandumEdge:
+    """Build a ProbandumEdge with a literal id (bypasses content-addressability).
+
+    Local helper to ``conftest.py``; used by the Phase 2c INV-12 fixtures
+    so the planted edges have stable, predictable ids and the substrate's
+    re-walk side parses them correctly.
+    """
+    return ProbandumEdge(
+        id=edge_id,
+        parent_probandum_id=parent_probandum_id,
+        child_id=child_id,
+        child_kind=child_kind,
+        child_source_id=child_source_id,
+        kind="supports",
+        warrant="Fixture warrant for INV-12 gate.",
+        warrant_defensibility="conventional",
+        warrant_basis="fixture",
+        confidence="medium",
+        provenance_id="p-inv12-pe-edge",
+        role_attributions=[role_attribution],
+        schema_version=1,
+    )
+
+
+def _inv12_pe_plant_edge(workspace: Path, edge: ProbandumEdge) -> None:
+    """Write a ProbandumEdge directly under ``mappings/probandum-edges/<id>.yaml``."""
+    from amanuensis.fs._serialize import serialize_probandum_edge_yaml
+
+    path = workspace / "mappings" / "probandum-edges" / f"{edge.id}.yaml"
+    atomic_write_text(path, serialize_probandum_edge_yaml(edge))
+
+
+@pytest.fixture
+def tmp_workspace_with_probandum_edge_dangling_parent(
+    tmp_path: Path, role_attribution: RoleAttribution
+) -> Path:
+    """Workspace where a probandum-edge references a non-existent parent.
+
+    Plants a single edge with ``parent_probandum_id`` pointing to a
+    probandum that has NO on-disk record. The child (also a probandum)
+    IS planted, so the only INV-12 violation is the missing parent.
+    """
+    workspace = _inv15_workspace_with_marker(tmp_path, "inv12-pe-dangling-parent")
+    # Plant the child probandum (well-formed); parent intentionally missing.
+    child = _inv12_pe_forged_probandum(_INV12_PE_CHILD_PROB_ID, role_attribution)
+    _inv12_pe_plant_probandum(workspace, child)
+    edge = _inv12_pe_forged_edge(
+        edge_id="q-fixturedangpar01",
+        parent_probandum_id=_INV12_PE_PARENT_PROB_ID,
+        child_id=_INV12_PE_CHILD_PROB_ID,
+        child_kind="probandum",
+        child_source_id=None,
+        role_attribution=role_attribution,
+    )
+    _inv12_pe_plant_edge(workspace, edge)
+    return workspace
+
+
+@pytest.fixture
+def tmp_workspace_with_probandum_edge_dangling_probandum_child(
+    tmp_path: Path, role_attribution: RoleAttribution
+) -> Path:
+    """Workspace where a probandum-edge references a non-existent probandum child.
+
+    Plants a single edge with ``child_kind="probandum"`` and a
+    ``child_id`` that has NO on-disk record. The parent IS planted.
+    """
+    workspace = _inv15_workspace_with_marker(tmp_path, "inv12-pe-dangling-prob-child")
+    parent = _inv12_pe_forged_probandum(_INV12_PE_PARENT_PROB_ID, role_attribution)
+    _inv12_pe_plant_probandum(workspace, parent)
+    edge = _inv12_pe_forged_edge(
+        edge_id="q-fixturedangpch01",
+        parent_probandum_id=_INV12_PE_PARENT_PROB_ID,
+        child_id=_INV12_PE_CHILD_PROB_ID,  # not planted
+        child_kind="probandum",
+        child_source_id=None,
+        role_attribution=role_attribution,
+    )
+    _inv12_pe_plant_edge(workspace, edge)
+    return workspace
+
+
+@pytest.fixture
+def tmp_workspace_with_probandum_edge_dangling_atom(
+    tmp_path: Path, role_attribution: RoleAttribution
+) -> Path:
+    """Workspace where a probandum-edge references a non-existent atom child.
+
+    Plants a single edge with ``child_kind="atom"`` and a ``child_id``
+    whose atom file does NOT exist under
+    ``distillations/<child_source_id>/atoms/<child_id>.md``. The
+    parent probandum IS planted.
+    """
+    workspace = _inv15_workspace_with_marker(tmp_path, "inv12-pe-dangling-atom")
+    parent = _inv12_pe_forged_probandum(_INV12_PE_PARENT_PROB_ID, role_attribution)
+    _inv12_pe_plant_probandum(workspace, parent)
+    edge = _inv12_pe_forged_edge(
+        edge_id="q-fixturedangatm01",
+        parent_probandum_id=_INV12_PE_PARENT_PROB_ID,
+        child_id=_INV12_PE_ATOM_ID,
+        child_kind="atom",
+        child_source_id=_INV12_PE_ATOM_SOURCE,
+        role_attribution=role_attribution,
+    )
+    _inv12_pe_plant_edge(workspace, edge)
+    return workspace
+
+
+@pytest.fixture
+def tmp_workspace_with_probandum_edge_dangling_xrel(
+    tmp_path: Path, role_attribution: RoleAttribution
+) -> Path:
+    """Workspace where a probandum-edge references a non-existent cross-doc-relation.
+
+    Plants a single edge with ``child_kind="cross-doc-relation"`` and
+    a ``child_id`` whose YAML does NOT exist under
+    ``mappings/relations/<child_id>.yaml``. The parent probandum IS planted.
+    """
+    workspace = _inv15_workspace_with_marker(tmp_path, "inv12-pe-dangling-xrel")
+    parent = _inv12_pe_forged_probandum(_INV12_PE_PARENT_PROB_ID, role_attribution)
+    _inv12_pe_plant_probandum(workspace, parent)
+    edge = _inv12_pe_forged_edge(
+        edge_id="q-fixturedangxrl01",
+        parent_probandum_id=_INV12_PE_PARENT_PROB_ID,
+        child_id=_INV12_PE_XREL_ID,
+        child_kind="cross-doc-relation",
+        child_source_id=None,
+        role_attribution=role_attribution,
+    )
+    _inv12_pe_plant_edge(workspace, edge)
     return workspace

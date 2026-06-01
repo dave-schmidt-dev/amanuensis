@@ -214,6 +214,18 @@ def _walk_mappings_namespace(workspace: Path) -> None:
     relations/``, asserts that the from/to atom files exist on disk
     (``distillations/<src>/atoms/<atom_id>.md``). Catches edges whose
     endpoints reference atom ids that were never written.
+
+    Phase 2c extension: for every ProbandumEdge under ``mappings/
+    probandum-edges/``, asserts that
+    - ``parent_probandum_id`` resolves to ``mappings/probanda/<id>.md``.
+    - ``child_id`` resolves to its namespace-appropriate path:
+      probandum -> ``mappings/probanda/<id>.md``;
+      atom -> ``distillations/<child_source_id>/atoms/<child_id>.md``;
+      cross-doc-relation -> ``mappings/relations/<child_id>.yaml``.
+
+    Catches edges whose endpoints reference ids that were never written
+    (the substrate's write-time gates would normally catch this, but a
+    hand-authored or tampered YAML can bypass them).
     """
     s = Substrate(workspace)
     for rel in s.list_cross_doc_relations():
@@ -229,6 +241,37 @@ def _walk_mappings_namespace(workspace: Path) -> None:
                 f"INV-12 violation: CrossDocRelation {rel.id!r} references "
                 f"missing atom at {to_atom_path} (to endpoint)"
             )
+    # Phase 2c extension — probandum-edge endpoint existence.
+    for edge in s.list_probandum_edges():
+        parent_path = s.probandum_path(edge.parent_probandum_id)
+        if not parent_path.is_file():
+            raise AssertionError(
+                f"INV-12 violation: ProbandumEdge {edge.id!r} references missing "
+                f"probandum (parent) at {parent_path}"
+            )
+        if edge.child_kind == "probandum":
+            child_path = s.probandum_path(edge.child_id)
+            if not child_path.is_file():
+                raise AssertionError(
+                    f"INV-12 violation: ProbandumEdge {edge.id!r} references missing "
+                    f"probandum (child) at {child_path}"
+                )
+        elif edge.child_kind == "atom":
+            # Schema guarantees child_source_id is non-None when child_kind == 'atom'.
+            assert edge.child_source_id is not None
+            child_atom_path = s.atom_path(edge.child_source_id, edge.child_id)
+            if not child_atom_path.is_file():
+                raise AssertionError(
+                    f"INV-12 violation: ProbandumEdge {edge.id!r} references missing "
+                    f"atom at {child_atom_path}"
+                )
+        elif edge.child_kind == "cross-doc-relation":
+            child_xrel_path = s.cross_doc_relation_path(edge.child_id)
+            if not child_xrel_path.is_file():
+                raise AssertionError(
+                    f"INV-12 violation: ProbandumEdge {edge.id!r} references missing "
+                    f"cross-doc-relation at {child_xrel_path}"
+                )
 
 
 def test_cross_doc_relation_with_missing_from_atom(
@@ -245,3 +288,40 @@ def test_cross_doc_relation_with_missing_to_atom(
     """A CrossDocRelation whose to_atom has no on-disk record is flagged."""
     with pytest.raises(AssertionError, match="references missing atom"):
         _walk_mappings_namespace(tmp_workspace_with_dangling_to_atom_ref)
+
+
+# ---------------------------------------------------------------------------
+# Phase 2c — INV-12 extended to ProbandumEdge endpoint references
+# ---------------------------------------------------------------------------
+
+
+def test_probandum_edge_with_missing_parent(
+    tmp_workspace_with_probandum_edge_dangling_parent: Path,
+) -> None:
+    """A ProbandumEdge whose parent has no on-disk record is flagged."""
+    with pytest.raises(AssertionError, match="references missing probandum"):
+        _walk_mappings_namespace(tmp_workspace_with_probandum_edge_dangling_parent)
+
+
+def test_probandum_edge_with_missing_probandum_child(
+    tmp_workspace_with_probandum_edge_dangling_probandum_child: Path,
+) -> None:
+    """A ProbandumEdge with child_kind=probandum and missing child is flagged."""
+    with pytest.raises(AssertionError, match="references missing probandum"):
+        _walk_mappings_namespace(tmp_workspace_with_probandum_edge_dangling_probandum_child)
+
+
+def test_probandum_edge_with_missing_atom_child(
+    tmp_workspace_with_probandum_edge_dangling_atom: Path,
+) -> None:
+    """A ProbandumEdge with child_kind=atom and missing atom file is flagged."""
+    with pytest.raises(AssertionError, match="references missing atom"):
+        _walk_mappings_namespace(tmp_workspace_with_probandum_edge_dangling_atom)
+
+
+def test_probandum_edge_with_missing_cross_doc_relation_child(
+    tmp_workspace_with_probandum_edge_dangling_xrel: Path,
+) -> None:
+    """A ProbandumEdge with child_kind=cross-doc-relation and missing target is flagged."""
+    with pytest.raises(AssertionError, match="references missing cross-doc-relation"):
+        _walk_mappings_namespace(tmp_workspace_with_probandum_edge_dangling_xrel)
