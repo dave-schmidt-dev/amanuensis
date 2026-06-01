@@ -268,15 +268,21 @@ plan source is §5.
 
   cache/<input-hash>.yaml                    (LLM-call cache; content-addressable)
 
-  mappings/                                  (Phase 2a + 2b cross-document artifacts — INV-12)
+  mappings/                                  (Phase 2a + 2b + 2c cross-document artifacts — INV-12)
     entity-vocabulary-snapshot.yaml          (active entity-kind registry; pinned by `amanuensis map`)
     entity-vocabulary-archive/<hash>.yaml    (prior snapshots; written by `map vocabulary snapshot --extend`)
+    walton-scheme-snapshot.yaml              (Phase 2c active Walton-scheme registry — INV-18)
+    walton-scheme-archive/<hash>.yaml        (prior snapshots; written by `map walton-scheme snapshot --extend`)
     entities/e-<hash>.md                     (canonical Entity records; frontmatter + notes body)
     resolutions/j-<hash>.yaml                (Resolution records; pure YAML)
     relations/x-<hash>.yaml                  (Phase 2b CrossDocRelation records; pure YAML — INV-15)
+    probanda/p-<hash>.md                     (Phase 2c Probandum records; frontmatter + statement body — INV-16/17/18)
+    probandum-edges/q-<hash>.yaml            (Phase 2c ProbandumEdge records; pure YAML — INV-16/17)
     supersedes/t-<hash>.yaml                 (EntitySupersede records)
     supersedes/s-<hash>.yaml                 (ResolutionSupersede records)
     supersedes/v-<hash>.yaml                 (Phase 2b CrossDocRelationSupersede records)
+    supersedes/u-<hash>.yaml                 (Phase 2c ProbandumSupersede records)
+    supersedes/o-<hash>.yaml                 (Phase 2c ProbandumEdgeSupersede records)
     provenance/<prov-id>.yaml                (PROV-O records for mapping-phase artifacts)
     replay-log/                              (mappings-scoped replay log)
 ```
@@ -310,11 +316,11 @@ The substrate is a shared mutable resource. The discipline:
 | Operation | Lock acquired? | Mechanism |
 |---|---|---|
 | Mutating CLI command (`init`, `ingest`, `distill`, `dispatch`, `clarification resolve`, `iteration add`, `vocabulary snapshot`) | Yes | `acquire_workspace_lock(workspace_root, timeout=5.0)` (M1.8) |
-| Mutating map CLI command (`map` orchestrator, `map entity merge`, `map resolution supersede`, `map vocabulary snapshot`) | Yes | Same flock, 5s timeout |
+| Mutating map CLI command (`map` orchestrator, `map entity merge`, `map resolution supersede`, `map relation supersede`, `map vocabulary snapshot`, `map probandum {add,link,supersede}`, `map probandum-edge supersede`, `map walton-scheme snapshot`) | Yes | Same flock, 5s timeout |
 | Web POST endpoint (resolve clarification, add iteration) | Yes | Same flock, 5s timeout, per-request |
 | Replay-log `seq` increment | Yes | Workspace flock held during atomic increment of `.next-seq` (M1.7) |
 | Read-only CLI command (`status`, `atom list`, `atom validate`, `clarification show`, `vocabulary show`, `export`) | No | Atomic-write-then-rename makes reads snapshot-safe |
-| Read-only map CLI command (`map status`, `map entity list`, `map entity show`, `map resolution show`, `map vocabulary show`) | No | Same |
+| Read-only map CLI command (`map status`, `map entity {list,show}`, `map resolution show`, `map relation {list,show}`, `map vocabulary show`, `map probandum {list,show,lineage}`, `map walton-scheme show`) | No | Same |
 | Web `GET` endpoints | No | Same |
 | Cache write (`cache/<input-hash>.yaml`) | No | Idempotent by content addressing |
 
@@ -355,16 +361,22 @@ narrow public surface. Cross-module dependencies are a DAG; no cycles.
 | `amanuensis.schemas.resolution_supersede` | `ResolutionSupersede` — correction record for resolution updates | `schemas._shared` | `ResolutionSupersede` |
 | `amanuensis.schemas.cross_doc_relation` | `CrossDocRelation` — Phase 2b cross-document warrant-bearing edge (INV-15) | `schemas._shared` | `CrossDocRelation` |
 | `amanuensis.schemas.cross_doc_relation_supersede` | `CrossDocRelationSupersede` — correction record for cross-doc edges | `schemas._shared` | `CrossDocRelationSupersede` |
+| `amanuensis.schemas.probandum` | `Probandum` — Phase 2c argument-tree node (`ultimate` / `penultimate` / `interim`) carrying a Walton scheme + ACH alternatives | `schemas._shared` | `Probandum` |
+| `amanuensis.schemas.probandum_edge` | `ProbandumEdge` — Phase 2c parent-to-child edge (probandum → probandum / atom / cross-doc-relation) | `schemas._shared` | `ProbandumEdge` |
+| `amanuensis.schemas.probandum_supersede` | `ProbandumSupersede` — correction record for `Probandum` updates | `schemas._shared` | `ProbandumSupersede` |
+| `amanuensis.schemas.probandum_edge_supersede` | `ProbandumEdgeSupersede` — correction record for `ProbandumEdge` updates | `schemas._shared` | `ProbandumEdgeSupersede` |
 | `amanuensis.fs` | Substrate filesystem (path conventions, atomic writes, workspace lock, replay log) | `schemas` | `Substrate`, `acquire_workspace_lock`, `ReplayLog`, typed errors |
 | `amanuensis.ingest` (M3.x) | Document → paragraph-indexed source mirror | `schemas`, `fs` | `ingest(pdf_path, source_id) -> SourceMirror` |
 | `amanuensis.vocabulary` (M2.x) | Closed predicate vocabulary registry + per-distillation snapshot loader | `schemas`, `fs` | `Vocabulary(snapshot_path).contains(predicate) -> bool` |
 | `amanuensis.vocabulary.entity_registry` | `EntityVocabulary` loader + snapshot semantics for mapping-phase kind registry | `schemas`, `fs` | `load_entity_vocabulary(path) -> EntityVocabulary`; snapshot pinning helpers |
+| `amanuensis.vocabulary.walton_schemes` | Walton-scheme registry loader + snapshot semantics for Phase 2c probandum scheme field (INV-18) | `schemas`, `fs` | `load_walton_scheme_registry(path)`; snapshot pinning helpers |
 | `amanuensis.validators` (M2.x) | Pure-function validation gates | `schemas`, `fs`, `vocabulary` | `validate_atom(atom, substrate) -> ValidationResult`, one function per gate |
 | `amanuensis.validators.entity_kind_in_vocabulary` | Closed-vocabulary gate: rejects entities whose `kind` is absent from the active entity snapshot | `schemas`, `vocabulary.entity_registry` | `entity_kind_in_vocabulary(entity, substrate) -> ValidationResult` |
 | `amanuensis.llm` (M5.x) | LLM-call wrapper: cache + replay log + PROV-O record | `schemas`, `fs` | `cached_call(role, prompt, inputs) -> (output, provenance_record)` |
 | `amanuensis.dispatch` (M6.x) | Multi-agent queue / driver. **The only harness-aware module.** | `schemas`, `fs`, `llm` | `Dispatch(workspace).enqueue(role, prompt, inputs)`; `driver.run()` |
 | `amanuensis.dispatch.reconcile` | Reconciliation gate — merges role outputs into the substrate | `schemas`, `fs`, `validators` | `reconcile(workspace)`; Phase 2a: `_build_entity`, `_build_resolution`; Phase 2b: `_build_cross_doc_relation`, `_process_connect_output`, `_auto_raise_resolution_clarification` |
 | `amanuensis.dispatch.connect_orchestrator` | Phase 2b cluster enumeration + dispatch driver for the Connect phase | `schemas`, `fs`, `dispatch` | `enumerate_connect_clusters`, `enqueue_connect_clusters`, `run_connect_phase` |
+| `amanuensis.dispatch.hierarchize_orchestrator` | Phase 2c cluster enumeration (keyed by penultimate parent) + dispatch driver for the Hierarchize phase | `schemas`, `fs`, `dispatch` | `enumerate_hierarchize_clusters`, `enqueue_hierarchize_clusters`, `run_hierarchize_phase` |
 | `amanuensis.skills` (M4.x) | Skill content (markdown files; bundled with package) | (none) | Files installed to harness skill directories |
 | `amanuensis.cli` (M4.x) | Typer command surface | All of the above | `amanuensis` console script |
 | `amanuensis.cli.map` | `amanuensis map ...` sub-app (Phase 2a + 2b verbs) | `schemas`, `fs`, `vocabulary.entity_registry` | `map`, `map status`, `map entity {list,show,merge}`, `map resolution {show,supersede}`, `map vocabulary {show,snapshot}`, `map relation {list,show,supersede}` (Phase 2b), `--connect-only` (Phase 2b) |
@@ -372,6 +384,8 @@ narrow public surface. Cross-module dependencies are a DAG; no cycles.
 | `amanuensis.web.routes.entities` | Read-only entity browser routes (Phase 2a; Phase 2b extends the detail page with a cross-doc-edge section) | `schemas`, `fs` | `GET /entities`, `GET /entities/<id>` |
 | `amanuensis.web.routes.resolutions` | Read-only resolution browser routes | `schemas`, `fs` | `GET /resolutions`, `GET /resolutions/<id>` |
 | `amanuensis.web.routes.cross_doc_relations` | Read-only Phase 2b cross-doc-relation routes (list + detail) | `schemas`, `fs` | `GET /cross-doc-relations`, `GET /cross-doc-relations/<id>` |
+| `amanuensis.web.routes.probanda` | Read-only Phase 2c probandum routes (list + detail + Cytoscape dagre tree) | `schemas`, `fs` | `GET /probanda`, `GET /probanda/<id>`, `GET /probanda/<id>/tree`, `GET /probanda/<id>/tree.json` |
+| `amanuensis.web.routes.probandum_edges` | Read-only Phase 2c probandum-edge detail route (supersede chain + linkage) | `schemas`, `fs` | `GET /probandum-edges/<id>` |
 | `amanuensis.export` (M9.x) | Static HTML export — Phase 1 per-source stub plus Phase 2b workspace appendix bundle | `schemas`, `fs`, `web` (renderer reuse) | `amanuensis export` |
 | `amanuensis.export.workspace_appendix` | Phase 2b workspace-level bundle: `cross-doc-relations.html` plus per-entity pages | `schemas`, `fs` | `export_workspace_appendix(substrate, out_dir)` |
 
@@ -387,6 +401,19 @@ added `schemas.entity`, `schemas.resolution`, `schemas.entity_supersede`,
 reconciler functions, the `amanuensis:map:connect` role skill, the
 `amanuensis map relation {list,show,supersede}` CLI verbs,
 `web.routes.cross_doc_relations`, and `export.workspace_appendix`.
+Phase 2c (Hierarchize) added `schemas.probandum`,
+`schemas.probandum_edge`, `schemas.probandum_supersede`,
+`schemas.probandum_edge_supersede`, `vocabulary.walton_schemes`,
+`dispatch.hierarchize_orchestrator`, the `_build_probandum` /
+`_build_probandum_edge` / `_process_hierarchize_output` /
+`_auto_raise_scheme_clarification` / `_auto_raise_lineage_clarification`
+reconciler functions, the `amanuensis:map:hierarchize` role skill, the
+`amanuensis map probandum {add,list,show,lineage,link,supersede}` /
+`map probandum-edge supersede` / `map walton-scheme {show,snapshot}` CLI
+verbs, the `amanuensis map --hierarchize-only` flag,
+`web.routes.probanda` / `web.routes.probandum_edges`, and the
+`probandum-tree.html` + per-probandum `probanda/<id>.html` static-export
+pages.
 
 ---
 
@@ -429,7 +456,42 @@ Phase 1 deliberate scope cuts, not bugs. The list mirrors the
   canonical-entity graph; Phase 2b (Connect) shipped cross-document
   support / attack / undercut edges as `CrossDocRelation` records under
   `mappings/relations/x-<hash>.yaml`, gated by INV-15 (shared-entity
-  groundedness). Probandum hierarchies spanning sources remain Phase 2c.
+  groundedness). Phase 2c (Hierarchize) shipped probandum hierarchies
+  as `Probandum` + `ProbandumEdge` records under `mappings/probanda/`
+  and `mappings/probandum-edges/`, gated by INV-16 (tree-not-DAG +
+  acyclic), INV-17 (lineage reaches an `ultimate`), and INV-18 (closed
+  Walton-scheme vocabulary).
+- **Tree-not-DAG enforced (Phase 2c).** Probandum hierarchies are
+  enforced as trees by INV-16: each non-root probandum has exactly one
+  active parent edge. When the same piece of evidence (atom,
+  cross-doc-relation, or probandum) genuinely participates in multiple
+  lineages, the Wigmore-sanctioned move is copy-by-reference at
+  presentation time — the tree carries one canonical subtree and the
+  renderer surfaces the cross-references at view time. DAG-shaped
+  multi-lineage substrate is rejected at `Substrate.add_probandum_edge`.
+- **No real-LLM Hierarchize dispatch verified end-to-end (Phase 2c).**
+  Like Phase 2a's Resolver and Phase 2b's Connector, the Hierarchize
+  role's real-LLM smoke is deferred to the first engagement. The
+  mock-harness smoke test and the multi-distillation fixture cover the
+  code path; the real-LLM smoke runs against the first production
+  engagement.
+- **No full Walton critical-questions matrix (Phase 2c).** Phase 2c
+  ships `Probandum.scheme` as a closed-vocabulary string keyed against
+  `mappings/walton-scheme-snapshot.yaml`. The per-scheme critical-
+  questions matrix (Walton's "audit checklist" for each scheme) is a
+  Phase 2c.5 candidate; today the supervisor reads the scheme name and
+  applies the audit discipline by hand.
+- **No full ACH inconsistency matrix (Phase 2c).** The
+  `Probandum.alternatives_considered` field is a free-text list of
+  competing hypotheses; the structured ACH inconsistency matrix (each
+  alternative scored against each piece of evidence) is deferred to
+  Phase 2c.5. INV-19's write-time gate ensures non-empty alternatives
+  for non-ultimate probanda but does not yet check inconsistency-matrix
+  shape.
+- **No Tetlock-style calibration (Phase 2c).** Confidence stays a
+  closed-vocabulary literal (`high` / `medium` / `low`) on probanda
+  and edges. Brier-score calibration, base-rate tracking, and the full
+  Tetlock superforecaster toolkit are Phase 4 candidates.
 - **POSIX-only.** The workspace flock uses `fcntl.flock`. Windows
   support is out of scope for Phase 1.
 - **Python 3.12+ but `<3.14`.** Python 3.14's `site.py` change skips
@@ -501,7 +563,8 @@ Phase 1 deliberate scope cuts, not bugs. The list mirrors the
   supervision surfaces (checkpoints, clarifications, iteration
   directives, delivery gate) and the canonical end-to-end run.
 - [`../INVARIANTS.md`](../INVARIANTS.md) — the invariants charter
-  (INV-1 through INV-14).
+  (INV-1 through INV-18, with INV-16 / INV-17 / INV-18 added in Phase
+  2c).
 - [`../amanuensis.yaml`](../amanuensis.yaml) — the project marker and
   posture configuration.
 - `~/Documents/Projects/.plans/amanuensis/phase1-distill-foundation-2026-05-29.md` —
