@@ -171,6 +171,17 @@ def map_command(
             ),
         ),
     ] = False,
+    hierarchize_only: Annotated[
+        bool,
+        typer.Option(
+            "--hierarchize-only",
+            help=(
+                "Skip the resolve/audit/connect phases and run only the "
+                "Phase 2c Hierarchize phase against an already-resolved + "
+                "connected substrate."
+            ),
+        ),
+    ] = False,
     workspace: Annotated[
         Path | None,
         typer.Option(
@@ -180,7 +191,7 @@ def map_command(
         ),
     ] = None,
 ) -> None:
-    """Run the full map warp-plan cycle (T7.2 + Phase 2b M6/T6.3).
+    """Run the full map warp-plan cycle (T7.2 + Phase 2b M6/T6.3 + Phase 2c M8/T8.5).
 
     Default phase order:
 
@@ -193,10 +204,21 @@ def map_command(
        pending connect outputs. The driver-side LLM invocation is
        deferred to first-engagement (the supervisor runs
        ``amanuensis dispatch --once`` between phases).
+    3. **Hierarchize** — enqueue one ``hierarchize`` dispatch event per
+       qualifying penultimate cluster, then reconcile any pending
+       hierarchize outputs. Skipped silently when the Walton-scheme
+       snapshot is not yet pinned (the operator hasn't engaged Phase
+       2c yet). The driver-side LLM invocation is deferred to
+       first-engagement.
 
-    ``--connect-only`` skips step 1 entirely and runs only the Connect
-    phase — useful when the resolve+audit substrate is already settled
-    and the operator just wants to refresh cross-doc edges.
+    ``--connect-only`` skips step 1 entirely and runs steps 2 + 3
+    (Connect + Hierarchize) — useful when the resolve+audit substrate
+    is already settled and the operator just wants to refresh
+    cross-doc edges and the argument tree.
+
+    ``--hierarchize-only`` skips steps 1 + 2 and runs only step 3 —
+    useful when the operator is iterating on the Hierarchize role
+    against an already-connected substrate.
 
     ``--non-interactive`` is the default and only implemented mode.
     An interactive mode that drives dispatch inline is Phase 2a.5
@@ -246,7 +268,10 @@ def map_command(
     # are present at least once. If they haven't, the connect skill
     # file (bundled into the package) is still resolved via importlib.
     # ------------------------------------------------------------------
-    if not connect_only:
+    # Skip preflight when scoping to a downstream phase (connect or
+    # hierarchize); those flags assume the resolve/audit skills have
+    # been validated at least once already.
+    if not connect_only and not hierarchize_only:
         harness_home_str = os.environ.get("AMANUENSIS_HARNESS_HOME")
         harness_home = Path(harness_home_str) if harness_home_str else Path.home()
         skills_dir = harness_home / ".claude" / "skills" / _AMANUENSIS_NAMESPACE
@@ -272,7 +297,7 @@ def map_command(
     #     ``os.open`` of the lock file from the same process would
     #     deadlock, so we drop the resolve/audit lock first.
     # ------------------------------------------------------------------
-    if not connect_only:
+    if not connect_only and not hierarchize_only:
         try:
             with acquire_workspace_lock(workspace_path, timeout=5.0):
                 _run_map_orchestrator(
@@ -289,9 +314,10 @@ def map_command(
             raise typer.Exit(code=2) from exc
 
     # Phase 2b Connect phase: enqueue clusters + drain pending connect
-    # outputs. Always runs (including under ``--connect-only``).
-    report = run_connect_phase(substrate)
-    _emit_connect_phase_summary(report=report, connect_only=connect_only)
+    # outputs. Skipped under ``--hierarchize-only``.
+    if not hierarchize_only:
+        report = run_connect_phase(substrate)
+        _emit_connect_phase_summary(report=report, connect_only=connect_only)
 
     # Phase 2c Hierarchize phase: enqueue penultimate clusters + drain
     # pending hierarchize outputs. Runs after Connect (and outside any
@@ -301,9 +327,20 @@ def map_command(
     # Skipped when the Walton-scheme snapshot is missing: the operator
     # has not yet engaged Phase 2c, so silently no-op rather than
     # raising. (``amanuensis map vocabulary walton snapshot`` pins it.)
+    # Exception: under ``--hierarchize-only`` the operator has
+    # explicitly asked for Hierarchize, so a missing snapshot is a
+    # hard error (mirroring how ``--connect-only`` would behave if the
+    # connect skill bundle were unbundled).
     if substrate.load_walton_scheme_snapshot() is not None:
         hierarchize_report = run_hierarchize_phase(substrate)
         _emit_hierarchize_phase_summary(report=hierarchize_report)
+    elif hierarchize_only:
+        typer.secho(
+            "Walton-scheme snapshot not pinned; "
+            "run `amanuensis map vocabulary walton snapshot` first",
+            err=True,
+        )
+        raise typer.Exit(code=2)
 
 
 # ---------------------------------------------------------------------------
