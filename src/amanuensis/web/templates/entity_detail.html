@@ -92,6 +92,39 @@
     {% endif %}
   </section>
 
+  <section class="rounded border border-neutral-800 bg-neutral-900 p-4">
+    <h2 class="text-lg font-semibold text-neutral-50">Cross-doc edges touching this entity</h2>
+    {% if cross_doc_total %}
+    <p class="mt-1 text-xs text-neutral-500">
+      {{ cross_doc_total }} cross-doc relation{{ '' if cross_doc_total == 1 else 's' }} cite{{ 's' if cross_doc_total == 1 else '' }} this entity in shared_entities.
+    </p>
+    <div class="mt-3 space-y-4">
+      {% for kind in cross_doc_kinds_ordered %}
+      <div>
+        <h3 class="text-xs uppercase tracking-wider text-neutral-400">{{ kind }}</h3>
+        <ul class="mt-1 divide-y divide-neutral-800 rounded border border-neutral-800">
+          {% for rel in cross_doc_by_kind[kind] %}
+          <li class="px-3 py-2 text-sm">
+            <a
+              href="/cross-doc-relations/{{ rel.id }}"
+              class="font-mono text-xs text-neutral-200 underline decoration-neutral-700 underline-offset-2 hover:decoration-neutral-300"
+            >{{ rel.id }}</a>
+            <span class="ml-2 text-xs text-neutral-500">
+              {{ rel.from_source_id }} / {{ rel.from_atom_id }}
+              &rarr;
+              {{ rel.to_source_id }} / {{ rel.to_atom_id }}
+            </span>
+          </li>
+          {% endfor %}
+        </ul>
+      </div>
+      {% endfor %}
+    </div>
+    {% else %}
+    <p class="mt-2 text-sm text-neutral-500">no cross-doc edges cite this entity</p>
+    {% endif %}
+  </section>
+
   {% if is_superseded %}
   <section class="rounded border border-neutral-800 bg-neutral-900 p-4">
     <h2 class="text-lg font-semibold text-neutral-50">supersede chain</h2>

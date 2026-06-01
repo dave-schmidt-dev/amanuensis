@@ -141,6 +141,23 @@ async def entity_detail(
 
     is_superseded = latest.id != entity_id
 
+    # Phase 2b T8.4 — every CrossDocRelation whose ``shared_entities``
+    # list contains this entity_id. The substrate's filter is exact-id,
+    # not chain-walked: surface-form here mirrors how the supervisor
+    # will scan a single canonical-id page, so an exact match against
+    # the requested ``entity_id`` is the right semantic. Grouping by
+    # kind keeps the rendered table compact (supports / attacks /
+    # undercuts headings) and matches how the spec describes the
+    # section.
+    cross_doc_relations = list(substrate.list_cross_doc_relations(shared_entity=entity_id))
+    cross_doc_by_kind: dict[str, list[object]] = {}
+    for rel in cross_doc_relations:
+        cross_doc_by_kind.setdefault(rel.kind, []).append(rel)
+    # Render in a stable, supervisor-meaningful order.
+    cross_doc_kinds_ordered = [
+        k for k in ("supports", "attacks", "undercuts") if k in cross_doc_by_kind
+    ]
+
     templates = request.app.state.templates
     response = templates.TemplateResponse(  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType,reportReturnType]
         request,
@@ -150,6 +167,9 @@ async def entity_detail(
             "resolutions": resolutions,
             "latest": latest,
             "is_superseded": is_superseded,
+            "cross_doc_by_kind": cross_doc_by_kind,
+            "cross_doc_kinds_ordered": cross_doc_kinds_ordered,
+            "cross_doc_total": len(cross_doc_relations),
         },
     )
     response.headers["cache-control"] = "no-store"

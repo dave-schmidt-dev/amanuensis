@@ -1,4 +1,4 @@
-"""Web route tests for cross-doc relations (Phase 2b M8 T8.1 - T8.3)."""
+"""Web route tests for cross-doc relations (Phase 2b M8 T8.1 - T8.4)."""
 
 # pyright: reportPrivateUsage=false
 
@@ -237,3 +237,47 @@ def test_detail_supersede_chain_renders_reason(
     response = client.get(f"/cross-doc-relations/{old_id}")
     assert response.status_code == 200
     assert "fixture supersede for M8 T8.3" in response.text
+
+
+# ---------------------------------------------------------------------------
+# T8.4 — Entity-detail page extension
+# ---------------------------------------------------------------------------
+
+
+def test_entity_detail_shows_cross_doc_edges(
+    tmp_workspace_with_two_cross_doc_relations: Path,
+    web_app: FastAPI,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Entity detail lists every CrossDocRelation whose shared_entities contains it."""
+    monkeypatch.setenv("AMANUENSIS_WORKSPACE", str(tmp_workspace_with_two_cross_doc_relations))
+    sub = Substrate(tmp_workspace_with_two_cross_doc_relations)
+    all_rels = list(sub.list_cross_doc_relations(shared_entity="e-smith"))
+    assert len(all_rels) >= 2, "fixture must plant two relations on e-smith"
+
+    client = TestClient(web_app)
+    response = client.get("/entities/e-smith")
+    assert response.status_code == 200
+    assert "Cross-doc edges touching this entity" in response.text
+    # Each fixture-planted relation must appear with a link to its detail.
+    for rel in all_rels:
+        assert f"/cross-doc-relations/{rel.id}" in response.text
+    # The kinds are grouped: both kinds appear (supports + attacks).
+    assert "supports" in response.text
+    assert "attacks" in response.text
+
+
+def test_entity_detail_empty_cross_doc_section(
+    planted_entities_workspace: Path,
+    web_app: FastAPI,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An entity with no cross-doc edges still renders the section (empty state)."""
+    monkeypatch.setenv("AMANUENSIS_WORKSPACE", str(planted_entities_workspace))
+    sub = Substrate(planted_entities_workspace)
+    entity = next(iter(sub.list_entities()))
+    client = TestClient(web_app)
+    response = client.get(f"/entities/{entity.id}")
+    assert response.status_code == 200
+    assert "Cross-doc edges touching this entity" in response.text
+    assert "no cross-doc edges cite this entity" in response.text
