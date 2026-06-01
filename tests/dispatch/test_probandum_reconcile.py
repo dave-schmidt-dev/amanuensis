@@ -13,9 +13,9 @@ Coverage map:
 
 - T6.2 — happy + scheme-missing paths for ``_build_probandum``.
 - T6.3 — happy + lineage-incomplete paths for ``_build_probandum_edge``.
-
-T6.4 (supersede flow) and T6.5 (re-add after lineage resolved) are
-covered by additional tests in this same file landed in later commits.
+- T6.4 — probandum supersede flow end-to-end through the reconciler +
+  the M2 ``ProbandumSupersede`` IO.
+- T6.5 — re-add after lineage-incomplete clarification resolved.
 """
 
 # pyright: reportPrivateUsage=false
@@ -476,3 +476,118 @@ def test_probandum_supersede_flow_end_to_end(
     terminus = sub.latest_probandum_for(prob_v1.id)
     assert terminus is not None
     assert terminus.id == prob_v2.id
+
+
+# --- T6.5: re-add after lineage clarification resolved -----------------
+
+
+def test_re_add_after_lineage_resolved(
+    tmp_workspace_with_walton_snapshot_and_distillation: Path,
+    hierarchize_role_attribution: RoleAttribution,
+    hierarchize_provenance: ProvenanceRecord,
+) -> None:
+    """Lineage-incomplete clarification cycle: missing parent-edge lands -> retry commits.
+
+    Phase 2c T6.5 — the only sanctioned recovery path for an INV-17
+    rejection:
+
+    1. Workspace has an ``ultimate`` probandum AND an orphan
+       ``penultimate`` (no parent edge yet).
+    2. Hierarchize proposes an edge from the orphan penultimate to a
+       child probandum -> reconciler rejects (parent doesn't trace to
+       ultimate yet) and auto-raises a ``lineage-incomplete``
+       Clarification.
+    3. Supervisor closes the loop by writing the linking edge
+       ultimate -> penultimate (so the penultimate's lineage now
+       reaches an ultimate).
+    4. Re-attempt the original edge -> succeeds (substrate state
+       changed underneath; the reconciler is idempotent on input but
+       state-sensitive on the gate result).
+    """
+    sub = Substrate(tmp_workspace_with_walton_snapshot_and_distillation)
+
+    ultimate = _build_probandum(
+        _base_probandum_candidate(
+            statement="Ultimate proposition.",
+            kind="ultimate",
+        ),
+        sub,
+        hierarchize_provenance,
+        role_attributions=[hierarchize_role_attribution],
+    )
+    assert ultimate is not None
+
+    # Penultimate without a linking edge from ultimate yet (orphan).
+    orphan_pen = _build_probandum(
+        _base_probandum_candidate(
+            statement="Penultimate proposition — orphaned at first.",
+            kind="penultimate",
+            alternatives_considered=["alt-1"],
+        ),
+        sub,
+        hierarchize_provenance,
+        role_attributions=[hierarchize_role_attribution],
+    )
+    assert orphan_pen is not None
+
+    # Child interim probandum the Hierarchize role wants to attach
+    # under the orphan penultimate.
+    child = _build_probandum(
+        _base_probandum_candidate(
+            statement="Interim sub-proposition under the penultimate.",
+            kind="interim",
+            alternatives_considered=["alt-c1"],
+        ),
+        sub,
+        hierarchize_provenance,
+        role_attributions=[hierarchize_role_attribution],
+    )
+    assert child is not None
+
+    # Step 2: propose orphan_pen -> child. Rejected (orphan_pen's
+    # lineage does NOT reach ultimate yet).
+    edge_attempt_1 = _build_probandum_edge(
+        _base_edge_candidate(
+            parent_probandum_id=orphan_pen.id,
+            child_id=child.id,
+        ),
+        sub,
+        hierarchize_provenance,
+        role_attributions=[hierarchize_role_attribution],
+    )
+    assert edge_attempt_1 is None
+    assert list(sub.list_probandum_edges()) == []
+    # A lineage-incomplete clarification was raised.
+    open_clars = list_open_clarifications_for_source(sub, "src-A", kind="lineage-incomplete")
+    assert len(open_clars) == 1
+
+    # Step 3: supervisor lands the missing linking edge ultimate -> orphan_pen.
+    linking_edge = _build_probandum_edge(
+        _base_edge_candidate(
+            parent_probandum_id=ultimate.id,
+            child_id=orphan_pen.id,
+        ),
+        sub,
+        hierarchize_provenance,
+        role_attributions=[hierarchize_role_attribution],
+    )
+    assert linking_edge is not None  # ultimate parent always passes lineage gate.
+
+    # Step 4: re-attempt orphan_pen -> child. Now succeeds because
+    # orphan_pen's lineage reaches ultimate via the new linking edge.
+    edge_attempt_2 = _build_probandum_edge(
+        _base_edge_candidate(
+            parent_probandum_id=orphan_pen.id,
+            child_id=child.id,
+        ),
+        sub,
+        hierarchize_provenance,
+        role_attributions=[hierarchize_role_attribution],
+    )
+    assert edge_attempt_2 is not None
+    assert edge_attempt_2.parent_probandum_id == orphan_pen.id
+    assert edge_attempt_2.child_id == child.id
+
+    # Two edges total now: the linking edge and the original retried edge.
+    all_edges = list(sub.list_probandum_edges())
+    assert len(all_edges) == 2
