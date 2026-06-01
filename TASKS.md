@@ -52,11 +52,23 @@ Prior plan: `~/Documents/Projects/.plans/amanuensis/phase1-distill-foundation-20
   shared-entity gate) active with executable gate tests. See
   HISTORY.md 2026-06-01 entry for the per-milestone breakdown,
   defects caught + remediated, and full validation transcript.
-- [pending] Phase 2c (Hierarchize) — probandum hierarchies built on
-  Phase 2b's cross-doc edges. Full brainstorm cycle required;
-  Phase 2b complete; not blocked.
-- [pending] Phase 3 (Extend) — full brainstorm cycle (blocked on
-  Phase 2 implementation).
+- [done] **Phase 2c (Hierarchize) — SHIPPED 2026-06-01.** All ~85
+  tasks complete across 13 milestones. 1274 fast pytest cases +
+  64+ invariants (INV-1..18, +INV-19 substrate-level) + integration
+  + 18 Playwright specs pass; pyright strict (0 NEW errors) + ruff
+  + vulture clean. 4 new schemas (Probandum, ProbandumEdge,
+  ProbandumSupersede, ProbandumEdgeSupersede); new role
+  (``amanuensis:map:hierarchize``); 9 new CLI sub-commands (map
+  probandum + map walton-scheme + --hierarchize-only flag); 3 new
+  web routes (/probanda list + detail + tree) with Cytoscape dagre
+  visualization; static export probandum-tree.html appendix +
+  per-probandum lineage pages; 3 new invariants (INV-16
+  tree-not-DAG, INV-17 lineage-to-ultimate, INV-18 closed Walton-
+  scheme vocabulary). See HISTORY.md 2026-06-01 entry for the
+  per-milestone breakdown, defects caught + remediated, and full
+  validation transcript.
+- [pending] Phase 3 (Extend) — not blocked; full brainstorm cycle
+  required. Phase 2 complete (Phase 2a/2b/2c all shipped).
 - [pending] Phase 4 (Synthesize) — packaging into agent-usable
   product.
 

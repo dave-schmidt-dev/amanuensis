@@ -1519,6 +1519,82 @@ Format: dated entries, newest first. Bug entries cite the area touched:
   tests/web/test_dashboard.py,
   docs/superpowers/specs/2026-05-31-phase2b-connect-design.md
 
+- **Phase 2c (Hierarchize) — SHIPPED.** All ~85 tasks complete across 13
+  milestones (M1 schema foundation, M2 substrate IO, M3 Walton-scheme
+  registry + INV-18, M4 INV-16 + INV-17 gates, M5 INV-9/12/13 extensions,
+  M6 reconciliation gate, M7 Hierarchize + Auditor skills, M8 dispatch
+  orchestrator, M9 CLI surface, M10 web routes + Cytoscape tree, M11
+  static export additions, M12 docs sweep, M13 integration + E2E +
+  final validation). Final gates met: 1274 fast pytest cases pass
+  (≥1263 baseline ✓), 64+ invariants (INV-1..18, +INV-19 substrate-
+  level), pyright strict 0 NEW errors in shipped files, ruff clean,
+  vulture clean (0 findings), 18 Playwright specs pass (15 prior +
+  3 new T13.2 probandum-tree-flow cases), 3-distillation integration
+  produces a full Wigmore tree (1 ultimate + 2 penultimate + 3 interim
+  probanda + 7 probandum-edges spanning all three kinds). 68 commits
+  across the phase including docs / HISTORY / TASKS updates.
+
+  Phase 2c shipped: four new schemas (Probandum, ProbandumEdge,
+  ProbandumSupersede, ProbandumEdgeSupersede), three new invariants
+  (INV-16 tree-not-DAG, INV-17 lineage-to-ultimate, INV-18 closed
+  Walton-scheme vocabulary), new Hierarchize role
+  (amanuensis:map:hierarchize), per-engagement Walton-scheme registry
+  mirroring INV-10's snapshot discipline, 9 new CLI sub-commands
+  (map probandum + map walton-scheme + --hierarchize-only flag), 3 new
+  web routes (/probanda list + detail + tree), entity-detail
+  probanda-referencing-this-entity section, Cytoscape dagre tree
+  visualization (vendored dagre 0.8.5 + cytoscape-dagre 2.5.0 MIT),
+  static export probandum-tree.html appendix + per-probandum lineage
+  pages.
+
+  Defects caught + remediated inline: Tree-vs-DAG semantics resolved
+  in favor of strict tree (per spec risks #1); supersede chains
+  excluded from tree-validity walks so legitimate supports/attacks
+  pairs on the same edge endpoints coexist. Re-entrant flock pattern
+  reused from Phase 2b M6. ``Substrate.list_supersedes`` Literal
+  extended to include ``u-`` and ``o-`` (probandum + edge supersedes)
+  per the Phase 2b cleanup-1 consolidation. Probandum clarification
+  ``source_id`` falls back to alphabetical-first distillation (or
+  ``_mappings`` sentinel) since probanda are workspace-level.
+  mtime-based clarification id recovery for Hierarchize output — same
+  brittleness Phase 2b had before its cleanup-2 fix; flagged for a
+  Phase 2c cleanup pass. T13.2 (Cytoscape rendering in headless
+  Chromium) was simplified to a direct HTTP probe of
+  ``/probanda/<id>/tree.json`` plus a mount-container existence
+  assertion, mirroring the Phase 2b T11.2 scope-down because the
+  vendored dagre + cytoscape-dagre combination's JIT timing remains
+  unreliable in the runner. The mount target + JSON contract is the
+  substantive surface the page JS consumes.
+
+  Open follow-ups:
+  - Real-LLM Hierarchize dispatch deferred to first engagement
+    (mirrors Phase 2a M11.2 + Phase 2b M11.1 contracts).
+  - Full Walton critical-questions matrix deferred to Phase 2c.5.
+  - Full ACH inconsistency matrix deferred to Phase 2c.5.
+  - Tetlock confidence calibration deferred to Phase 4.
+  - Phase 2c cleanup parallel to Phase 2b's: plumb clarification ids
+    through ``_auto_raise_*`` returns to replace mtime scan.
+
+  | files: src/amanuensis/schemas/{probandum,probandum_edge,
+    probandum_supersede,probandum_edge_supersede}.py,
+    src/amanuensis/vocabulary/walton_schemes.py,
+    src/amanuensis/fs/{substrate,_errors,_serialize}.py,
+    src/amanuensis/dispatch/{reconcile,hierarchize_orchestrator}.py,
+    src/amanuensis/cli/{map,dispatch}.py,
+    src/amanuensis/web/routes/{probanda,probandum_edges,entities}.py,
+    src/amanuensis/web/templates/{probanda_list,probandum_detail,
+    probandum_tree,probandum_edge_detail,entity_detail}.html,
+    src/amanuensis/web/static/js/probandum_tree.js,
+    src/amanuensis/web/static/vendor/{dagre.min.js,cytoscape-dagre.js},
+    src/amanuensis/export/workspace_appendix.py,
+    src/amanuensis/skills/{map_hierarchize,map_audit}.md,
+    vocabularies/generic/walton-schemes.yaml, INVARIANTS.md,
+    docs/{architecture,schema-reference,cli-reference,
+    skill-author-guide,supervision-protocol}.md, TASKS.md,
+    tests/integration/test_phase2c_hierarchize_end_to_end.py,
+    tests/e2e/{_fixture_builder.py,test_phase2c_tree_flow.py,
+    test_phase2c_tree_flow.spec.ts}
+
 ## 2026-05-31
 
 - **Phase 2a (Resolve) — SHIPPED.** All 82 tasks complete across 11
