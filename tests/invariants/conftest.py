@@ -38,6 +38,8 @@ from amanuensis.schemas import (
     OperandTypeSchema,
     Probandum,
     ProbandumEdge,
+    ProbandumEdgeSupersede,
+    ProbandumSupersede,
     ProvenanceRecord,
     Relation,
     Resolution,
@@ -637,6 +639,192 @@ def _build_entity_supersede(
         schema_version=1,
     )
     return es, prov
+
+
+# ---------------------------------------------------------------------------
+# Phase 2c helpers — Probandum / ProbandumEdge / supersede builders
+# ---------------------------------------------------------------------------
+
+
+def _build_probandum(
+    role_attribution: RoleAttribution,
+    _agent: AgentAttribution,
+    *,
+    statement: str = "ACME breached the contract by failing to pay.",
+    kind: Literal["ultimate", "penultimate", "interim"] = "ultimate",
+    scheme: str = "argument-from-expert-opinion",
+    alternatives_considered: list[str] | None = None,
+    confidence: Literal["high", "medium", "low"] = "high",
+) -> Probandum:
+    """Build a Probandum with a content-addressable id.
+
+    Phase 2c records (probandum, probandum-edge, supersedes) are not yet
+    represented in ``ProvenanceRecord.entity_type``'s closed literal, and
+    the Phase 2c substrate writers do not enforce a provenance-on-disk
+    check — so the builder returns the record alone, mirroring the
+    fixture pattern in ``tests/fs/conftest.py::make_probandum``.
+
+    Default ``alternatives_considered`` is ``[]`` (legal for ``ultimate``;
+    callers building penultimate / interim probanda must pass a non-empty
+    list to satisfy the INV-19 ACH alternatives gate at write-time).
+
+    The ``_agent`` parameter is accepted for signature parity with
+    Phase 2a/2b builders (``_build_entity`` etc.) so call sites that
+    thread ``_AGENT`` through stay uniform; it is intentionally unused.
+    """
+    del _agent  # parity-only; Phase 2c writers do not require PROV.
+    alts = alternatives_considered if alternatives_considered is not None else []
+    draft = Probandum(
+        id="p-" + "0" * 16,
+        statement=statement,
+        kind=kind,
+        scheme=scheme,
+        alternatives_considered=alts,
+        confidence=confidence,
+        provenance_id="p-fixture-prob",
+        role_attributions=[role_attribution],
+        schema_version=1,
+    )
+    p_id = compute_id(draft)
+    return Probandum(
+        id=p_id,
+        statement=statement,
+        kind=kind,
+        scheme=scheme,
+        alternatives_considered=alts,
+        confidence=confidence,
+        provenance_id="p-fixture-prob",
+        role_attributions=[role_attribution],
+        schema_version=1,
+    )
+
+
+def _build_probandum_edge(
+    role_attribution: RoleAttribution,
+    _agent: AgentAttribution,
+    *,
+    parent_probandum_id: str,
+    child_id: str,
+    child_kind: Literal["probandum", "atom", "cross-doc-relation"] = "probandum",
+    child_source_id: str | None = None,
+    kind: Literal["supports", "attacks", "undercuts"] = "supports",
+    warrant: str = "Child entails parent under the chosen scheme.",
+    warrant_basis: str = "fixture basis",
+) -> ProbandumEdge:
+    """Build a ProbandumEdge with a content-addressable id.
+
+    See ``_build_probandum`` for the rationale: Phase 2c writers do not
+    require a provenance record on disk, so the builder returns the
+    record alone. ``_agent`` is parity-only and intentionally unused.
+    """
+    del _agent
+    draft = ProbandumEdge(
+        id="q-" + "0" * 16,
+        parent_probandum_id=parent_probandum_id,
+        child_id=child_id,
+        child_kind=child_kind,
+        child_source_id=child_source_id,
+        kind=kind,
+        warrant=warrant,
+        warrant_defensibility="conventional",
+        warrant_basis=warrant_basis,
+        confidence="medium",
+        provenance_id="p-fixture-edge",
+        role_attributions=[role_attribution],
+        schema_version=1,
+    )
+    edge_id = compute_id(draft)
+    return ProbandumEdge(
+        id=edge_id,
+        parent_probandum_id=parent_probandum_id,
+        child_id=child_id,
+        child_kind=child_kind,
+        child_source_id=child_source_id,
+        kind=kind,
+        warrant=warrant,
+        warrant_defensibility="conventional",
+        warrant_basis=warrant_basis,
+        confidence="medium",
+        provenance_id="p-fixture-edge",
+        role_attributions=[role_attribution],
+        schema_version=1,
+    )
+
+
+def _build_probandum_supersede(
+    role_attribution: RoleAttribution,
+    _agent: AgentAttribution,
+    *,
+    superseded_probandum_id: str,
+    replacement_probandum_id: str,
+    reason: str = "supervisor refined statement",
+) -> ProbandumSupersede:
+    """Build a ProbandumSupersede with a content-addressable id.
+
+    See ``_build_probandum`` for the rationale on the PROV-less return.
+    """
+    del _agent
+    draft = ProbandumSupersede(
+        id="u-" + "0" * 16,
+        supersedes_id=superseded_probandum_id,
+        superseded_by_id=replacement_probandum_id,
+        kind="probandum",
+        reason=reason,
+        provenance_id="p-fixture-prob-sup",
+        role_attributions=[role_attribution],
+        at=_STABLE_AT,
+        schema_version=1,
+    )
+    sup_id = compute_id(draft)
+    return ProbandumSupersede(
+        id=sup_id,
+        supersedes_id=superseded_probandum_id,
+        superseded_by_id=replacement_probandum_id,
+        kind="probandum",
+        reason=reason,
+        provenance_id="p-fixture-prob-sup",
+        role_attributions=[role_attribution],
+        at=_STABLE_AT,
+        schema_version=1,
+    )
+
+
+def _build_probandum_edge_supersede(
+    role_attribution: RoleAttribution,
+    _agent: AgentAttribution,
+    *,
+    superseded_edge_id: str,
+    replacement_edge_id: str,
+    reason: str = "supervisor tightened warrant",
+) -> ProbandumEdgeSupersede:
+    """Build a ProbandumEdgeSupersede with a content-addressable id.
+
+    See ``_build_probandum`` for the rationale on the PROV-less return.
+    """
+    del _agent
+    draft = ProbandumEdgeSupersede(
+        id="o-" + "0" * 16,
+        supersedes_id=superseded_edge_id,
+        superseded_by_id=replacement_edge_id,
+        kind="probandum-edge",
+        reason=reason,
+        provenance_id="p-fixture-edge-sup",
+        role_attributions=[role_attribution],
+        at=_STABLE_AT,
+        schema_version=1,
+    )
+    sup_id = compute_id(draft)
+    return ProbandumEdgeSupersede(
+        id=sup_id,
+        supersedes_id=superseded_edge_id,
+        superseded_by_id=replacement_edge_id,
+        kind="probandum-edge",
+        reason=reason,
+        provenance_id="p-fixture-edge-sup",
+        role_attributions=[role_attribution],
+        at=_STABLE_AT,
+        schema_version=1,
+    )
 
 
 # ---------------------------------------------------------------------------

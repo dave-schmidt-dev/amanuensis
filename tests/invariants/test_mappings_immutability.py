@@ -9,24 +9,14 @@ Quoting the Phase 2a design spec INV-13 verbatim:
 
 What this gate certifies
 ------------------------
-Four cases:
-
-1. ``add_entity`` is idempotent for identical content (same canonical form
-   written twice does not raise).
-
-2. ``add_entity`` raises ``MutationOfImmutableRecord`` when a different
-   entity (different non-volatile content) is forged on disk at the same
-   path as an existing entity, then the original entity is re-added via
-   the Substrate API. The existing forged content diverges from the
-   incoming entity, so the guard fires.
-
-3. ``add_resolution`` is idempotent for identical content (same resolution
-   written twice does not raise).
-
-4. A supersede chain allows corrections without triggering the immutability
-   guard: a ``ResolutionSupersede`` is written for the first resolution,
-   and the substrate's ``latest_resolution_for`` walker correctly returns
-   the replacement.
+The original Phase 2a baseline (cases 1-4): idempotent / mutation-guard
+pairs over ``Entity`` and ``Resolution``, plus the
+``ResolutionSupersede`` chain walker. Phase 2b adds the same pairs over
+``CrossDocRelation`` + ``CrossDocRelationSupersede`` (and the
+``EntitySupersede`` cleanup-4 pair). Phase 2c (M5 / T5.3) extends the
+coverage over the four new record kinds — ``Probandum``,
+``ProbandumEdge``, ``ProbandumSupersede``, ``ProbandumEdgeSupersede`` —
+each with the same two-case shape (idempotent + mutation-guard).
 
 Scope
 -----
@@ -48,6 +38,10 @@ from amanuensis.fs._serialize import (
     serialize_cross_doc_relation_yaml,
     serialize_entity_md,
     serialize_entity_supersede_yaml,
+    serialize_probandum_edge_supersede_yaml,
+    serialize_probandum_edge_yaml,
+    serialize_probandum_md,
+    serialize_probandum_supersede_yaml,
     serialize_resolution_supersede_yaml,
     serialize_yaml,
 )
@@ -63,6 +57,10 @@ from tests.invariants.conftest import (
     _build_cross_doc_relation_supersede,
     _build_entity,
     _build_entity_supersede,
+    _build_probandum,
+    _build_probandum_edge,
+    _build_probandum_edge_supersede,
+    _build_probandum_supersede,
     _build_resolution,
     _build_resolution_supersede,
     _inv15_build_relation,
@@ -489,3 +487,237 @@ def test_entity_supersede_mutation_raises(tmp_path: Path) -> None:
     )
     with pytest.raises(MutationOfImmutableRecord):
         s.add_entity_supersede(supersede)
+
+
+# ---------------------------------------------------------------------------
+# Phase 2c — INV-13 extended to Probandum + ProbandumEdge + their supersedes
+# ---------------------------------------------------------------------------
+#
+# Each new record kind gets two cases mirroring the existing pairs above:
+#   1. Idempotent identical re-add does not raise.
+#   2. Divergent content re-add raises MutationOfImmutableRecord.
+#
+# Probandum + ProbandumEdge tests pre-pin the generic Walton-scheme
+# snapshot so the INV-18 closed-vocabulary gate at write-time is
+# satisfied. ProbandumEdge tests additionally plant an ultimate +
+# penultimate so INV-16 / INV-17 / parent+child existence gates pass.
+
+
+def _populated_probandum_workspace(tmp_path: Path, project_name: str) -> Substrate:
+    """Build a workspace + Substrate with the Walton snapshot pinned.
+
+    Probandum writes require an on-disk Walton-scheme snapshot to clear
+    the INV-18 closed-vocabulary gate. Mirrors
+    ``tmp_workspace_with_walton_snapshot`` from ``tests/fs/conftest.py``.
+    """
+    marker = tmp_path / "amanuensis.yaml"
+    marker.write_text(f"schema_version: 1\nproject_name: {project_name}\n", encoding="utf-8")
+    s = Substrate(tmp_path)
+    s.snapshot_walton_schemes()
+    return s
+
+
+def test_probandum_add_idempotent(tmp_path: Path) -> None:
+    """add_probandum is a no-op on second write of identical content."""
+    s = _populated_probandum_workspace(tmp_path, "inv13-prob-idempotent")
+
+    probandum = _build_probandum(_RA, _AGENT)
+    s.add_probandum(probandum)
+    # Re-adding the byte-identical record must not raise.
+    s.add_probandum(probandum)
+    assert s.probandum_path(probandum.id).is_file()
+
+
+def test_probandum_mutation_raises(tmp_path: Path) -> None:
+    """add_probandum raises MutationOfImmutableRecord on tampered content."""
+    s = _populated_probandum_workspace(tmp_path, "inv13-prob-mutation")
+
+    probandum = _build_probandum(_RA, _AGENT)
+    s.add_probandum(probandum)
+
+    # Forge: same id, different non-volatile content (statement body).
+    forged = probandum.model_copy(update={"statement": "FORGED statement body."})
+    atomic_write_text(s.probandum_path(probandum.id), serialize_probandum_md(forged))
+
+    with pytest.raises(MutationOfImmutableRecord):
+        s.add_probandum(probandum)
+
+
+def _populated_probandum_tree_workspace(
+    tmp_path: Path, project_name: str
+) -> tuple[Substrate, str, str]:
+    """Build a workspace + planted ultimate + penultimate pair for edge tests.
+
+    Returns ``(substrate, ultimate_id, penultimate_id)``. The ultimate
+    parent traces to itself (trivially) so INV-17 lineage passes; the
+    penultimate carries a non-empty alternatives_considered list so the
+    INV-19 ACH alternatives gate also clears.
+    """
+    s = _populated_probandum_workspace(tmp_path, project_name)
+    ult = _build_probandum(_RA, _AGENT, kind="ultimate")
+    pen = _build_probandum(
+        _RA,
+        _AGENT,
+        kind="penultimate",
+        statement="A penultimate proposition.",
+        alternatives_considered=["alt1", "alt2"],
+    )
+    s.add_probandum(ult)
+    s.add_probandum(pen)
+    return s, ult.id, pen.id
+
+
+def test_probandum_edge_add_idempotent(tmp_path: Path) -> None:
+    """add_probandum_edge is a no-op on second write of identical content."""
+    s, ult_id, pen_id = _populated_probandum_tree_workspace(tmp_path, "inv13-pe-idempotent")
+    edge = _build_probandum_edge(
+        _RA,
+        _AGENT,
+        parent_probandum_id=ult_id,
+        child_id=pen_id,
+        child_kind="probandum",
+    )
+    s.add_probandum_edge(edge)
+    # Re-adding the byte-identical edge must not raise.
+    s.add_probandum_edge(edge)
+    assert s.probandum_edge_path(edge.id).is_file()
+
+
+def test_probandum_edge_mutation_raises(tmp_path: Path) -> None:
+    """add_probandum_edge raises MutationOfImmutableRecord on tampered content."""
+    s, ult_id, pen_id = _populated_probandum_tree_workspace(tmp_path, "inv13-pe-mutation")
+    edge = _build_probandum_edge(
+        _RA,
+        _AGENT,
+        parent_probandum_id=ult_id,
+        child_id=pen_id,
+        child_kind="probandum",
+    )
+    s.add_probandum_edge(edge)
+
+    # Forge: same id, different non-volatile content (warrant_basis).
+    forged = edge.model_copy(update={"warrant_basis": "FORGED by hand"})
+    atomic_write_text(
+        s.probandum_edge_path(edge.id),
+        serialize_probandum_edge_yaml(forged),
+    )
+    with pytest.raises(MutationOfImmutableRecord):
+        s.add_probandum_edge(edge)
+
+
+def test_probandum_supersede_idempotent(tmp_path: Path) -> None:
+    """add_probandum_supersede is a no-op on second write of identical content."""
+    s = _populated_probandum_workspace(tmp_path, "inv13-ps-idempotent")
+
+    # Two probanda (old + new) so the supersede ids point at plausible records.
+    # add_probandum_supersede itself does not check referenced-record
+    # existence, but planting the pair keeps the workspace coherent.
+    prob_old = _build_probandum(_RA, _AGENT, statement="Original statement.")
+    prob_new = _build_probandum(_RA, _AGENT, statement="Refined statement.")
+    s.add_probandum(prob_old)
+    s.add_probandum(prob_new)
+
+    supersede = _build_probandum_supersede(
+        _RA, _AGENT, superseded_probandum_id=prob_old.id, replacement_probandum_id=prob_new.id
+    )
+
+    s.add_probandum_supersede(supersede)
+    # Re-adding the byte-identical record must not raise.
+    s.add_probandum_supersede(supersede)
+    assert s.supersede_path(supersede.id).is_file()
+
+
+def test_probandum_supersede_mutation_raises(tmp_path: Path) -> None:
+    """add_probandum_supersede raises MutationOfImmutableRecord on tampered content."""
+    s = _populated_probandum_workspace(tmp_path, "inv13-ps-mutation")
+
+    prob_old = _build_probandum(_RA, _AGENT, statement="Original statement.")
+    prob_new = _build_probandum(_RA, _AGENT, statement="Refined statement.")
+    s.add_probandum(prob_old)
+    s.add_probandum(prob_new)
+
+    supersede = _build_probandum_supersede(
+        _RA, _AGENT, superseded_probandum_id=prob_old.id, replacement_probandum_id=prob_new.id
+    )
+    s.add_probandum_supersede(supersede)
+
+    # Forge: same id, different non-volatile content (reason).
+    forged = supersede.model_copy(update={"reason": "FORGED by hand"})
+    atomic_write_text(
+        s.supersede_path(supersede.id),
+        serialize_probandum_supersede_yaml(forged),
+    )
+    with pytest.raises(MutationOfImmutableRecord):
+        s.add_probandum_supersede(supersede)
+
+
+def test_probandum_edge_supersede_idempotent(tmp_path: Path) -> None:
+    """add_probandum_edge_supersede is a no-op on second write of identical content."""
+    s, ult_id, pen_id = _populated_probandum_tree_workspace(tmp_path, "inv13-pes-idempotent")
+    # Two distinct edges on the same parent->child link (different warrant).
+    edge_old = _build_probandum_edge(
+        _RA,
+        _AGENT,
+        parent_probandum_id=ult_id,
+        child_id=pen_id,
+        warrant="Original warrant.",
+    )
+    edge_new = _build_probandum_edge(
+        _RA,
+        _AGENT,
+        parent_probandum_id=ult_id,
+        child_id=pen_id,
+        warrant="Tighter warrant.",
+    )
+    s.add_probandum_edge(edge_old)
+    s.add_probandum_edge(edge_new)
+
+    supersede = _build_probandum_edge_supersede(
+        _RA,
+        _AGENT,
+        superseded_edge_id=edge_old.id,
+        replacement_edge_id=edge_new.id,
+    )
+
+    s.add_probandum_edge_supersede(supersede)
+    # Re-adding the byte-identical record must not raise.
+    s.add_probandum_edge_supersede(supersede)
+    assert s.supersede_path(supersede.id).is_file()
+
+
+def test_probandum_edge_supersede_mutation_raises(tmp_path: Path) -> None:
+    """add_probandum_edge_supersede raises MutationOfImmutableRecord on tampered content."""
+    s, ult_id, pen_id = _populated_probandum_tree_workspace(tmp_path, "inv13-pes-mutation")
+    edge_old = _build_probandum_edge(
+        _RA,
+        _AGENT,
+        parent_probandum_id=ult_id,
+        child_id=pen_id,
+        warrant="Original warrant.",
+    )
+    edge_new = _build_probandum_edge(
+        _RA,
+        _AGENT,
+        parent_probandum_id=ult_id,
+        child_id=pen_id,
+        warrant="Tighter warrant.",
+    )
+    s.add_probandum_edge(edge_old)
+    s.add_probandum_edge(edge_new)
+
+    supersede = _build_probandum_edge_supersede(
+        _RA,
+        _AGENT,
+        superseded_edge_id=edge_old.id,
+        replacement_edge_id=edge_new.id,
+    )
+    s.add_probandum_edge_supersede(supersede)
+
+    # Forge: same id, different non-volatile content (reason).
+    forged = supersede.model_copy(update={"reason": "FORGED by hand"})
+    atomic_write_text(
+        s.supersede_path(supersede.id),
+        serialize_probandum_edge_supersede_yaml(forged),
+    )
+    with pytest.raises(MutationOfImmutableRecord):
+        s.add_probandum_edge_supersede(supersede)
