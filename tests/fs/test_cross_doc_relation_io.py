@@ -264,3 +264,27 @@ def test_latest_returns_none_for_unknown_id(
 ) -> None:
     sub = _new(tmp_workspace)
     assert sub.latest_cross_doc_relation_for("x-notexistent00000") is None
+
+
+# --- T2.6: round-trip byte stability ---------------------------------
+
+
+def test_round_trip_byte_identical(tmp_workspace: Path, role_attribution: RoleAttribution) -> None:
+    """Canonical-form serialization is deterministic across writes.
+
+    Re-adding an identical record must NOT mutate the on-disk bytes —
+    this codifies the canonical-yaml-dump stability invariant the
+    idempotency guard depends on.
+    """
+    sub = _new(tmp_workspace)
+    rel = _rel(
+        role_attribution,
+        shared_entities=["e-smith", "e-jones", "e-doe"],
+    )
+    sub.add_cross_doc_relation(rel)
+    path = tmp_workspace / "mappings" / "relations" / f"{rel.id}.yaml"
+    first_bytes = path.read_bytes()
+    # Idempotent re-add: should be a no-op (no rewrite).
+    sub.add_cross_doc_relation(rel)
+    second_bytes = path.read_bytes()
+    assert first_bytes == second_bytes
