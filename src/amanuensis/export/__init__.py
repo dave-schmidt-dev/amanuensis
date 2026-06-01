@@ -14,5 +14,6 @@ around it.
 """
 
 from .static_html import export_static_html
+from .workspace_appendix import export_workspace_appendix
 
-__all__ = ["export_static_html"]
+__all__ = ["export_static_html", "export_workspace_appendix"]
