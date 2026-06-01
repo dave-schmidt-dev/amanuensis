@@ -201,6 +201,16 @@ _READ_ONLY_COMMANDS: list[tuple[str, ArgvFactory]] = [
         "map entity list",
         lambda ws, _aid: ["map", "entity", "list", "--workspace", str(ws)],
     ),
+    # Phase 2b M7 read-only map relation verbs (T7.5). ``map relation
+    # show`` is exercised against a dedicated cross-doc relation fixture
+    # in ``test_map_relation_read_verbs_are_deterministic`` below; the
+    # ``cli_workspace`` fixture used here plants no CrossDocRelation
+    # records, so ``map relation list`` produces empty output (still a
+    # deterministic pure function over substrate state).
+    (
+        "map relation list",
+        lambda ws, _aid: ["map", "relation", "list", "--workspace", str(ws)],
+    ),
 ]
 
 
@@ -281,6 +291,66 @@ def test_inv4_read_only_command_does_not_mutate_substrate(
         f"  argv={argv}\n"
         f"  diff:\n{_diff_snapshots(before, after_second)}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Phase 2b M7 (T7.5) — determinism for map relation read verbs against a
+# workspace that actually contains CrossDocRelation records.
+#
+# The parametric block above uses the empty ``cli_workspace`` fixture,
+# which has no relations on disk. The fixture
+# ``tmp_workspace_with_two_cross_doc_relations`` plants two committed
+# relations + a shared canonical entity + bilateral resolutions, so
+# ``map relation list`` produces non-empty output and ``map relation
+# show <id>`` can be exercised against a real on-disk record.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.invariants
+def test_inv4_map_relation_list_is_deterministic_with_records(
+    tmp_workspace_with_two_cross_doc_relations: Path,
+) -> None:
+    """``map relation list`` against a non-empty fixture is pure + deterministic."""
+    workspace = tmp_workspace_with_two_cross_doc_relations
+    argv = ["map", "relation", "list", "--workspace", str(workspace)]
+
+    before = _snapshot_workspace(workspace)
+    first = runner.invoke(app, argv)
+    assert first.exit_code == 0, first.output
+    after_first = _snapshot_workspace(workspace)
+    assert before == after_first, _diff_snapshots(before, after_first)
+
+    # Non-empty output (the fixture plants two relations).
+    assert "x-" in first.stdout
+
+    second = runner.invoke(app, argv)
+    assert second.exit_code == 0, second.output
+    assert first.stdout == second.stdout
+    after_second = _snapshot_workspace(workspace)
+    assert before == after_second, _diff_snapshots(before, after_second)
+
+
+@pytest.mark.invariants
+def test_inv4_map_relation_show_is_deterministic_with_records(
+    tmp_workspace_with_two_cross_doc_relations: Path,
+) -> None:
+    """``map relation show <id>`` is pure + deterministic on a fixture-planted id."""
+    workspace = tmp_workspace_with_two_cross_doc_relations
+    # Pick the first relation from the fixture so the test is repeatable.
+    rel = next(iter(Substrate(workspace).list_cross_doc_relations()))
+    argv = ["map", "relation", "show", rel.id, "--workspace", str(workspace)]
+
+    before = _snapshot_workspace(workspace)
+    first = runner.invoke(app, argv)
+    assert first.exit_code == 0, first.output
+    after_first = _snapshot_workspace(workspace)
+    assert before == after_first, _diff_snapshots(before, after_first)
+
+    second = runner.invoke(app, argv)
+    assert second.exit_code == 0, second.output
+    assert first.stdout == second.stdout
+    after_second = _snapshot_workspace(workspace)
+    assert before == after_second, _diff_snapshots(before, after_second)
 
 
 # =====================================================================

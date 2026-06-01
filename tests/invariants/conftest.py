@@ -57,6 +57,7 @@ from tests.cli.conftest import (
     cli_workspace,
     planted_atom,
     planted_clarification,
+    tmp_workspace_with_two_cross_doc_relations,
 )
 from tests.invariants._types import MatchedAtomFactory
 
@@ -70,6 +71,7 @@ __all__ = [
     "cli_workspace",
     "planted_atom",
     "planted_clarification",
+    "tmp_workspace_with_two_cross_doc_relations",
 ]
 
 SOURCE_ID = "src-fixture-001"
