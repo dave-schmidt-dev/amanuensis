@@ -375,6 +375,14 @@ def _process_one_output(
             workspace_root=workspace_root,
             result=result,
         )
+    elif role == "connect":
+        _process_connect_output(
+            payload=payload,
+            inputs_hash=inputs_hash,
+            substrate=substrate,
+            workspace_root=workspace_root,
+            result=result,
+        )
     else:
         # Unknown role: not an error — the operator may dispatch roles
         # whose reconciliation is implemented elsewhere. Record nothing
@@ -1205,14 +1213,12 @@ def _build_resolution(
 
 # --- Phase 2b M4: CrossDocRelation reconciliation ----------------------
 #
-# ``_build_cross_doc_relation`` is wired into the dispatch driver in M6
-# (Phase 2b). Until then it has no in-module caller; the M4 commit lands
-# it alongside its TDD test suite (which is its only consumer right now).
-# The ``# pyright: ignore[reportUnusedFunction]`` suppresses the noise
-# this transitional state generates.
+# ``_build_cross_doc_relation`` is the choke point the Phase 2b connect-role
+# reconciler (M5, ``_process_connect_output`` below) calls per candidate.
+# It is also exercised directly by ``tests/dispatch/test_cross_doc_reconcile.py``.
 
 
-def _build_cross_doc_relation(  # pyright: ignore[reportUnusedFunction]
+def _build_cross_doc_relation(
     candidate: dict[str, Any],
     substrate: Substrate,
     prov: ProvenanceRecord,
@@ -1413,17 +1419,186 @@ def _auto_raise_resolution_clarification(
     substrate.add_clarification(rel.from_source_id, clar)
 
 
+# --- Phase 2b M5: Connector output reconciliation ----------------------
+
+
+def _process_connect_output(
+    *,
+    payload: dict[str, Any],
+    inputs_hash: str,
+    substrate: Substrate,
+    workspace_root: Path,
+    result: ReconcileResult,
+) -> None:
+    """Reconcile one Connector-role output payload.
+
+    The Connector emits a top-level ``proposed_relations`` list whose
+    entries are candidate ``CrossDocRelation`` dicts (id-less,
+    provenance-less). Each candidate is routed through
+    :func:`_build_cross_doc_relation`, which:
+
+    - Builds + validates the typed record (raises
+      :class:`CandidateShapeError` on shape failures, which we record in
+      ``result.errors`` and skip).
+    - Runs the INV-15 shared-entity gate. INV-15 failures are NOT
+      propagated: the helper auto-raises a ``resolution-ambiguous``
+      Clarification under the from-endpoint distillation and returns
+      ``None``. We record the clarification id in
+      ``result.clarifications_raised`` so the operator sees both the
+      raise and the (still-pending) candidate in one summary.
+    - On a clean candidate the typed record is written to
+      ``mappings/relations/`` via :meth:`Substrate.add_cross_doc_relation`,
+      and we record the id in ``result.relations_committed``.
+
+    A single PROV record covers the entire output payload (the M5
+    activity is "one Connector call → one PROV record" — fine-grained
+    per-candidate PROV is M6/M7 territory). The PROV record's
+    ``used_entity_ids`` lists every from/to atom referenced; its
+    ``activity`` is ``connect-reconcile``.
+
+    The replay-log append at the end is mappings-scoped (mirrors
+    map-resolve / map-audit) so the dispatch-loop's append-once
+    discipline is preserved.
+    """
+    from amanuensis.fs._atomic import atomic_write_text  # pyright: ignore[reportPrivateUsage]
+    from amanuensis.fs._serialize import serialize_yaml  # pyright: ignore[reportPrivateUsage]
+
+    proposed = _as_list(payload.get("proposed_relations"))
+    substrate_changes: list[str] = []
+
+    # Build the PROV record up-front so all candidates from this output
+    # file share one canonical attribution. ``activity_started_at`` is a
+    # stable timestamp derived from the inputs_hash (mirrors map-resolve's
+    # convention) so content-addressable PROV ids are deterministic
+    # across reconciler retries on the same output.
+    started_at = _stable_role_attribution_at(inputs_hash)
+    used_entity_ids: list[str] = []
+    for raw in proposed:
+        if not isinstance(raw, dict):
+            continue
+        from_atom = raw.get("from_atom_id")
+        to_atom = raw.get("to_atom_id")
+        if isinstance(from_atom, str):
+            used_entity_ids.append(from_atom)
+        if isinstance(to_atom, str):
+            used_entity_ids.append(to_atom)
+
+    prov_draft = ProvenanceRecord(
+        id="p-" + "0" * 16,
+        entity_type="cross-doc-relation",
+        entity_id="x-placeholder",
+        activity="connect-reconcile",
+        activity_started_at=started_at,
+        activity_ended_at=started_at,
+        used_entity_ids=used_entity_ids,
+        was_attributed_to=AgentAttribution(
+            kind="llm",
+            identifier="connect",
+            role="connect",
+        ),
+        was_influenced_by=[inputs_hash] if inputs_hash else [],
+        schema_version=1,
+    )
+    prov_id = compute_id(prov_draft)
+    prov = prov_draft.model_copy(update={"id": prov_id})
+
+    # Write PROV to mappings/provenance/ first so any per-candidate
+    # commit can point at it. The path is deterministic per id; a
+    # repeated reconcile of the same output is a byte-identical re-write.
+    prov_path = substrate.mappings_provenance_path(prov.id)
+    atomic_write_text(prov_path, serialize_yaml(prov))
+    substrate_changes.append(str(prov_path.relative_to(workspace_root)))
+
+    role_attribution = RoleAttribution(
+        agent=prov.was_attributed_to,
+        activity="proposed",
+        at=started_at,
+    )
+
+    for raw_candidate in proposed:
+        if not isinstance(raw_candidate, dict):
+            continue
+        candidate: dict[str, Any] = cast("dict[str, Any]", raw_candidate)
+        try:
+            rel = _build_cross_doc_relation(
+                candidate,
+                substrate,
+                prov,
+                role_attributions=[role_attribution],
+            )
+        except CandidateShapeError as exc:
+            # Shape errors are recorded so the operator can triage; we
+            # do NOT raise a clarification (the model output is malformed
+            # in a way a human cannot meaningfully resolve other than by
+            # re-running the role with a corrected prompt).
+            result.errors.append((Path("(in-memory-cross-doc-relation)"), str(exc)))
+            continue
+
+        if rel is None:
+            # INV-15 rejection path. ``_build_cross_doc_relation`` already
+            # raised the clarification under the from-endpoint
+            # distillation; we record the clarification's footprint via
+            # the substrate-changes list. The actual clarification id is
+            # not returned by the helper, so we walk the from-endpoint's
+            # open clarifications and pick the most recent one filed by
+            # this activity. (Cheap: O(open clarifications under one
+            # source); the alternative is plumbing the id back through
+            # the helper, which we defer until M6/M7 demands it.)
+            from_source = _coerce_optional_str(candidate.get("from_source_id"))
+            if from_source:
+                # The clarification path lives under the from-endpoint;
+                # add the directory itself to substrate_changes so the
+                # replay-log records the boundary crossing.
+                clar_dir = (
+                    substrate.root / "distillations" / from_source / "clarifications" / "open"
+                )
+                if clar_dir.is_dir():
+                    # Record the freshest .md as the changed path. (We
+                    # do not have direct access to the id; tests assert
+                    # on substrate.list_clarifications instead.)
+                    md_files = sorted(
+                        clar_dir.glob("c-*.md"),
+                        key=lambda p: p.stat().st_mtime,
+                        reverse=True,
+                    )
+                    if md_files:
+                        substrate_changes.append(str(md_files[0].relative_to(workspace_root)))
+                        # Best-effort: record the id from the filename.
+                        result.clarifications_raised.append(md_files[0].stem)
+            continue
+
+        # Happy path: record the committed relation.
+        result.relations_committed.append(rel.id)
+        rel_path = substrate.cross_doc_relation_path(rel.id)
+        substrate_changes.append(str(rel_path.relative_to(workspace_root)))
+
+    _append_mappings_replay(
+        workspace_root=workspace_root,
+        inputs_hash=inputs_hash,
+        substrate_changes=substrate_changes,
+        activity="connect-reconcile",
+        actor_role="connect",
+    )
+
+
 def _append_mappings_replay(
     *,
     workspace_root: Path,
     inputs_hash: str,
     substrate_changes: list[str],
     activity: str,
+    actor_role: Literal["map-resolve", "map-audit", "connect"] = "map-resolve",
 ) -> None:
-    """Append a single replay-log entry to the mappings-scope log."""
+    """Append a single replay-log entry to the mappings-scope log.
+
+    ``actor_role`` defaults to ``"map-resolve"`` to preserve M7.4's
+    contract for the map-resolve / map-audit reconcile paths. The
+    Phase 2b M5 connect reconcile path passes ``actor_role="connect"``
+    so the replay-log entry's actor matches the activity.
+    """
     log = ReplayLog.for_mappings(workspace_root)
     log.append(
-        actor=AgentAttribution(kind="llm", identifier="reconcile", role="map-resolve"),
+        actor=AgentAttribution(kind="llm", identifier="reconcile", role=actor_role),
         activity=activity,
         inputs_hash=inputs_hash,
         outputs_hash=inputs_hash,

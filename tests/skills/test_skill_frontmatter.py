@@ -45,6 +45,8 @@ VALID_ROLES: tuple[str, ...] = (
     "premortem",
     "map-resolve",
     "map-audit",
+    # Phase 2b M5 — Connector role.
+    "connect",
 )
 
 
