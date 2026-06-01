@@ -1,9 +1,10 @@
-"""Web route tests for cross-doc relations (Phase 2b M8 T8.1 - T8.5)."""
+"""Web route tests for cross-doc relations (Phase 2b M8 T8.1 - T8.7)."""
 
 # pyright: reportPrivateUsage=false
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
@@ -354,3 +355,53 @@ def test_atom_entity_index_cross_doc_filtered_by_source(
     edges_b = res_b.json()["cross_doc_edges"]
     for edge in edges_b:
         assert "src-B" in (edge["from_source_id"], edge["to_source_id"])
+
+
+# ---------------------------------------------------------------------------
+# T8.7 — Web-route navigation contract (round-trip)
+# ---------------------------------------------------------------------------
+
+
+def test_link_round_trip(
+    tmp_workspace_with_two_cross_doc_relations: Path,
+    web_app: FastAPI,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """entity-detail -> cross-doc-relation detail -> entity-detail has no broken links."""
+    monkeypatch.setenv("AMANUENSIS_WORKSPACE", str(tmp_workspace_with_two_cross_doc_relations))
+    client = TestClient(web_app)
+
+    r1 = client.get("/entities/e-smith")
+    assert r1.status_code == 200
+    match = re.search(r'href="(/cross-doc-relations/x-[^"]+)"', r1.text)
+    assert match, "entity-detail page should link to at least one cross-doc-relation"
+    rel_url = match.group(1)
+
+    r2 = client.get(rel_url)
+    assert r2.status_code == 200
+    match_entity = re.search(r'href="/entities/(e-[^"]+)"', r2.text)
+    assert match_entity, "cross-doc-relation detail should link to at least one entity"
+    entity_url = f"/entities/{match_entity.group(1)}"
+
+    r3 = client.get(entity_url)
+    assert r3.status_code == 200
+
+
+def test_link_round_trip_list_to_detail(
+    tmp_workspace_with_two_cross_doc_relations: Path,
+    web_app: FastAPI,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The /cross-doc-relations list page links each row to its detail page."""
+    monkeypatch.setenv("AMANUENSIS_WORKSPACE", str(tmp_workspace_with_two_cross_doc_relations))
+    client = TestClient(web_app)
+
+    list_response = client.get("/cross-doc-relations")
+    assert list_response.status_code == 200
+    match = re.search(r'href="(/cross-doc-relations/x-[^"]+)"', list_response.text)
+    assert match, "list page should link to at least one detail page"
+    detail_url = match.group(1)
+    detail_response = client.get(detail_url)
+    assert detail_response.status_code == 200
+    # The detail page links to the shared entity (link back to /entities/...).
+    assert re.search(r'href="/entities/e-[^"]+"', detail_response.text)
