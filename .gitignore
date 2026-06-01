@@ -40,6 +40,11 @@ coverage.xml
 *.swo
 .DS_Store
 
+# Per-CLI tool local state (not project-relevant)
+.antigravitycli/
+.claude/
+.codex/
+
 # Build artifacts
 *.log
 /tmp/amanuensis*.log
