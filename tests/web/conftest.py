@@ -25,7 +25,6 @@ import pytest
 from amanuensis.fs import Substrate
 from amanuensis.fs._atomic import atomic_write_text
 from amanuensis.fs._serialize import (
-    serialize_atom_md,
     serialize_entity_md,
     serialize_resolution_yaml,
     serialize_yaml,
@@ -754,36 +753,10 @@ def _m10_role_attribution() -> RoleAttribution:
     )
 
 
-def _m10_build_atom(
-    *,
-    atom_id: str,
-    source_id: str,
-    narrative: str,
-    char_offset: int,
-) -> Atom:
-    return Atom(
-        id=atom_id,
-        source_id=source_id,
-        section_path=["body"],
-        paragraph_index=0,
-        sentence_index=None,
-        char_span=(char_offset, char_offset + 30),
-        scale_anchor="paragraph",
-        kind="claim",
-        predicate="alleges",
-        operands=[OperandRef(role="subject", kind="entity", value="e-x", type_hint=None)],
-        narrative=narrative,
-        qualifier_level=None,
-        qualifier_basis=None,
-        provenance_id="p-m10fixture00001",
-        role_attributions=[_m10_role_attribution()],
-        schema_version=1,
-    )
-
-
-def _m10_plant_atom(workspace: Path, atom: Atom) -> None:
-    path = workspace / "distillations" / atom.source_id / "atoms" / f"{atom.id}.md"
-    atomic_write_text(path, serialize_atom_md(atom))
+# Atom-planting helpers are intentionally omitted from this fixture
+# (the M10 spec calls for 1 ultimate + 1 penultimate + 1 interim + 2
+# edges — all probandum-to-probandum). If a future M10 follow-up needs
+# an atom leaf, mirror the helpers in ``tests/dispatch/conftest.py``.
 
 
 def _m10_build_probandum(
