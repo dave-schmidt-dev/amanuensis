@@ -42,6 +42,7 @@ canonical-form bytes, prefixed by the record-kind letter:
 - ``s-`` for ``ResolutionSupersede`` (Phase 2a)
 - ``t-`` for ``EntitySupersede`` (Phase 2a)
 - ``x-`` for ``CrossDocRelation`` (Phase 2b)
+- ``v-`` for ``CrossDocRelationSupersede`` (Phase 2b)
 
 Collision discipline: 8-byte truncation gives ~2^32 records before
 birthday-collision risk approaches 50%, well above any realistic
@@ -98,6 +99,7 @@ _KIND_PREFIX: dict[str, str] = {
     "ResolutionSupersede": "s-",
     "EntitySupersede": "t-",
     "CrossDocRelation": "x-",
+    "CrossDocRelationSupersede": "v-",
 }
 
 # Universally-volatile field (always dropped from canonical form, on
@@ -136,7 +138,7 @@ def compute_id(model: BaseModel) -> str:
             f"compute_id() only accepts Atom, Relation, ProvenanceRecord, "
             f"Clarification, IterationDirective, SourceMirrorManifest, "
             f"Entity, Resolution, ResolutionSupersede, EntitySupersede, "
-            f"CrossDocRelation"
+            f"CrossDocRelation, CrossDocRelationSupersede"
         )
     _empty: frozenset[str] = frozenset()
     per_class_raw: Any = getattr(cls, "_VOLATILE_FIELDS", _empty)

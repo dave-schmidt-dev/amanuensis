@@ -15,7 +15,7 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
-from amanuensis.schemas import RoleAttribution
+from amanuensis.schemas import RoleAttribution, compute_id
 from amanuensis.schemas.cross_doc_relation_supersede import (
     CrossDocRelationSupersede,
 )
@@ -53,3 +53,28 @@ def test_rejects_extra_field(
     with pytest.raises(ValidationError) as exc:
         CrossDocRelationSupersede(**cross_doc_relation_supersede_payload)
     assert any(err["type"] == "extra_forbidden" for err in exc.value.errors())
+
+
+def test_id_starts_with_v_prefix(
+    cross_doc_relation_supersede_payload: dict[str, Any],
+) -> None:
+    s = CrossDocRelationSupersede(**cross_doc_relation_supersede_payload)
+    assert compute_id(s).startswith("v-")
+
+
+def test_at_is_volatile(
+    cross_doc_relation_supersede_payload: dict[str, Any],
+) -> None:
+    """``at`` is volatile; two records identical except ``at`` hash identically."""
+    s_a = CrossDocRelationSupersede(**cross_doc_relation_supersede_payload)
+    cross_doc_relation_supersede_payload["at"] = datetime(
+        2027,
+        1,
+        15,
+        9,
+        30,
+        0,
+        tzinfo=UTC,
+    )
+    s_b = CrossDocRelationSupersede(**cross_doc_relation_supersede_payload)
+    assert compute_id(s_a) == compute_id(s_b)
