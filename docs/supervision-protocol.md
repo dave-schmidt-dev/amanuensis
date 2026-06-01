@@ -48,14 +48,18 @@ is stable-sorted for diff-friendly comparison between checkpoints.
 
 A clarification is raised when (a) an atom fails validation, (b) a
 relation's warrant is flagged `warrant_defensibility: contested` by
-the Auditor (CR-7), or (c) the Map Auditor encounters an ambiguous
-or disputed entity resolution. The clarification kinds in use are:
+the Auditor (CR-7), (c) the Map Auditor encounters an ambiguous or
+disputed entity resolution, or (d) the Phase 2c reconciler hits a
+lineage gap or an unknown Walton scheme. The clarification kinds in
+use are:
 
 | Kind | Raised by | Trigger |
 | --- | --- | --- |
 | `warrant-defensibility-contested` | Auditor (distill phase) | A rejection carries `warrant_defensibility: contested`. |
 | `resolution-ambiguous` | Map Auditor (map phase) | Two equally-good entity matches, or an entity kind that is `supervisor-only` in the vocabulary snapshot. |
 | `resolution-disputed` | Map Auditor (map phase) | A supersede proposal targets a resolution whose PROV `was_attributed_to.kind == "human"`. Never auto-accepted. |
+| `lineage-incomplete` | Reconciler (hierarchize phase) | A proposed `ProbandumEdge` references a parent that has no path upward to an `ultimate` (INV-17 gate). Supervisor closes the gap by authoring the missing parent edges or restating the parent. |
+| `scheme-missing` | Reconciler (hierarchize phase) | A proposed `Probandum` carries a `scheme` that is not in the active `mappings/walton-scheme-snapshot.yaml` (INV-18 gate). Supervisor extends the snapshot via `amanuensis map walton-scheme snapshot --extend` before retry. |
 
 Each clarification lives at
 `distillations/<source-id>/clarifications/open/<id>.md` until
@@ -162,8 +166,43 @@ amanuensis map                                # second pass runs the Connect pha
 amanuensis dispatch --once
 amanuensis map --connect-only                 # re-run Connect after edits
 
-# 11. Export the workspace-level cross-doc appendix bundle.
+# 11. (Macroscopic pass — Phase 2c Hierarchize.) Pin the Walton-scheme
+#     snapshot, then author the ultimate + penultimates by hand so the
+#     Hierarchize role has top-of-tree anchors to attach interim
+#     probanda below. The reconciler enforces INV-17 (every non-ultimate
+#     traces to an ultimate), so the supervisor MUST declare the
+#     ultimate first.
+amanuensis map walton-scheme snapshot         # pin the closed Walton vocabulary (INV-18)
+
+amanuensis map probandum add \
+    "ACME prevails on its breach claim against Smith." \
+    --kind ultimate --scheme argument-from-evidence-to-hypothesis
+# → prints p-ult-acme-prevails
+
+amanuensis map probandum add \
+    "Smith breached the 2018 contract." \
+    --kind penultimate --scheme argument-from-evidence-to-hypothesis \
+    --alternative "Smith and ACME mutually agreed to defer the April 2024 delivery." \
+    --alternative "The shipment was tendered but rejected by ACME for unrelated quality reasons."
+# → prints p-pen-smith-breach
+
+amanuensis map probandum link \
+    p-ult-acme-prevails p-pen-smith-breach \
+    --kind supports \
+    --warrant "If Smith breached, ACME prevails on the breach claim." \
+    --warrant-basis "Contract law mapping from breach to remedies."
+
+# 12. Run the Hierarchize phase (interim probanda + edges to evidence).
+amanuensis map --hierarchize-only             # enqueue penultimate clusters
+amanuensis dispatch --once                    # drive the hierarchize role
+amanuensis map --hierarchize-only             # reconcile the outputs
+# Optional: alternatively, plain `amanuensis map` runs all three phases.
+
+# 13. Export the workspace-level cross-doc + probandum-tree bundle.
 amanuensis export --workspace-appendix --out-dir cross-doc-bundle/
+# Bundle includes cross-doc-relations.html, probandum-tree.html, plus
+# per-entity (entities/<id>.html) and per-probandum (probanda/<id>.html)
+# pages.
 ```
 
 The integration test that exercises this happy path on a tiny fixture
@@ -193,6 +232,9 @@ interchangeably without race risk.
 | `/entities` | Entity browser: lists canonical entities with kind, canonical name, and alias count. Phase 2a; Phase 2b extends the detail page with a "Cross-doc edges touching this entity" section. |
 | `/resolutions` | Resolution browser: lists active resolutions with triple, entity, and confidence. Phase 2a. |
 | `/cross-doc-relations` | Phase 2b cross-doc relation browser: lists every `CrossDocRelation`, filterable by kind / source / shared entity; the detail page renders the warrant, the supersede chain, and a Cytoscape overlay highlighting the relation in the relation graph. |
+| `/probanda` | Phase 2c probandum browser: lists every `Probandum`, filterable by kind / scheme. The detail page (`/probanda/<id>`) renders the statement, the alternatives considered, lineage (incoming + outgoing edges), provenance, and the supersede chain. |
+| `/probanda/<id>/tree` | Phase 2c probandum tree visualization: Cytoscape (dagre layout) tree rooted at the focal probandum, walking outgoing probandum-edges down to atoms / cross-doc relations. A JSON sibling at `/probanda/<id>/tree.json` returns the graph data. Phase 2a entity-detail pages additionally list probanda referencing the entity (Phase 2c extension). |
+| `/probandum-edges/<id>` | Phase 2c probandum-edge detail: warrant, warrant-defensibility, parent / child linkage, supersede chain. |
 | `/replay-log` | Recent activity feed for audit — useful for cross-checking what the dispatch driver and the supervisor actually did. |
 | `/status` | Workspace health stats (a richer rendering of `amanuensis status`). |
 
@@ -250,10 +292,11 @@ Read-only commands (`status`, `atom list`, `atom show`, `atom
 validate`, `clarification list`, `iteration list`, `vocabulary list`,
 `vocabulary show`, `vocabulary snapshot`, `export`, `map status`,
 `map entity list`, `map entity show`, `map resolution show`,
-`map vocabulary show`, `map relation list`, `map relation show`) do
-NOT acquire the flock — they are safe to run concurrently with any
-mutating operation, and their output is a snapshot of substrate state
-at read time.
+`map vocabulary show`, `map relation list`, `map relation show`,
+`map probandum list`, `map probandum show`, `map probandum lineage`,
+`map walton-scheme show`) do NOT acquire the flock — they are safe to
+run concurrently with any mutating operation, and their output is a
+snapshot of substrate state at read time.
 
 ## Known Limitations
 
@@ -281,12 +324,45 @@ What this protocol does NOT yet provide, as of M8.10:
   what makes the write-isolation contract enforceable. See
   [`skill-author-guide.md`](./skill-author-guide.md#write-isolation-contract).
 - **`amanuensis export` is still pre-Phase-4.** Phase 1's per-source
-  single-file mode and Phase 2b's workspace-appendix bundle mode are
-  the only delivery surfaces shipped today. The full audit-HTML
-  bundle, prose-report rendering, and render-time policy gates remain
-  Phase 4. The Phase 2b bundle is workspace-level — to inspect a
-  single source's cross-doc edges, use the web app's per-source graph
-  with the cross-doc overlay enabled.
+  single-file mode and the Phase 2b / 2c workspace-appendix bundle
+  mode are the only delivery surfaces shipped today. The bundle now
+  includes `cross-doc-relations.html`, `probandum-tree.html`,
+  per-entity (`entities/<id>.html`) and per-probandum
+  (`probanda/<id>.html`) pages. The full audit-HTML bundle,
+  prose-report rendering, and render-time policy gates remain
+  Phase 4. The bundle is workspace-level — to inspect a single source's
+  cross-doc edges, use the web app's per-source graph with the
+  cross-doc overlay enabled.
+- **Tree-not-DAG enforced (Phase 2c).** Probandum hierarchies are
+  enforced as trees by INV-16: each non-root probandum has exactly
+  one active parent edge. When the same piece of evidence genuinely
+  participates in multiple lineages, the Wigmore-sanctioned move is
+  copy-by-reference at presentation time (the tree carries one
+  canonical subtree and the renderer surfaces the cross-references at
+  view time). DAG-shaped multi-lineage substrate is rejected at
+  `Substrate.add_probandum_edge`.
+- **No real-LLM Hierarchize dispatch verified end-to-end (Phase 2c).**
+  Like the Resolver and Connector, the Hierarchize role's real-LLM
+  smoke is deferred to the first engagement. The mock-harness smoke
+  test and the multi-distillation fixture cover the code path; the
+  real-LLM smoke runs against the first production engagement.
+- **No full Walton critical-questions matrix (Phase 2c).** Phase 2c
+  ships `Probandum.scheme` as a closed-vocabulary string keyed
+  against `mappings/walton-scheme-snapshot.yaml`. The per-scheme
+  critical-questions matrix is a Phase 2c.5 candidate; today the
+  supervisor reads the scheme name and applies the audit discipline
+  by hand.
+- **No full ACH inconsistency matrix (Phase 2c).** The
+  `Probandum.alternatives_considered` field is a free-text list of
+  competing hypotheses; the structured ACH inconsistency matrix
+  (each alternative scored against each piece of evidence) is
+  deferred to Phase 2c.5. The write-time gate ensures non-empty
+  alternatives for non-ultimate probanda but does not yet check
+  inconsistency-matrix shape.
+- **No Tetlock-style calibration (Phase 2c).** Confidence stays a
+  closed-vocabulary literal (`high` / `medium` / `low`) on probanda
+  and edges. Brier-score calibration, base-rate tracking, and the
+  full Tetlock superforecaster toolkit are Phase 4 candidates.
 
 ## See also
 
@@ -298,7 +374,8 @@ What this protocol does NOT yet provide, as of M8.10:
   frontmatter, dispatch queue protocol, write-isolation.
 - [`../INVARIANTS.md`](../INVARIANTS.md) — especially INV-1 (marker),
   INV-3 (provenance by construction), INV-4 (determinism boundary),
-  and INV-8 (substrate is the source of truth).
+  INV-8 (substrate is the source of truth), and the Phase 2c
+  probandum-tree gates INV-16 / INV-17 / INV-18.
 - [`../tests/integration/test_distill_tiny_fixture.py`](../tests/integration/test_distill_tiny_fixture.py)
   — the end-to-end integration test for the happy path described
   above.
