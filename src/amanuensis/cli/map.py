@@ -2548,3 +2548,93 @@ def probandum_show_command(
         typer.echo("(this probandum is the latest in its chain)")
     elif latest is not None:
         typer.echo(f"Latest in chain: {latest.id}")
+
+
+@probandum_app.command("lineage")
+@require_marker
+def probandum_lineage_command(
+    probandum_id: Annotated[
+        str,
+        typer.Argument(help="Probandum id (e.g. p-<hash>) — the focal node."),
+    ],
+    workspace: Annotated[
+        Path | None,
+        typer.Option(
+            "--workspace",
+            "-w",
+            help="Workspace root (must contain amanuensis.yaml). Defaults to CWD.",
+        ),
+    ] = None,
+) -> None:
+    """Render the lineage tree for a probandum (read-only; T9.4).
+
+    Walks INCOMING probandum-edges from the focal node up to the
+    ultimate (the parent chain), then OUTGOING edges from the focal
+    node down to leaves (atoms / cross-doc-relations / probandum
+    children). The focal node is marked with a ``*`` prefix so the
+    operator can spot it in the rendered tree.
+    """
+    workspace_path = workspace_from_kwargs({"workspace": workspace})
+    substrate = Substrate(workspace_path)
+
+    if not substrate.probandum_path(probandum_id).is_file():
+        typer.secho(
+            f"probandum '{probandum_id}' not found in mappings/probanda/",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+    # --- Walk upward: build chain from focal to ultimate -----------------
+    # For each node we find its UNIQUE active parent (INV-16 tree-shape
+    # guarantees at most one). The chain ends when we hit a probandum
+    # with no incoming probandum-edge.
+    upward_chain: list[str] = [probandum_id]
+    visited: set[str] = {probandum_id}
+    current = probandum_id
+    depth = 0
+    while depth < 100:
+        depth += 1
+        parent_id: str | None = None
+        for edge in substrate.list_probandum_edges(child_kind="probandum"):
+            if edge.child_id != current:
+                continue
+            parent_id = edge.parent_probandum_id
+            break
+        if parent_id is None or parent_id in visited:
+            break
+        upward_chain.append(parent_id)
+        visited.add(parent_id)
+        current = parent_id
+
+    # Print upward chain root-down (root first -> focal last).
+    typer.echo("## Lineage (upward to ultimate)")
+    for indent_idx, node_id in enumerate(reversed(upward_chain)):
+        prefix = "* " if node_id == probandum_id else "  "
+        try:
+            node = substrate.get_probandum(node_id)
+            node_kind = node.kind
+        except Exception:
+            node_kind = "?"
+        typer.echo("  " * indent_idx + f"{prefix}{node_id} [{node_kind}]")
+
+    # --- Walk downward: DFS over outgoing edges --------------------------
+    typer.echo("\n## Lineage (downward to leaves)")
+
+    def _render_outgoing(node_id: str, indent: int, seen: set[str]) -> None:
+        if node_id in seen:
+            typer.echo("  " * indent + f"({node_id} already visited)")
+            return
+        seen.add(node_id)
+        outgoing_edges = list(substrate.list_probandum_edges(parent_probandum_id=node_id))
+        if not outgoing_edges:
+            return
+        for edge in outgoing_edges:
+            child_label = f"{edge.child_id} [{edge.child_kind}]"
+            if edge.child_source_id is not None:
+                child_label += f" source={edge.child_source_id}"
+            typer.echo("  " * (indent + 1) + f"-({edge.kind})-> {child_label}")
+            if edge.child_kind == "probandum":
+                _render_outgoing(edge.child_id, indent + 1, seen)
+
+    typer.echo(f"* {probandum_id}")
+    _render_outgoing(probandum_id, 0, set())

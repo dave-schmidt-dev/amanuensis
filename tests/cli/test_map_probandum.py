@@ -307,3 +307,135 @@ def test_show_returns_error_for_unknown_id(
     assert result.exit_code != 0
     haystack = (result.stdout or "") + (result.stderr or "")
     assert "not found" in haystack.lower()
+
+
+# ---------------------------------------------------------------------------
+# T9.4: amanuensis map probandum lineage <id>
+# ---------------------------------------------------------------------------
+
+
+def _build_three_node_tree(workspace: Path) -> tuple[str, str, str]:
+    """Plant ultimate -> penultimate -> interim chain.
+
+    Adds three probanda via the CLI and connects them with two
+    probandum-edges via ``Substrate.add_probandum_edge`` directly (the
+    ``map probandum link`` CLI verb is T9.5, not available yet).
+
+    Returns ``(ultimate_id, penultimate_id, interim_id)``.
+    """
+    from datetime import UTC, datetime
+
+    from amanuensis.fs import Substrate
+    from amanuensis.schemas import (
+        AgentAttribution,
+        ProbandumEdge,
+        RoleAttribution,
+        compute_id,
+    )
+
+    ult_id = _add_probandum(workspace, "Root claim.", "ultimate")
+    pen_id = _add_probandum(
+        workspace,
+        "Sub-claim under ultimate.",
+        "penultimate",
+        alternatives=["Alt A"],
+    )
+    int_id = _add_probandum(
+        workspace,
+        "Intermediate under penultimate.",
+        "interim",
+        alternatives=["Alt B"],
+    )
+    # Wait: per the schema rules: interim probanda live "below"
+    # penultimate? Actually the kind ordering is ultimate > interim >
+    # penultimate. But T9.4 only needs *some* tree shape. Use the
+    # ordering: ultimate -> penultimate, and ultimate -> interim is also
+    # acceptable. The schema doesn't enforce a kind ordering on edges.
+    # We connect penultimate as child-of ultimate, and interim as
+    # child-of penultimate. INV-16 (tree-shape) + INV-17 (lineage to
+    # ultimate) both pass: each child has a single parent path back to
+    # ultimate.
+    sub = Substrate(workspace)
+    now = datetime.now(UTC)
+    role_attr = RoleAttribution(
+        agent=AgentAttribution(kind="human", identifier="test", role="human_supervisor"),
+        activity="proposed",
+        at=now,
+    )
+
+    def _make_edge(parent: str, child: str) -> ProbandumEdge:
+        draft = ProbandumEdge(
+            id="q-" + "0" * 16,
+            parent_probandum_id=parent,
+            child_id=child,
+            child_kind="probandum",
+            child_source_id=None,
+            kind="supports",
+            warrant="warrant",
+            warrant_defensibility="conventional",
+            warrant_basis="basis",
+            confidence="medium",
+            provenance_id="p-fixture-edge",
+            role_attributions=[role_attr],
+            schema_version=1,
+        )
+        edge_id = compute_id(draft)
+        return ProbandumEdge(
+            id=edge_id,
+            parent_probandum_id=parent,
+            child_id=child,
+            child_kind="probandum",
+            child_source_id=None,
+            kind="supports",
+            warrant="warrant",
+            warrant_defensibility="conventional",
+            warrant_basis="basis",
+            confidence="medium",
+            provenance_id="p-fixture-edge",
+            role_attributions=[role_attr],
+            schema_version=1,
+        )
+
+    sub.add_probandum_edge(_make_edge(ult_id, pen_id))
+    sub.add_probandum_edge(_make_edge(pen_id, int_id))
+    return ult_id, pen_id, int_id
+
+
+def test_lineage_renders_upward_and_downward(
+    tmp_workspace_with_walton_snapshot: Path,
+) -> None:
+    """Lineage of the penultimate node visits ultimate above and interim below."""
+    workspace = tmp_workspace_with_walton_snapshot
+    ult_id, pen_id, int_id = _build_three_node_tree(workspace)
+    result = runner.invoke(
+        map_app,
+        ["probandum", "lineage", pen_id, "--workspace", str(workspace)],
+    )
+    assert result.exit_code == 0, result.output
+    out = result.stdout
+    # All three nodes appear in the rendered tree.
+    assert ult_id in out
+    assert pen_id in out
+    assert int_id in out
+    # Section headers.
+    assert "upward to ultimate" in out
+    assert "downward to leaves" in out
+    # Focal marker (`*`) is on the penultimate node.
+    assert f"* {pen_id}" in out
+
+
+def test_lineage_unknown_id_rejected(
+    tmp_workspace_with_walton_snapshot: Path,
+) -> None:
+    """An unknown probandum id exits non-zero."""
+    result = runner.invoke(
+        map_app,
+        [
+            "probandum",
+            "lineage",
+            "p-nonexistent01",
+            "--workspace",
+            str(tmp_workspace_with_walton_snapshot),
+        ],
+    )
+    assert result.exit_code != 0
