@@ -21,6 +21,7 @@ from pathlib import Path
 from typer.testing import CliRunner
 
 from amanuensis.cli.map import map_app
+from amanuensis.fs import Substrate
 
 runner = CliRunner()
 
@@ -176,12 +177,64 @@ def test_list_empty_workspace_prints_nothing(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# T7.2: amanuensis map relation show <id>
+# ---------------------------------------------------------------------------
+
+
+def test_show_renders_endpoints_warrant_supersede_chain(
+    tmp_workspace_with_two_cross_doc_relations: Path,
+) -> None:
+    """``relation show <id>`` prints endpoints, warrant, shared entities."""
+    workspace = tmp_workspace_with_two_cross_doc_relations
+    rel = next(iter(Substrate(workspace).list_cross_doc_relations()))
+    result = runner.invoke(
+        map_app,
+        ["relation", "show", rel.id, "--workspace", str(workspace)],
+    )
+    assert result.exit_code == 0, result.output
+    assert rel.from_atom_id in result.stdout
+    assert rel.to_atom_id in result.stdout
+    assert rel.warrant in result.stdout
+    for entity_id in rel.shared_entities:
+        assert entity_id in result.stdout
+
+
+def test_show_returns_error_for_unknown_id(
+    tmp_workspace_with_two_cross_doc_relations: Path,
+) -> None:
+    """``relation show`` on an unknown id exits non-zero with a 'not found' message."""
+    workspace = tmp_workspace_with_two_cross_doc_relations
+    result = runner.invoke(
+        map_app,
+        ["relation", "show", "x-nonexistent", "--workspace", str(workspace)],
+    )
+    assert result.exit_code != 0
+    haystack = (result.stdout or "") + (result.stderr or "")
+    assert "not found" in haystack.lower()
+
+
+def test_show_renders_supersede_chain_section(
+    tmp_workspace_with_two_cross_doc_relations: Path,
+) -> None:
+    """The supersede-chain section header always appears on the detail view."""
+    workspace = tmp_workspace_with_two_cross_doc_relations
+    rel = next(iter(Substrate(workspace).list_cross_doc_relations()))
+    result = runner.invoke(
+        map_app,
+        ["relation", "show", rel.id, "--workspace", str(workspace)],
+    )
+    assert result.exit_code == 0, result.output
+    assert "Supersede chain" in result.stdout
+
+
+# ---------------------------------------------------------------------------
 # Help discoverability — sanity check on the new sub-app
 # ---------------------------------------------------------------------------
 
 
-def test_map_relation_help_lists_list_verb() -> None:
-    """``map relation --help`` lists the ``list`` verb (T7.1)."""
+def test_map_relation_help_lists_read_verbs() -> None:
+    """``map relation --help`` lists the read-only verbs landed so far."""
     result = runner.invoke(map_app, ["relation", "--help"])
     assert result.exit_code == 0, result.output
-    assert "list" in result.stdout
+    for verb in ("list", "show"):
+        assert verb in result.stdout

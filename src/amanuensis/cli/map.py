@@ -1787,3 +1787,81 @@ def relation_list_command(
 
     for rel in relations:
         typer.echo(_format_cross_doc_relation_line(rel))
+
+
+@relation_app.command("show")
+@require_marker
+def relation_show_command(
+    relation_id: Annotated[
+        str,
+        typer.Argument(help="CrossDocRelation id (e.g. x-<hash>)."),
+    ],
+    workspace: Annotated[
+        Path | None,
+        typer.Option(
+            "--workspace",
+            "-w",
+            help="Workspace root (must contain amanuensis.yaml). Defaults to CWD.",
+        ),
+    ] = None,
+) -> None:
+    """Print a cross-doc relation's detail view (read-only; T7.2).
+
+    Sections rendered (mirrors ``entity show`` / ``resolution show``):
+
+    - Raw on-disk YAML (id, endpoints, kind, warrant, warrant_basis,
+      warrant_defensibility, confidence, shared_entities, provenance_id).
+    - Supersede chain (forward + backward over
+      ``CrossDocRelationSupersede`` records).
+    """
+    workspace_path = workspace_from_kwargs({"workspace": workspace})
+    substrate = Substrate(workspace_path)
+
+    path = substrate.cross_doc_relation_path(relation_id)
+    if not path.is_file():
+        typer.secho(
+            f"cross-doc relation '{relation_id}' not found in mappings/relations/",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+    # Raw YAML body verbatim — keeps the supervisor view aligned with
+    # what the substrate has on disk.
+    typer.echo(path.read_text(encoding="utf-8"), nl=False)
+
+    # Supersede chain section.
+    #
+    # ``Substrate.list_supersedes`` only yields ``s-`` (resolution) and
+    # ``t-`` (entity) records; cross-doc relation supersedes (``v-``)
+    # live in the same shared directory but require a direct walk. The
+    # logic mirrors ``latest_cross_doc_relation_for`` but renders both
+    # forward (``this -> X``) and backward (``Y -> this``) edges.
+    typer.echo("\n## Supersede chain")
+    chain_entries: list[str] = []
+    supersedes_dir = substrate.mappings_root / "supersedes"
+    if supersedes_dir.is_dir():
+        from amanuensis.fs._serialize import parse_cross_doc_relation_supersede_yaml
+
+        for sup_path in sorted(supersedes_dir.glob("v-*.yaml")):
+            if not sup_path.is_file() or ".tmp." in sup_path.name:
+                continue
+            record = parse_cross_doc_relation_supersede_yaml(sup_path.read_text(encoding="utf-8"))
+            if record.supersedes_id == relation_id:
+                chain_entries.append(
+                    f"superseded by {record.id} -> relation {record.superseded_by_id}"
+                    f" (reason: {record.reason})"
+                )
+            if record.superseded_by_id == relation_id:
+                chain_entries.append(f"supersedes {record.supersedes_id} (reason: {record.reason})")
+    if chain_entries:
+        for entry in chain_entries:
+            typer.echo(entry)
+    else:
+        typer.echo("(no supersede chain)")
+
+    # Latest-for-chain line (mirrors ``resolution show`` semantics).
+    latest = substrate.latest_cross_doc_relation_for(relation_id)
+    if latest is not None and latest.id == relation_id:
+        typer.echo("(this relation is the latest in its chain)")
+    elif latest is not None:
+        typer.echo(f"Latest in chain: {latest.id}")
