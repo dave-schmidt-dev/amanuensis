@@ -101,11 +101,16 @@ arguments are identical.
 ### 4. Delivery gate
 
 The delivery gate is the final stage — the supervisor decides the
-substrate is ready to render. Phase 1 ships only a static-HTML stub
-(M9.1, in-flight sibling): `amanuensis export <source-id> --format
-static-html --output <path>` emits a single self-contained HTML file
-suitable for share-or-archive. The full delivery pipeline (audit-HTML
-bundle, prose-report variant, render-time policy gates) is Phase 4.
+substrate is ready to render. Phase 1 ships the per-source static-HTML
+stub (M9.1): `amanuensis export <source-id> --format static-html
+--output <path>` emits a single self-contained HTML file suitable for
+share-or-archive. Phase 2b adds a workspace-level bundle exporter:
+`amanuensis export --workspace-appendix --out-dir DIR` emits a
+directory containing `cross-doc-relations.html` plus per-entity pages
+covering every canonical entity touched by a cross-doc relation —
+useful when the supervisor wants the cross-doc reasoning rendered in
+static form. The full delivery pipeline (audit-HTML bundle,
+prose-report variant, render-time policy gates) is Phase 4.
 
 ## A canonical end-to-end run
 
@@ -147,6 +152,18 @@ amanuensis iteration add \
 
 # 9. Once the substrate is settled, export.
 amanuensis export case-2024-001 --format static-html --output report.html
+
+# 10. (Multi-source engagements only) Once 2+ sources are settled,
+#     run the Resolve / Audit / Connect map cycle to produce cross-doc
+#     relations. The supervisor runs `dispatch --once` between phases.
+amanuensis map                                # Phase 2a Resolve + Audit
+amanuensis dispatch --once
+amanuensis map                                # second pass runs the Connect phase
+amanuensis dispatch --once
+amanuensis map --connect-only                 # re-run Connect after edits
+
+# 11. Export the workspace-level cross-doc appendix bundle.
+amanuensis export --workspace-appendix --out-dir cross-doc-bundle/
 ```
 
 The integration test that exercises this happy path on a tiny fixture
@@ -173,8 +190,9 @@ interchangeably without race risk.
 | `/distillations/<src>/relations` | Cytoscape relation graph. Uses the PM-6 HTMX swap pattern so graph state persists across HTMX swaps (filters, layout choice). |
 | `/clarifications` | Lists open clarifications + per-row resolve form (surface #2). |
 | `/iterations` | Lists existing directives + add form (surface #3). |
-| `/entities` | Entity browser: lists canonical entities with kind, canonical name, and alias count. Phase 2a. |
+| `/entities` | Entity browser: lists canonical entities with kind, canonical name, and alias count. Phase 2a; Phase 2b extends the detail page with a "Cross-doc edges touching this entity" section. |
 | `/resolutions` | Resolution browser: lists active resolutions with triple, entity, and confidence. Phase 2a. |
+| `/cross-doc-relations` | Phase 2b cross-doc relation browser: lists every `CrossDocRelation`, filterable by kind / source / shared entity; the detail page renders the warrant, the supersede chain, and a Cytoscape overlay highlighting the relation in the relation graph. |
 | `/replay-log` | Recent activity feed for audit — useful for cross-checking what the dispatch driver and the supervisor actually did. |
 | `/status` | Workspace health stats (a richer rendering of `amanuensis status`). |
 
@@ -230,11 +248,12 @@ blocks the dispatch command.
 
 Read-only commands (`status`, `atom list`, `atom show`, `atom
 validate`, `clarification list`, `iteration list`, `vocabulary list`,
-`vocabulary show`, `vocabulary snapshot`, `map status`, `map entity
-list`, `map entity show`, `map resolution show`, `map vocabulary
-show`) do NOT acquire the flock — they are safe to run concurrently
-with any mutating operation, and their output is a snapshot of
-substrate state at read time.
+`vocabulary show`, `vocabulary snapshot`, `export`, `map status`,
+`map entity list`, `map entity show`, `map resolution show`,
+`map vocabulary show`, `map relation list`, `map relation show`) do
+NOT acquire the flock — they are safe to run concurrently with any
+mutating operation, and their output is a snapshot of substrate state
+at read time.
 
 ## Known Limitations
 
@@ -261,10 +280,13 @@ What this protocol does NOT yet provide, as of M8.10:
   directly) is out of scope for Phase 1; the subprocess boundary is
   what makes the write-isolation contract enforceable. See
   [`skill-author-guide.md`](./skill-author-guide.md#write-isolation-contract).
-- **`amanuensis export` is the M9.1 stub.** A single self-contained
-  HTML file is the entire delivery surface in Phase 1. The full
-  audit-HTML bundle, prose-report rendering, and render-time policy
-  gates are Phase 4.
+- **`amanuensis export` is still pre-Phase-4.** Phase 1's per-source
+  single-file mode and Phase 2b's workspace-appendix bundle mode are
+  the only delivery surfaces shipped today. The full audit-HTML
+  bundle, prose-report rendering, and render-time policy gates remain
+  Phase 4. The Phase 2b bundle is workspace-level — to inspect a
+  single source's cross-doc edges, use the web app's per-source graph
+  with the cross-doc overlay enabled.
 
 ## See also
 
