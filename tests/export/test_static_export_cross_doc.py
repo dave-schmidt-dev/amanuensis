@@ -203,6 +203,38 @@ def test_entity_page_is_self_contained(
 
 
 # ---------------------------------------------------------------------------
+# T9.3 — INV-8 render-purity (byte-identical across two runs)
+# ---------------------------------------------------------------------------
+
+
+def test_render_purity_with_cross_doc_relation(
+    tmp_workspace_with_two_cross_doc_relations: Path,
+    tmp_path: Path,
+) -> None:
+    """Two consecutive runs produce byte-identical files in the bundle.
+
+    Walks every emitted file (appendix + every per-entity page),
+    asserting that the file set AND the bytes of every file are
+    identical across two runs of ``export_workspace_appendix`` with
+    a frozen timestamp.
+    """
+    out_a = tmp_path / "a"
+    out_b = tmp_path / "b"
+    substrate = Substrate(tmp_workspace_with_two_cross_doc_relations)
+
+    export_workspace_appendix(substrate=substrate, out_dir=out_a, now=_FROZEN_NOW)
+    export_workspace_appendix(substrate=substrate, out_dir=out_b, now=_FROZEN_NOW)
+
+    files_a = sorted(p.relative_to(out_a) for p in out_a.rglob("*") if p.is_file())
+    files_b = sorted(p.relative_to(out_b) for p in out_b.rglob("*") if p.is_file())
+    assert files_a == files_b, f"bundle file set differs across runs:\n  a={files_a}\n  b={files_b}"
+    for rel_path in files_a:
+        bytes_a = (out_a / rel_path).read_bytes()
+        bytes_b = (out_b / rel_path).read_bytes()
+        assert bytes_a == bytes_b, f"{rel_path} differs across two render runs (INV-8)"
+
+
+# ---------------------------------------------------------------------------
 # T9.4 — Self-contained HTML (no CDN URLs) — absorbed here per spec
 # ---------------------------------------------------------------------------
 
