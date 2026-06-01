@@ -1,11 +1,6 @@
-"""Cross-doc relation routes — list browser (Phase 2b M8).
+"""Cross-doc relation routes — list browser + detail page (Phase 2b M8).
 
-T8.1 ships the list route only; ``GET /cross-doc-relations/<id>`` lands
-in T8.2 and the supersede-chain rendering in T8.3. Mirrors the
-structural template style of Phase 2a's ``entities.py`` /
-``resolutions.py``.
-
-Route surface (T8.1):
+Two routes:
 
 - ``GET /cross-doc-relations`` — table of all CrossDocRelation records
   with optional ``?kind=``, ``?from_source=``, ``?to_source=``,
@@ -15,6 +10,13 @@ Route surface (T8.1):
   ``Substrate.list_cross_doc_relations``). Headers:
   ``Cache-Control: no-store``.
 
+- ``GET /cross-doc-relations/<id>`` — single-relation detail page.
+  Renders endpoints (source + atom), warrant block (warrant text +
+  defensibility + basis + confidence), shared entities (each linked to
+  ``/entities/<id>``), and provenance id. The supersede-chain section
+  is plumbed but populated by T8.3. Returns 404 on unknown id.
+  Headers: ``Cache-Control: no-store``.
+
 Read-only per Phase 2b spec: supersedes are CLI-only (no POST endpoint).
 """
 
@@ -22,7 +24,7 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import HTMLResponse
 
 from amanuensis.fs import Substrate
@@ -98,6 +100,48 @@ async def cross_doc_relations_list(
             "to_source": to_source or "",
             "touching_source": touching_source or "",
             "shared_entity": shared_entity or "",
+        },
+    )
+    response.headers["cache-control"] = "no-store"
+    return response  # pyright: ignore[reportReturnType]
+
+
+@router.get("/cross-doc-relations/{relation_id}", response_class=HTMLResponse)
+async def cross_doc_relation_detail(
+    request: Request,
+    relation_id: str,
+    substrate: Annotated[Substrate, Depends(get_substrate)],
+) -> HTMLResponse:
+    """Render the per-relation detail page.
+
+    Sections: header (id + kind), endpoints (source + atom), warrant
+    block (warrant text, defensibility, basis, confidence), shared
+    entities (linked list), provenance id, and a supersede-chain
+    placeholder (T8.3 fills it in).
+    """
+    # ``Substrate`` does not currently expose ``get_cross_doc_relation``
+    # — mirror the CLI's access pattern (see
+    # ``amanuensis/cli/map.py::relation_show_command``) by going through
+    # the public path helper + the private loader.
+    path = substrate.cross_doc_relation_path(relation_id)
+    if not path.is_file():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"cross-doc relation {relation_id!r} not found",
+        )
+    relation = substrate._load_cross_doc_relation(path)  # pyright: ignore[reportPrivateUsage]
+
+    # Supersede-chain entries land in T8.3; pass an empty list now so the
+    # template's chain section renders the "(no supersede chain)" branch.
+    chain_entries: list[object] = []
+
+    templates = request.app.state.templates
+    response = templates.TemplateResponse(  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType,reportReturnType]
+        request,
+        "cross_doc_relation_detail.html",
+        {
+            "relation": relation,
+            "chain_entries": chain_entries,
         },
     )
     response.headers["cache-control"] = "no-store"

@@ -1,4 +1,4 @@
-"""Web route tests for cross-doc relations (Phase 2b M8 T8.1)."""
+"""Web route tests for cross-doc relations (Phase 2b M8 T8.1+T8.2)."""
 
 # pyright: reportPrivateUsage=false
 
@@ -113,3 +113,70 @@ def test_list_route_empty_workspace(
     response = client.get("/cross-doc-relations")
     assert response.status_code == 200
     assert "no cross-doc relations" in response.text.lower()
+
+
+# ---------------------------------------------------------------------------
+# T8.2 — GET /cross-doc-relations/<id> detail route
+# ---------------------------------------------------------------------------
+
+
+def test_detail_route_renders_relation(
+    tmp_workspace_with_two_cross_doc_relations: Path,
+    web_app: FastAPI,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Detail page renders the warrant and each shared entity as a /entities/<id> link."""
+    monkeypatch.setenv("AMANUENSIS_WORKSPACE", str(tmp_workspace_with_two_cross_doc_relations))
+    sub = Substrate(tmp_workspace_with_two_cross_doc_relations)
+    rel = next(iter(sub.list_cross_doc_relations()))
+    client = TestClient(web_app)
+    response = client.get(f"/cross-doc-relations/{rel.id}")
+    assert response.status_code == 200
+    assert rel.warrant in response.text
+    for entity_id in rel.shared_entities:
+        assert f'href="/entities/{entity_id}"' in response.text
+
+
+def test_detail_route_renders_warrant_metadata(
+    tmp_workspace_with_two_cross_doc_relations: Path,
+    web_app: FastAPI,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Detail page shows kind, basis, defensibility, confidence."""
+    monkeypatch.setenv("AMANUENSIS_WORKSPACE", str(tmp_workspace_with_two_cross_doc_relations))
+    sub = Substrate(tmp_workspace_with_two_cross_doc_relations)
+    rel = next(iter(sub.list_cross_doc_relations()))
+    client = TestClient(web_app)
+    response = client.get(f"/cross-doc-relations/{rel.id}")
+    assert response.status_code == 200
+    assert rel.kind in response.text
+    assert rel.warrant_basis in response.text
+    assert rel.warrant_defensibility in response.text
+    assert rel.confidence in response.text
+
+
+def test_detail_route_sets_no_store(
+    tmp_workspace_with_two_cross_doc_relations: Path,
+    web_app: FastAPI,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Detail response carries Cache-Control: no-store."""
+    monkeypatch.setenv("AMANUENSIS_WORKSPACE", str(tmp_workspace_with_two_cross_doc_relations))
+    sub = Substrate(tmp_workspace_with_two_cross_doc_relations)
+    rel = next(iter(sub.list_cross_doc_relations()))
+    client = TestClient(web_app)
+    response = client.get(f"/cross-doc-relations/{rel.id}")
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-store"
+
+
+def test_detail_route_404(
+    web_app: FastAPI,
+    tmp_workspace_with_two_cross_doc_relations: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Unknown cross-doc relation id returns 404."""
+    monkeypatch.setenv("AMANUENSIS_WORKSPACE", str(tmp_workspace_with_two_cross_doc_relations))
+    client = TestClient(web_app)
+    response = client.get("/cross-doc-relations/x-nonexistent00000")
+    assert response.status_code == 404

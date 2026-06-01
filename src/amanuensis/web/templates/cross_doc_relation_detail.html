@@ -1,0 +1,104 @@
+{% extends "base.html" %}
+{% block title %}{{ relation.id }} &middot; cross-doc relation &middot; amanuensis{% endblock %}
+{% block nav %}
+<a href="/" class="text-neutral-300 hover:text-neutral-50">&larr; dashboard</a>
+<a href="/cross-doc-relations" class="text-neutral-300 hover:text-neutral-50">cross-doc relations</a>
+<a href="/entities" class="text-neutral-300 hover:text-neutral-50">entities</a>
+{% endblock %}
+{% block content %}
+<section class="space-y-6">
+  <header class="space-y-1">
+    <p class="text-xs uppercase tracking-wider text-neutral-500">cross-doc relation</p>
+    <h1 class="font-mono text-xl font-semibold tracking-tight text-neutral-50 break-all">{{ relation.id }}</h1>
+    <p class="text-sm text-neutral-300">
+      kind: <span class="text-neutral-100">{{ relation.kind }}</span>
+    </p>
+  </header>
+
+  <section class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+    <div class="rounded border border-neutral-800 bg-neutral-900 p-3">
+      <p class="text-xs uppercase tracking-wider text-neutral-500">from</p>
+      <p class="mt-1 font-mono text-sm text-neutral-100">{{ relation.from_source_id }}</p>
+      <p class="mt-0.5 font-mono text-xs text-neutral-400 break-all">{{ relation.from_atom_id }}</p>
+    </div>
+    <div class="rounded border border-neutral-800 bg-neutral-900 p-3">
+      <p class="text-xs uppercase tracking-wider text-neutral-500">to</p>
+      <p class="mt-1 font-mono text-sm text-neutral-100">{{ relation.to_source_id }}</p>
+      <p class="mt-0.5 font-mono text-xs text-neutral-400 break-all">{{ relation.to_atom_id }}</p>
+    </div>
+  </section>
+
+  <section class="rounded border border-neutral-800 bg-neutral-900 p-4">
+    <h2 class="text-lg font-semibold text-neutral-50">warrant</h2>
+    <p class="mt-2 text-sm text-neutral-100 whitespace-pre-wrap">{{ relation.warrant }}</p>
+    <dl class="mt-4 grid grid-cols-1 gap-2 text-xs sm:grid-cols-3">
+      <div class="rounded border border-neutral-800 bg-neutral-950 p-2">
+        <dt class="uppercase tracking-wider text-neutral-500">defensibility</dt>
+        <dd class="mt-1 text-neutral-200">{{ relation.warrant_defensibility }}</dd>
+      </div>
+      <div class="rounded border border-neutral-800 bg-neutral-950 p-2">
+        <dt class="uppercase tracking-wider text-neutral-500">confidence</dt>
+        <dd class="mt-1 text-neutral-200">{{ relation.confidence }}</dd>
+      </div>
+      <div class="rounded border border-neutral-800 bg-neutral-950 p-2 sm:col-span-3">
+        <dt class="uppercase tracking-wider text-neutral-500">basis</dt>
+        <dd class="mt-1 text-neutral-200 whitespace-pre-wrap">{{ relation.warrant_basis }}</dd>
+      </div>
+    </dl>
+  </section>
+
+  <section class="rounded border border-neutral-800 bg-neutral-900 p-4">
+    <h2 class="text-lg font-semibold text-neutral-50">shared entities</h2>
+    {% if relation.shared_entities %}
+    <ul class="mt-2 flex flex-wrap gap-2">
+      {% for ent_id in relation.shared_entities %}
+      <li>
+        <a
+          href="/entities/{{ ent_id }}"
+          class="rounded bg-neutral-800 px-2 py-0.5 font-mono text-sm text-neutral-200 underline decoration-neutral-700 underline-offset-2 hover:decoration-neutral-300"
+        >{{ ent_id }}</a>
+      </li>
+      {% endfor %}
+    </ul>
+    {% else %}
+    <p class="mt-2 text-sm text-neutral-500">none</p>
+    {% endif %}
+  </section>
+
+  <section class="rounded border border-neutral-800 bg-neutral-900 p-4">
+    <h2 class="text-lg font-semibold text-neutral-50">provenance</h2>
+    <p class="mt-2 font-mono text-xs text-neutral-400 break-all">{{ relation.provenance_id }}</p>
+  </section>
+
+  <section class="rounded border border-neutral-800 bg-neutral-900 p-4">
+    <h2 class="text-lg font-semibold text-neutral-50">supersede chain</h2>
+    {% if chain_entries %}
+    <ul class="mt-3 space-y-2 text-sm text-neutral-300">
+      {% for entry in chain_entries %}
+      <li>
+        {% if entry.direction == 'forward' %}
+        superseded by
+        {% else %}
+        supersedes
+        {% endif %}
+        <a
+          href="/cross-doc-relations/{{ entry.other_id }}"
+          class="font-mono text-neutral-100 underline decoration-neutral-700 underline-offset-2 hover:decoration-neutral-300"
+        >{{ entry.other_id }}</a>
+        <span class="ml-1 text-xs text-neutral-500">(reason: {{ entry.reason }})</span>
+      </li>
+      {% endfor %}
+    </ul>
+    {% else %}
+    <p class="mt-2 text-sm text-neutral-500">(no supersede chain)</p>
+    {% endif %}
+  </section>
+
+  <p class="text-sm">
+    <a
+      href="/cross-doc-relations"
+      class="text-neutral-300 underline decoration-neutral-700 underline-offset-2 hover:decoration-neutral-300"
+    >&larr; back to cross-doc relations</a>
+  </p>
+</section>
+{% endblock %}
