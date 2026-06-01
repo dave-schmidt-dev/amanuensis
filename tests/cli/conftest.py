@@ -255,6 +255,30 @@ def _m7_build_cross_doc_relation(
     return CrossDocRelation(**payload)
 
 
+# ---------------------------------------------------------------------------
+# Phase 2c M9 — Walton-scheme snapshot fixture for probandum CLI tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def tmp_workspace_with_walton_snapshot(tmp_path: Path) -> Path:
+    """Workspace with the INV-1 marker + a pinned generic Walton-scheme snapshot.
+
+    Many Phase 2c (Hierarchize) CLI verbs touch ``add_probandum`` which
+    enforces the INV-18 closed-vocabulary gate at write-time. This
+    fixture pins the bundled generic catalogue (via
+    ``Substrate.snapshot_walton_schemes``) so probandum writes that name
+    a known scheme (e.g. ``argument-from-sign``) clear the gate.
+    """
+    marker = tmp_path / "amanuensis.yaml"
+    marker.write_text(
+        "schema_version: 1\nproject_name: m9-walton-fixture\n",
+        encoding="utf-8",
+    )
+    Substrate(tmp_path).snapshot_walton_schemes()
+    return tmp_path
+
+
 @pytest.fixture
 def tmp_workspace_with_two_cross_doc_relations(tmp_path: Path) -> Path:
     """Workspace with two committed CrossDocRelation records.

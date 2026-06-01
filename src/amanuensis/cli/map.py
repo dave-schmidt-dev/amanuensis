@@ -42,6 +42,7 @@ from amanuensis.schemas import (
     AgentAttribution,
     CrossDocRelationSupersede,
     EntitySupersede,
+    Probandum,
     ProvenanceRecord,
     Resolution,
     ResolutionSupersede,
@@ -132,6 +133,52 @@ app.add_typer(
     relation_app,
     name="relation",
     help="Inspect and supersede cross-doc relation records.",
+)
+
+# Phase 2c M9: probandum sub-app (add / list / show / lineage / link /
+# supersede). Probandum-edge supersede lives under its own peer sub-app
+# (``probandum_edge_app`` below) — the id namespaces and supersede
+# pipelines are distinct, mirroring how Phase 2b put relation supersedes
+# under ``map relation`` rather than under a generic supersede verb.
+probandum_app = typer.Typer(
+    name="probandum",
+    help="Manage Phase 2c argument-tree probanda (ultimate / penultimate / interim).",
+    no_args_is_help=True,
+    add_completion=False,
+)
+app.add_typer(
+    probandum_app,
+    name="probandum",
+    help="Manage Phase 2c argument-tree probanda (ultimate / penultimate / interim).",
+)
+
+# Probandum-edge supersede lives at ``map probandum-edge supersede``; the
+# only verb is ``supersede`` for now so the sub-app stays single-purpose.
+probandum_edge_app = typer.Typer(
+    name="probandum-edge",
+    help="Supersede Phase 2c probandum-edges.",
+    no_args_is_help=True,
+    add_completion=False,
+)
+app.add_typer(
+    probandum_edge_app,
+    name="probandum-edge",
+    help="Supersede Phase 2c probandum-edges.",
+)
+
+# Walton-scheme registry (closed vocabulary backing INV-18 at probandum
+# write-time). Read-only ``show`` + mutating ``snapshot`` (with optional
+# ``--extend``) mirror Phase 2a's ``map vocabulary`` sub-app.
+walton_scheme_app = typer.Typer(
+    name="walton-scheme",
+    help="Show and snapshot the Walton-scheme registry (Phase 2c closed vocabulary).",
+    no_args_is_help=True,
+    add_completion=False,
+)
+app.add_typer(
+    walton_scheme_app,
+    name="walton-scheme",
+    help="Show and snapshot the Walton-scheme registry (Phase 2c closed vocabulary).",
 )
 
 
@@ -2130,3 +2177,192 @@ def relation_supersede_command(
         f"Superseded cross-doc relation '{old_id}' -> '{new_id}'. "
         f"CrossDocRelationSupersede id: {sup.id}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Phase 2c M9: probandum sub-commands (T9.1 / T9.2 / T9.3 / T9.4 / T9.5 / T9.6)
+# ---------------------------------------------------------------------------
+
+
+@probandum_app.command("add")
+@require_marker
+def probandum_add_command(
+    statement: Annotated[
+        str,
+        typer.Argument(help="The probandum statement (a full proposition)."),
+    ],
+    kind: Annotated[
+        str,
+        typer.Option(
+            "--kind",
+            help="One of ultimate / penultimate / interim (ACH discipline for non-ultimate).",
+        ),
+    ],
+    scheme: Annotated[
+        str,
+        typer.Option(
+            "--scheme",
+            help="Walton-scheme id (must be present in the pinned snapshot — INV-18).",
+        ),
+    ],
+    alternative: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--alternative",
+            help=(
+                "An alternative considered (repeatable). Required for "
+                "penultimate / interim probanda (ACH discipline)."
+            ),
+        ),
+    ] = None,
+    confidence: Annotated[
+        str,
+        typer.Option(
+            "--confidence",
+            help="Confidence level for the probandum (high / medium / low).",
+        ),
+    ] = "medium",
+    actor: Annotated[
+        str,
+        typer.Option(
+            "--actor",
+            help="Identifier of the human authoring the probandum.",
+        ),
+    ] = "cli",
+    workspace: Annotated[
+        Path | None,
+        typer.Option(
+            "--workspace",
+            "-w",
+            help="Workspace root (must contain amanuensis.yaml). Defaults to CWD.",
+        ),
+    ] = None,
+) -> None:
+    """Add a Probandum (Phase 2c hierarchize node) to the workspace (T9.1).
+
+    Marker preflight (INV-1) runs first. The write is wrapped in the
+    workspace flock; the substrate's ``add_probandum`` enforces the
+    ACH-alternatives gate (INV-19), the Walton-scheme closed-vocabulary
+    gate (INV-18), id discipline, and INV-13 immutability.
+    """
+    from typing import Literal, cast
+
+    workspace_path = workspace_from_kwargs({"workspace": workspace})
+    substrate = Substrate(workspace_path)
+
+    # Validate kind + confidence enums upfront (Typer's enum support is
+    # not used here so the error UX matches the rest of this module).
+    if kind not in {"ultimate", "penultimate", "interim"}:
+        typer.secho(
+            f"--kind must be one of ultimate/penultimate/interim, got '{kind}'",
+            err=True,
+        )
+        raise typer.Exit(code=2)
+    if confidence not in {"high", "medium", "low"}:
+        typer.secho(
+            f"--confidence must be one of high/medium/low, got '{confidence}'",
+            err=True,
+        )
+        raise typer.Exit(code=2)
+    kind_lit = cast("Literal['ultimate', 'penultimate', 'interim']", kind)
+    confidence_lit = cast("Literal['high', 'medium', 'low']", confidence)
+
+    alternatives = list(alternative) if alternative else []
+
+    now = datetime.now(UTC)
+    agent = AgentAttribution(kind="human", identifier=actor, role="human_supervisor")
+    role_attr = RoleAttribution(agent=agent, activity="proposed", at=now)
+
+    # Build the Probandum + matching ProvenanceRecord via the two-pass
+    # compute_id pattern (mirrors entity_merge_command). provenance_id
+    # is volatile for the probandum's canonical hash, so the id is
+    # stable across the pass that wires the prov_id in.
+    prob_draft = Probandum(
+        id="p-" + "0" * 16,
+        statement=statement,
+        kind=kind_lit,
+        scheme=scheme,
+        alternatives_considered=alternatives,
+        confidence=confidence_lit,
+        provenance_id="p-" + "0" * 16,
+        role_attributions=[role_attr],
+        schema_version=1,
+    )
+    prob_id = compute_id(prob_draft)
+
+    prov_draft = ProvenanceRecord(
+        id="p-" + "0" * 16,
+        entity_type="probandum",
+        entity_id=prob_id,
+        activity="probandum-add",
+        activity_started_at=now,
+        activity_ended_at=now,
+        used_entity_ids=[],
+        was_attributed_to=agent,
+        was_influenced_by=[],
+        schema_version=1,
+    )
+    prov_id = compute_id(prov_draft)
+    prov = prov_draft.model_copy(update={"id": prov_id})
+    prob = prob_draft.model_copy(update={"id": prob_id, "provenance_id": prov_id})
+
+    # --- Mutating path: acquire flock and write ------------------------
+    from amanuensis.fs._errors import (
+        AchAlternativesGateViolation,
+        SubstrateNotFound,
+        WaltonSchemeGateViolation,
+    )
+
+    try:
+        with acquire_workspace_lock(workspace_path, timeout=5.0):
+            substrate_changes: list[str] = []
+            prov_path = substrate.mappings_provenance_path(prov.id)
+            atomic_write_text(prov_path, serialize_yaml(prov))
+            substrate_changes.append(str(prov_path.relative_to(workspace_path)))
+
+            try:
+                prob_path = substrate.add_probandum(prob)
+            except AchAlternativesGateViolation as exc:
+                typer.secho(str(exc), err=True)
+                raise typer.Exit(code=1) from exc
+            except WaltonSchemeGateViolation as exc:
+                typer.secho(str(exc), err=True)
+                raise typer.Exit(code=1) from exc
+            except SubstrateNotFound as exc:
+                typer.secho(str(exc), err=True)
+                raise typer.Exit(code=1) from exc
+            substrate_changes.append(str(prob_path.relative_to(workspace_path)))
+
+            inputs_payload = json.dumps(
+                {
+                    "alternatives": sorted(alternatives),
+                    "confidence": confidence,
+                    "kind": kind,
+                    "scheme": scheme,
+                    "statement": statement,
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+            inputs_hash = hashlib.sha256(inputs_payload).hexdigest()
+
+            actor_attr = AgentAttribution(kind="human", identifier=actor, role="human_supervisor")
+            ReplayLog.for_mappings(workspace_path).append(
+                actor=actor_attr,
+                activity="probandum-add",
+                inputs_hash=inputs_hash,
+                outputs_hash=inputs_hash,
+                cache_hit=False,
+                substrate_changes=substrate_changes,
+                duration_seconds=0.0,
+                _lock_held=True,
+            )
+
+    except WorkspaceLockTimeout as exc:
+        typer.secho(
+            "workspace flock held by another process — wait or release .amanuensis-lock",
+            err=True,
+        )
+        raise typer.Exit(code=2) from exc
+
+    typer.echo(prob.id)
