@@ -178,6 +178,17 @@ class ReconcileResult:
             outputs reconciled in the same drain.
         connect_clarifications_raised: Ids of clarifications auto-raised
             by the **connect** role specifically (Phase 2b cleanup-3).
+        hierarchize_probanda_committed: Ids of ``Probandum`` records
+            committed by the **hierarchize** role specifically. Phase 2c
+            M8: filtered counter so ``HierarchizePhaseReport`` does not
+            leak ids from non-hierarchize outputs reconciled in the
+            same drain.
+        hierarchize_edges_committed: Ids of ``ProbandumEdge`` records
+            committed by the **hierarchize** role specifically
+            (Phase 2c M8).
+        hierarchize_clarifications_raised: Ids of clarifications
+            auto-raised by the **hierarchize** role specifically
+            (Phase 2c M8).
     """
 
     atoms_committed: list[str] = field(default_factory=list)
@@ -187,6 +198,9 @@ class ReconcileResult:
     errors: list[tuple[Path, str]] = field(default_factory=list)
     connect_relations_committed: list[str] = field(default_factory=list)
     connect_clarifications_raised: list[str] = field(default_factory=list)
+    hierarchize_probanda_committed: list[str] = field(default_factory=list)
+    hierarchize_edges_committed: list[str] = field(default_factory=list)
+    hierarchize_clarifications_raised: list[str] = field(default_factory=list)
 
 
 # --- Public entry point ------------------------------------------------
@@ -2138,10 +2152,15 @@ def _process_hierarchize_output(
             clar_id = _recover_latest_clarification_id(substrate, kind="scheme-missing")
             if clar_id is not None:
                 result.clarifications_raised.append(clar_id)
+                # Phase 2c M8: also record on the hierarchize-only list
+                # so HierarchizePhaseReport counters don't leak non-
+                # hierarchize ids reconciled in the same drain.
+                result.hierarchize_clarifications_raised.append(clar_id)
             continue
 
         # Happy path: record the committed probandum + map its index.
         index_to_probandum_id[str(idx)] = prob.id
+        result.hierarchize_probanda_committed.append(prob.id)
         prob_path = substrate.probandum_path(prob.id)
         substrate_changes.append(str(prob_path.relative_to(workspace_root)))
 
@@ -2181,8 +2200,11 @@ def _process_hierarchize_output(
             clar_id = _recover_latest_clarification_id(substrate, kind="lineage-incomplete")
             if clar_id is not None:
                 result.clarifications_raised.append(clar_id)
+                # Phase 2c M8: also record on the hierarchize-only list.
+                result.hierarchize_clarifications_raised.append(clar_id)
             continue
 
+        result.hierarchize_edges_committed.append(edge.id)
         edge_path = substrate.probandum_edge_path(edge.id)
         substrate_changes.append(str(edge_path.relative_to(workspace_root)))
 
