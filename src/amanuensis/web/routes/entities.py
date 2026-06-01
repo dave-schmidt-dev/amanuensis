@@ -8,12 +8,14 @@ Two routes:
 
 - ``GET /entities/<entity-id>`` — single-entity detail page showing kind,
   canonical_name, aliases, notes, provenance summary, resolutions that
-  point here, and the supersede chain. Returns 404 on unknown id.
-  Headers: ``Cache-Control: no-store``.
+  point here, the cross-doc edges touching it, the probanda referencing
+  it (Phase 2c M10 T10.5), and the supersede chain. Returns 404 on
+  unknown id. Headers: ``Cache-Control: no-store``.
 """
 
 from __future__ import annotations
 
+import re
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
@@ -29,6 +31,44 @@ from amanuensis.fs import (
 from ..dependencies import get_substrate
 
 router = APIRouter()
+
+
+def _probanda_referencing_entity(
+    substrate: Substrate,
+    canonical_name: str,
+) -> list[dict[str, str]]:
+    """Best-effort scan of probandum statements for a case-insensitive whole-word match.
+
+    The heuristic is documented in the M10 spec (T10.5): scan every
+    probandum's ``statement`` text for the entity's canonical name as
+    a case-insensitive whole-word match. Names ≤ 2 characters are
+    skipped because the false-positive rate is too high (a name like
+    "AB" would match almost any abbreviation-rich corpus). The
+    template surfaces this as a "best-effort" hint to the supervisor.
+
+    Returns a list of dicts shaped ``{"id": ..., "kind": ...,
+    "statement_excerpt": ...}`` sorted by probandum id (matches the
+    list-browser ordering).
+    """
+    name = canonical_name.strip()
+    if len(name) <= 2:
+        return []
+    # ``\b`` whole-word match. ``re.escape`` neutralizes regex
+    # metacharacters in the canonical name (a name like "AT&T" or
+    # "S.A." would otherwise tokenize unpredictably).
+    pattern = re.compile(rf"\b{re.escape(name)}\b", re.IGNORECASE)
+
+    hits: list[dict[str, str]] = []
+    for p in substrate.list_probanda():
+        if pattern.search(p.statement):
+            excerpt = p.statement
+            if len(excerpt) > 120:
+                cutoff = excerpt.rfind(" ", 0, 120)
+                if cutoff <= 0:
+                    cutoff = 120
+                excerpt = excerpt[:cutoff].rstrip() + "…"
+            hits.append({"id": p.id, "kind": p.kind, "statement_excerpt": excerpt})
+    return hits
 
 
 @router.get("/entities", response_class=HTMLResponse)
@@ -158,6 +198,12 @@ async def entity_detail(
         k for k in ("supports", "attacks", "undercuts") if k in cross_doc_by_kind
     ]
 
+    # Phase 2c M10 T10.5 — heuristic substring scan for probanda whose
+    # ``statement`` text mentions this entity's canonical name. The
+    # template renders this as a "best-effort" hint; see
+    # :func:`_probanda_referencing_entity` for the matching policy.
+    probanda_hits = _probanda_referencing_entity(substrate, entity.canonical_name)
+
     templates = request.app.state.templates
     response = templates.TemplateResponse(  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType,reportReturnType]
         request,
@@ -170,6 +216,7 @@ async def entity_detail(
             "cross_doc_by_kind": cross_doc_by_kind,
             "cross_doc_kinds_ordered": cross_doc_kinds_ordered,
             "cross_doc_total": len(cross_doc_relations),
+            "probanda_hits": probanda_hits,
         },
     )
     response.headers["cache-control"] = "no-store"

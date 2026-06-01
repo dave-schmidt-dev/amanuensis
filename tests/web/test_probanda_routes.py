@@ -369,3 +369,50 @@ def test_tree_json_404_for_unknown_probandum(
     client = TestClient(web_app)
     response = client.get("/probanda/p-nonexistent00000/tree.json")
     assert response.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# T10.5 — Entity-detail "Probanda referencing this entity" section
+# ---------------------------------------------------------------------------
+
+
+def test_entity_detail_shows_probanda_referencing_entity(
+    tmp_workspace_probandum_tree_with_entity: dict[str, str],
+    web_app: FastAPI,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Entity-detail surfaces probanda whose statements mention the canonical name."""
+    monkeypatch.setenv(
+        "AMANUENSIS_WORKSPACE", tmp_workspace_probandum_tree_with_entity["workspace"]
+    )
+    client = TestClient(web_app)
+    entity_id = tmp_workspace_probandum_tree_with_entity["entity_id"]
+    response = client.get(f"/entities/{entity_id}")
+    assert response.status_code == 200
+    # The section heading is present.
+    assert "Probanda referencing this entity" in response.text
+    # The M10 fixture mentions "Smith" in the ultimate + penultimate +
+    # interim statements; all three should be cited.
+    for role in ("ultimate", "penultimate", "interim"):
+        assert tmp_workspace_probandum_tree_with_entity[role] in response.text
+    # Each hit must be a /probanda/<id> link.
+    for role in ("ultimate", "penultimate", "interim"):
+        assert f'href="/probanda/{tmp_workspace_probandum_tree_with_entity[role]}"' in response.text
+
+
+def test_entity_detail_empty_probanda_section(
+    planted_entities_workspace: Path,
+    web_app: FastAPI,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Workspace with entities but NO probanda renders the empty branch."""
+    monkeypatch.setenv("AMANUENSIS_WORKSPACE", str(planted_entities_workspace))
+    from amanuensis.fs import Substrate as _Substrate
+
+    sub = _Substrate(planted_entities_workspace)
+    entity = next(iter(sub.list_entities()))
+    client = TestClient(web_app)
+    response = client.get(f"/entities/{entity.id}")
+    assert response.status_code == 200
+    assert "Probanda referencing this entity" in response.text
+    assert "no probanda mention this entity by name" in response.text

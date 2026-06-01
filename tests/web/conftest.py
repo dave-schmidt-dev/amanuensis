@@ -917,3 +917,45 @@ def tmp_workspace_with_probandum_tree(tmp_path: Path) -> dict[str, str]:
         "edge_pen_int": edge_pen_int.id,
         "source_id": _M10_SOURCE_ID,
     }
+
+
+@pytest.fixture
+def tmp_workspace_probandum_tree_with_entity(
+    tmp_workspace_with_probandum_tree: dict[str, str],
+) -> dict[str, str]:
+    """The M10 probandum tree plus a canonical Entity named ``Smith``.
+
+    Used by the T10.5 test that verifies the entity-detail page's
+    "Probanda referencing this entity" section. The Smith entity is
+    planted with a literal id (``e-smith-m10``) for deterministic URL
+    construction; its provenance is written via the direct path
+    because the entity probandum-scan heuristic does not need a
+    fully-canonical id.
+    """
+    workspace_path = Path(tmp_workspace_with_probandum_tree["workspace"])
+    sub = Substrate(workspace_path)
+
+    role_attr = _m10_role_attribution()
+    entity = Entity(
+        id="e-smith-m10",
+        kind="party",
+        canonical_name="Smith",
+        aliases=[],
+        notes=None,
+        provenance_id="p-m10ent00000001",
+        role_attributions=[role_attr],
+        schema_version=1,
+    )
+    # Use the literal-id planting helper used by the M8 fixtures so
+    # we don't have to thread provenance hashing through here. The
+    # detail route walks the supersede chain via
+    # ``latest_entity_for``, and a single canonical record is enough.
+    path = workspace_path / "mappings" / "entities" / f"{entity.id}.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    atomic_write_text(path, serialize_entity_md(entity))
+    _ = sub  # quiet unused-arg lint; substrate is implicitly active above
+
+    enriched = dict(tmp_workspace_with_probandum_tree)
+    enriched["entity_id"] = entity.id
+    enriched["entity_canonical_name"] = entity.canonical_name
+    return enriched

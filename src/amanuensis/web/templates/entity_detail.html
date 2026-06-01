@@ -125,6 +125,30 @@
     {% endif %}
   </section>
 
+  <section class="rounded border border-neutral-800 bg-neutral-900 p-4">
+    <h2 class="text-lg font-semibold text-neutral-50">Probanda referencing this entity</h2>
+    <p class="mt-1 text-xs text-neutral-500">
+      best-effort heuristic: case-insensitive whole-word match of the
+      canonical name against probandum statements.
+    </p>
+    {% if probanda_hits %}
+    <ul class="mt-3 divide-y divide-neutral-800 rounded border border-neutral-800">
+      {% for hit in probanda_hits %}
+      <li class="px-3 py-2 text-sm">
+        <a
+          href="/probanda/{{ hit.id }}"
+          class="font-mono text-xs text-neutral-200 underline decoration-neutral-700 underline-offset-2 hover:decoration-neutral-300"
+        >{{ hit.id }}</a>
+        <span class="ml-2 rounded bg-neutral-800 px-2 py-0.5 text-xs text-neutral-300">{{ hit.kind }}</span>
+        <p class="mt-1 text-xs text-neutral-400">{{ hit.statement_excerpt }}</p>
+      </li>
+      {% endfor %}
+    </ul>
+    {% else %}
+    <p class="mt-2 text-sm text-neutral-500">no probanda mention this entity by name</p>
+    {% endif %}
+  </section>
+
   {% if is_superseded %}
   <section class="rounded border border-neutral-800 bg-neutral-900 p-4">
     <h2 class="text-lg font-semibold text-neutral-50">supersede chain</h2>
