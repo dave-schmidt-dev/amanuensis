@@ -19,9 +19,12 @@ runner = CliRunner()
 # legible in failure output.
 _FAKE_BINARY = "/usr/local/bin/__fake-harness__"
 
-# The eight bundled skill filenames that M7.1+M5 (Phase 2a) ships and that M7.6 installs.
-# Kept in sync with ``src/amanuensis/skills/``; if the source-of-truth set
+# The bundled skill filenames that ship with the package and that
+# install-skills copies into each detected harness's skill dir. Kept in
+# sync with ``src/amanuensis/skills/``; if the source-of-truth set
 # changes, this list is the canonical place to update tests.
+#
+# Phase 2b M5 adds ``map_connect.md`` (Connector role).
 _BUNDLED_SKILLS = {
     "distill.md",
     "distill_audit.md",
@@ -30,6 +33,7 @@ _BUNDLED_SKILLS = {
     "distill_extract.md",
     "distill_premortem.md",
     "map_audit.md",
+    "map_connect.md",
     "map_resolve.md",
 }
 
@@ -274,6 +278,66 @@ def test_install_skills_dry_run_writes_nothing(
     # Output must signal the dry-run mode.
     assert "dry-run" in result.stdout
     assert "would install" in result.stdout
+
+
+def test_map_connect_skill_installs_to_harness_skill_dir(
+    cli_workspace: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The Phase 2b Connector skill (``map_connect.md``) lands in the harness skill dir.
+
+    Phase 2b M5/T5.1 ships a new role skill bundled at
+    ``src/amanuensis/skills/map_connect.md``. The install routine auto-
+    discovers every ``*.md`` under that package, but this test pins the
+    expectation explicitly so a future refactor that drops the file
+    from the install set fails loudly.
+    """
+    _patch_which(monkeypatch, present={"claude"})
+    tmp_home = tmp_path / "harness-home"
+    result = runner.invoke(
+        app,
+        [
+            "install-skills",
+            "--harness",
+            "claude",
+            "--workspace",
+            str(cli_workspace),
+            "--harness-target",
+            str(tmp_home),
+        ],
+    )
+    assert result.exit_code == 0, result.stdout
+
+    install_dir = _install_dir_for(tmp_home, ".claude/skills")
+    connect_skill = install_dir / "map_connect.md"
+    assert connect_skill.is_file(), (
+        f"expected Connector skill at {connect_skill}; stdout:\n{result.stdout}"
+    )
+
+    # Byte-identical to the bundled source.
+    skills_root = resources.files("amanuensis.skills")
+    expected = (skills_root / "map_connect.md").read_bytes()
+    assert connect_skill.read_bytes() == expected
+
+
+def test_map_connect_skill_frontmatter_declares_connect_role() -> None:
+    """The bundled ``map_connect.md`` skill declares ``role: connect``.
+
+    The frontmatter is the agent-facing surface; the role string must
+    line up with the schema's ``Literal[..., "connect"]`` and with the
+    dispatch driver's role-binding table.
+    """
+    skill_text = (Path(__file__).parents[2] / "src/amanuensis/skills/map_connect.md").read_text(
+        encoding="utf-8"
+    )
+    assert skill_text.startswith("---"), "expected YAML frontmatter fence"
+    assert "name: map_connect" in skill_text
+    assert "role: connect" in skill_text
+    assert "stub: false" in skill_text
+    # The skill describes its CrossDocRelation output contract.
+    assert "CrossDocRelation" in skill_text
+    assert "shared_entities" in skill_text
 
 
 def test_install_skills_help_hides_harness_target(
