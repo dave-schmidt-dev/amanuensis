@@ -23,6 +23,21 @@
     </p>
   </header>
 
+  {# Cross-doc overlay toggle. The toggle is wired by
+     ``cross_doc_overlay.js`` (Phase 2b M8 T8.6): checked ⇒ fetch the
+     atom-entity-index fragment with ``?include_cross_doc=1`` and
+     overlay every edge as a dashed orange Cytoscape edge; unchecked ⇒
+     remove all overlay edges and any synthesized peer placeholder
+     nodes. #}
+  <label class="inline-flex items-center gap-2 text-sm text-neutral-300">
+    <input
+      type="checkbox"
+      id="cross-doc-toggle"
+      class="h-4 w-4 rounded border-neutral-700 bg-neutral-950 text-neutral-100 focus:ring-neutral-500"
+    />
+    <span>Show cross-doc edges</span>
+  </label>
+
   <div class="rounded border border-neutral-800 bg-neutral-900 p-2">
     {# Cytoscape mounts into this div. The div itself MUST NOT be a
        swap target for HTMX — swapping it would destroy the canvas and
@@ -63,6 +78,7 @@
 <script src="/static/vendor/cytoscape.min.js"></script>
 <script defer src="/static/vendor/alpine.min.js"></script>
 <script src="/static/js/entity-hover.js" defer></script>
+<script src="/static/js/cross_doc_overlay.js" defer></script>
 
 <script>
   // Alpine component factory. Defined on `window` so the

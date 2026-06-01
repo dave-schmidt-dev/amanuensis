@@ -66,3 +66,48 @@ def test_relation_graph_page_loads_relations_css(
     res = _build_client().get(f"/distillations/{SOURCE_ID}/relations")
     assert res.status_code == 200
     assert "relations.css" in res.text
+
+
+# ---------------------------------------------------------------------------
+# Phase 2b M8 T8.6 — cross_doc_overlay.js static + integration smoke
+# ---------------------------------------------------------------------------
+
+
+def test_cross_doc_overlay_js_served(
+    planted_atom_workspace: tuple[Path, object, object],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """cross_doc_overlay.js is served and contains the toggle-id reference."""
+    workspace, _atom, _prov = planted_atom_workspace
+    monkeypatch.setenv("AMANUENSIS_WORKSPACE", str(workspace))
+    res = _build_client().get("/static/js/cross_doc_overlay.js")
+    assert res.status_code == 200
+    assert "cross-doc-toggle" in res.text
+
+
+def test_relation_graph_page_loads_cross_doc_overlay_js(
+    planted_atom_workspace: tuple[Path, object, object],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The relation-graph HTML page includes a script tag for cross_doc_overlay.js."""
+    workspace, _atom, _prov = planted_atom_workspace
+    monkeypatch.setenv("AMANUENSIS_WORKSPACE", str(workspace))
+    from .conftest import SOURCE_ID
+
+    res = _build_client().get(f"/distillations/{SOURCE_ID}/relations")
+    assert res.status_code == 200
+    assert "cross_doc_overlay.js" in res.text
+
+
+def test_relation_graph_page_includes_toggle_input(
+    planted_atom_workspace: tuple[Path, object, object],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The relation-graph HTML page exposes a #cross-doc-toggle checkbox."""
+    workspace, _atom, _prov = planted_atom_workspace
+    monkeypatch.setenv("AMANUENSIS_WORKSPACE", str(workspace))
+    from .conftest import SOURCE_ID
+
+    res = _build_client().get(f"/distillations/{SOURCE_ID}/relations")
+    assert res.status_code == 200
+    assert 'id="cross-doc-toggle"' in res.text
