@@ -307,3 +307,38 @@ def test_list_supersedes_kind_probandum_filter(
     assert len(listed) == 1
     assert isinstance(listed[0], ProbandumSupersede)
     assert listed[0].id == sup.id
+
+
+# --- T2.6: round-trip + canonical-form byte stability ----------------
+
+
+def test_probandum_round_trip_byte_identical(
+    tmp_workspace: Path, role_attribution: RoleAttribution
+) -> None:
+    """Canonical-form serialization is deterministic across writes.
+
+    Re-adding an identical Probandum (with multiple alternatives) must
+    NOT mutate the on-disk bytes — this codifies the canonical-yaml
+    stability invariant the idempotency guard depends on.
+    """
+    sub = _new(tmp_workspace)
+    p = _probandum_basic_payload(
+        role_attribution,
+        kind="interim",
+        statement="An interim proposition with multiple competing alternatives.",
+        alternatives_considered=[
+            "Alternative one: payment was waived.",
+            "Alternative two: payment was deferred.",
+            "Alternative three: the contract was rescinded.",
+        ],
+    )
+    sub.add_probandum(p)
+    path = tmp_workspace / "mappings" / "probanda" / f"{p.id}.md"
+    first_bytes = path.read_bytes()
+    # Idempotent re-add: should be a no-op (no rewrite).
+    sub.add_probandum(p)
+    second_bytes = path.read_bytes()
+    assert first_bytes == second_bytes
+    # Round-trip read returns the same model.
+    got = sub.get_probandum(p.id)
+    assert got == p

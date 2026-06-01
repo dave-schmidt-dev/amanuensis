@@ -485,3 +485,47 @@ def test_list_supersedes_kind_probandum_edge_filter(
     assert len(listed) == 1
     assert isinstance(listed[0], ProbandumEdgeSupersede)
     assert listed[0].id == sup.id
+
+
+# --- T2.6: round-trip byte stability for cross-doc-relation child ----
+
+
+def test_probandum_edge_with_cross_doc_relation_child_round_trip(
+    tmp_workspace_with_probanda: tuple[Path, Probandum, Probandum],
+    role_attribution: RoleAttribution,
+) -> None:
+    """Edge with child_kind=cross-doc-relation round-trips byte-identically.
+
+    Plants a placeholder ``x-*.yaml`` in ``mappings/relations/`` (the
+    child existence gate only checks for file presence; the gate does
+    NOT re-parse the cross-doc relation here), then writes an edge
+    twice and asserts the bytes on disk are unchanged after the second
+    write.
+    """
+    from amanuensis.fs._atomic import atomic_write_text
+
+    workspace, ult, _pen = tmp_workspace_with_probanda
+    # Plant a placeholder x-*.yaml file so the cross-doc-relation child
+    # existence check passes (the gate only verifies file presence).
+    cdr_id = "x-planted-cdr0001"
+    cdr_path = workspace / "mappings" / "relations" / f"{cdr_id}.yaml"
+    atomic_write_text(cdr_path, "id: x-planted-cdr0001\nkind: supports\n")
+
+    sub = _new(workspace)
+    edge = _edge(
+        parent_probandum_id=ult.id,
+        child_id=cdr_id,
+        child_kind="cross-doc-relation",
+        role_attribution=role_attribution,
+        warrant="The cross-doc relation supports the ultimate probandum.",
+    )
+    sub.add_probandum_edge(edge)
+    edge_path = workspace / "mappings" / "probandum-edges" / f"{edge.id}.yaml"
+    first_bytes = edge_path.read_bytes()
+    # Idempotent re-add: should be a no-op (no rewrite).
+    sub.add_probandum_edge(edge)
+    second_bytes = edge_path.read_bytes()
+    assert first_bytes == second_bytes
+    # Round-trip read returns the same model.
+    got = sub.get_probandum_edge(edge.id)
+    assert got == edge
