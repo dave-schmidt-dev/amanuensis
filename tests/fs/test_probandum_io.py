@@ -22,7 +22,7 @@ from amanuensis.fs import (
     MutationOfImmutableRecord,
     Substrate,
 )
-from amanuensis.schemas import RoleAttribution
+from amanuensis.schemas import ProbandumSupersede, RoleAttribution
 from tests.fs.conftest import _probandum_basic_payload
 
 
@@ -183,3 +183,127 @@ def test_list_probanda_respects_limit(
 def test_list_probanda_empty_when_no_dir(tmp_workspace: Path) -> None:
     sub = _new(tmp_workspace)
     assert list(sub.list_probanda()) == []
+
+
+# --- T2.5: supersede methods + chain-walking -------------------------
+
+
+def _probandum_supersede(
+    role_attribution: RoleAttribution,
+    old: object,
+    new: object,
+    **overrides: object,
+) -> ProbandumSupersede:
+    from datetime import UTC, datetime
+
+    from amanuensis.schemas import compute_id as _compute_id
+
+    payload: dict[str, object] = {
+        "id": "u-" + "0" * 16,
+        "supersedes_id": old.id,  # type: ignore[attr-defined]
+        "superseded_by_id": new.id,  # type: ignore[attr-defined]
+        "kind": "probandum",
+        "reason": "Supervisor refined the statement.",
+        "provenance_id": "p-fixture-psup-001",
+        "role_attributions": [role_attribution],
+        "at": datetime(2026, 6, 1, 9, 0, 0, tzinfo=UTC),
+        "schema_version": 1,
+    }
+    payload.update(overrides)
+    draft = ProbandumSupersede(**payload)  # type: ignore[arg-type]
+    payload["id"] = _compute_id(draft)
+    return ProbandumSupersede(**payload)  # type: ignore[arg-type]
+
+
+def test_add_probandum_supersede_writes_to_supersedes_dir(
+    tmp_workspace: Path, role_attribution: RoleAttribution
+) -> None:
+    sub = _new(tmp_workspace)
+    p_old = _probandum_basic_payload(role_attribution, statement="Initial proposition.")
+    p_new = _probandum_basic_payload(role_attribution, statement="Refined proposition.")
+    sub.add_probandum(p_old)
+    sub.add_probandum(p_new)
+    sup = _probandum_supersede(role_attribution, p_old, p_new)
+    sub.add_probandum_supersede(sup)
+
+    path = tmp_workspace / "mappings" / "supersedes" / f"{sup.id}.yaml"
+    assert path.is_file()
+    assert sup.id.startswith("u-")
+
+
+def test_add_probandum_supersede_is_idempotent(
+    tmp_workspace: Path, role_attribution: RoleAttribution
+) -> None:
+    sub = _new(tmp_workspace)
+    p_old = _probandum_basic_payload(role_attribution, statement="Initial.")
+    p_new = _probandum_basic_payload(role_attribution, statement="Refined.")
+    sub.add_probandum(p_old)
+    sub.add_probandum(p_new)
+    sup = _probandum_supersede(role_attribution, p_old, p_new)
+    sub.add_probandum_supersede(sup)
+    sub.add_probandum_supersede(sup)  # must not raise
+    sup_dir = tmp_workspace / "mappings" / "supersedes"
+    files = [f for f in sup_dir.iterdir() if f.is_file() and f.name.startswith("u-")]
+    assert len(files) == 1
+
+
+def test_latest_probandum_for_returns_terminus(
+    tmp_workspace: Path, role_attribution: RoleAttribution
+) -> None:
+    sub = _new(tmp_workspace)
+    p_old = _probandum_basic_payload(role_attribution, statement="Initial.")
+    p_new = _probandum_basic_payload(role_attribution, statement="Refined.")
+    sub.add_probandum(p_old)
+    sub.add_probandum(p_new)
+    sup = _probandum_supersede(role_attribution, p_old, p_new)
+    sub.add_probandum_supersede(sup)
+
+    # Walking from the superseded id returns the replacement.
+    got = sub.latest_probandum_for(p_old.id)
+    assert got is not None
+    assert got.id == p_new.id
+
+    # Walking from the replacement (no further supersede) returns itself.
+    got2 = sub.latest_probandum_for(p_new.id)
+    assert got2 is not None
+    assert got2.id == p_new.id
+
+
+def test_latest_probandum_for_returns_none_for_unknown_id(tmp_workspace: Path) -> None:
+    sub = _new(tmp_workspace)
+    assert sub.latest_probandum_for("p-nonexistent00000") is None
+
+
+def test_list_supersedes_unfiltered_yields_probandum_kind(
+    tmp_workspace: Path, role_attribution: RoleAttribution
+) -> None:
+    """``list_supersedes`` without filter must yield ``u-`` records."""
+    sub = _new(tmp_workspace)
+    p_old = _probandum_basic_payload(role_attribution, statement="A.")
+    p_new = _probandum_basic_payload(role_attribution, statement="B.")
+    sub.add_probandum(p_old)
+    sub.add_probandum(p_new)
+    sup = _probandum_supersede(role_attribution, p_old, p_new)
+    sub.add_probandum_supersede(sup)
+
+    listed = list(sub.list_supersedes())
+    assert len(listed) == 1
+    assert listed[0].id == sup.id
+
+
+def test_list_supersedes_kind_probandum_filter(
+    tmp_workspace: Path, role_attribution: RoleAttribution
+) -> None:
+    """``kind='probandum'`` returns only ProbandumSupersede records."""
+    sub = _new(tmp_workspace)
+    p_old = _probandum_basic_payload(role_attribution, statement="A.")
+    p_new = _probandum_basic_payload(role_attribution, statement="B.")
+    sub.add_probandum(p_old)
+    sub.add_probandum(p_new)
+    sup = _probandum_supersede(role_attribution, p_old, p_new)
+    sub.add_probandum_supersede(sup)
+
+    listed = list(sub.list_supersedes(kind="probandum"))
+    assert len(listed) == 1
+    assert isinstance(listed[0], ProbandumSupersede)
+    assert listed[0].id == sup.id

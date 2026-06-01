@@ -31,6 +31,7 @@ from amanuensis.fs._atomic import atomic_write_text
 from amanuensis.schemas import (
     Probandum,
     ProbandumEdge,
+    ProbandumEdgeSupersede,
     RoleAttribution,
     compute_id,
 )
@@ -331,3 +332,156 @@ def test_list_probandum_edges_lists_all(
 def test_list_probandum_edges_empty_when_no_dir(tmp_workspace: Path) -> None:
     sub = _new(tmp_workspace)
     assert list(sub.list_probandum_edges()) == []
+
+
+# --- T2.5: edge supersede + chain walking ----------------------------
+
+
+def _edge_supersede(
+    role_attribution: RoleAttribution,
+    old_edge: ProbandumEdge,
+    new_edge: ProbandumEdge,
+    **overrides: object,
+) -> ProbandumEdgeSupersede:
+    from datetime import UTC, datetime
+
+    payload: dict[str, object] = {
+        "id": "o-" + "0" * 16,
+        "supersedes_id": old_edge.id,
+        "superseded_by_id": new_edge.id,
+        "kind": "probandum-edge",
+        "reason": "Supervisor tightened warrant basis.",
+        "provenance_id": "p-fixture-esup-001",
+        "role_attributions": [role_attribution],
+        "at": datetime(2026, 6, 1, 9, 30, 0, tzinfo=UTC),
+        "schema_version": 1,
+    }
+    payload.update(overrides)
+    draft = ProbandumEdgeSupersede(**payload)  # type: ignore[arg-type]
+    payload["id"] = compute_id(draft)
+    return ProbandumEdgeSupersede(**payload)  # type: ignore[arg-type]
+
+
+def test_add_probandum_edge_supersede_writes_to_supersedes_dir(
+    tmp_workspace_with_probanda: tuple[Path, Probandum, Probandum],
+    role_attribution: RoleAttribution,
+) -> None:
+    workspace, ult, pen = tmp_workspace_with_probanda
+    sub = _new(workspace)
+    e_old = _edge(
+        parent_probandum_id=ult.id,
+        child_id=pen.id,
+        child_kind="probandum",
+        role_attribution=role_attribution,
+        warrant="Old warrant.",
+    )
+    e_new = _edge(
+        parent_probandum_id=ult.id,
+        child_id=pen.id,
+        child_kind="probandum",
+        role_attribution=role_attribution,
+        warrant="New, tighter warrant.",
+    )
+    sub.add_probandum_edge(e_old)
+    sub.add_probandum_edge(e_new)
+    sup = _edge_supersede(role_attribution, e_old, e_new)
+    sub.add_probandum_edge_supersede(sup)
+
+    path = workspace / "mappings" / "supersedes" / f"{sup.id}.yaml"
+    assert path.is_file()
+    assert sup.id.startswith("o-")
+
+
+def test_add_probandum_edge_supersede_is_idempotent(
+    tmp_workspace_with_probanda: tuple[Path, Probandum, Probandum],
+    role_attribution: RoleAttribution,
+) -> None:
+    workspace, ult, pen = tmp_workspace_with_probanda
+    sub = _new(workspace)
+    e_old = _edge(
+        parent_probandum_id=ult.id,
+        child_id=pen.id,
+        child_kind="probandum",
+        role_attribution=role_attribution,
+        warrant="Old.",
+    )
+    e_new = _edge(
+        parent_probandum_id=ult.id,
+        child_id=pen.id,
+        child_kind="probandum",
+        role_attribution=role_attribution,
+        warrant="New.",
+    )
+    sub.add_probandum_edge(e_old)
+    sub.add_probandum_edge(e_new)
+    sup = _edge_supersede(role_attribution, e_old, e_new)
+    sub.add_probandum_edge_supersede(sup)
+    sub.add_probandum_edge_supersede(sup)  # idempotent
+    sup_dir = workspace / "mappings" / "supersedes"
+    files = [f for f in sup_dir.iterdir() if f.is_file() and f.name.startswith("o-")]
+    assert len(files) == 1
+
+
+def test_latest_probandum_edge_for_returns_terminus(
+    tmp_workspace_with_probanda: tuple[Path, Probandum, Probandum],
+    role_attribution: RoleAttribution,
+) -> None:
+    workspace, ult, pen = tmp_workspace_with_probanda
+    sub = _new(workspace)
+    e_old = _edge(
+        parent_probandum_id=ult.id,
+        child_id=pen.id,
+        child_kind="probandum",
+        role_attribution=role_attribution,
+        warrant="Old.",
+    )
+    e_new = _edge(
+        parent_probandum_id=ult.id,
+        child_id=pen.id,
+        child_kind="probandum",
+        role_attribution=role_attribution,
+        warrant="New.",
+    )
+    sub.add_probandum_edge(e_old)
+    sub.add_probandum_edge(e_new)
+    sup = _edge_supersede(role_attribution, e_old, e_new)
+    sub.add_probandum_edge_supersede(sup)
+
+    got = sub.latest_probandum_edge_for(e_old.id)
+    assert got is not None
+    assert got.id == e_new.id
+
+    got2 = sub.latest_probandum_edge_for(e_new.id)
+    assert got2 is not None
+    assert got2.id == e_new.id
+
+
+def test_list_supersedes_kind_probandum_edge_filter(
+    tmp_workspace_with_probanda: tuple[Path, Probandum, Probandum],
+    role_attribution: RoleAttribution,
+) -> None:
+    workspace, ult, pen = tmp_workspace_with_probanda
+    sub = _new(workspace)
+    e_old = _edge(
+        parent_probandum_id=ult.id,
+        child_id=pen.id,
+        child_kind="probandum",
+        role_attribution=role_attribution,
+        warrant="Old.",
+    )
+    e_new = _edge(
+        parent_probandum_id=ult.id,
+        child_id=pen.id,
+        child_kind="probandum",
+        role_attribution=role_attribution,
+        warrant="New.",
+    )
+    sub.add_probandum_edge(e_old)
+    sub.add_probandum_edge(e_new)
+    sup = _edge_supersede(role_attribution, e_old, e_new)
+    sub.add_probandum_edge_supersede(sup)
+
+    listed = list(sub.list_supersedes(kind="probandum-edge"))
+    assert len(listed) == 1
+    assert isinstance(listed[0], ProbandumEdgeSupersede)
+    assert listed[0].id == sup.id

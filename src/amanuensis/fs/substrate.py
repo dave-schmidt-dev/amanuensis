@@ -67,6 +67,8 @@ from amanuensis.schemas import (
     IterationDirective,
     Probandum,
     ProbandumEdge,
+    ProbandumEdgeSupersede,
+    ProbandumSupersede,
     ProvenanceRecord,
     Relation,
     Resolution,
@@ -101,8 +103,10 @@ from ._serialize import (
     parse_cross_doc_relation_yaml,
     parse_entity_md,
     parse_entity_supersede_yaml,
+    parse_probandum_edge_supersede_yaml,
     parse_probandum_edge_yaml,
     parse_probandum_md,
+    parse_probandum_supersede_yaml,
     parse_provenance_yaml,
     parse_resolution_supersede_yaml,
     parse_resolution_yaml,
@@ -113,8 +117,10 @@ from ._serialize import (
     serialize_entity_md,
     serialize_entity_supersede_yaml,
     serialize_iteration_md,
+    serialize_probandum_edge_supersede_yaml,
     serialize_probandum_edge_yaml,
     serialize_probandum_md,
+    serialize_probandum_supersede_yaml,
     serialize_resolution_supersede_yaml,
     serialize_resolution_yaml,
     serialize_yaml,
@@ -299,7 +305,9 @@ class Substrate:
         | CrossDocRelation
         | CrossDocRelationSupersede
         | Probandum
-        | ProbandumEdge,
+        | ProbandumEdge
+        | ProbandumSupersede
+        | ProbandumEdgeSupersede,
     ) -> None:
         """Refuse to write a model whose declared id != its hash."""
         expected = compute_id(model)
@@ -801,20 +809,39 @@ class Substrate:
     def list_supersedes(
         self,
         *,
-        kind: Literal["resolution", "entity", "cross-doc-relation"] | None = None,
-    ) -> Iterable[ResolutionSupersede | EntitySupersede | CrossDocRelationSupersede]:
+        kind: Literal[
+            "resolution",
+            "entity",
+            "cross-doc-relation",
+            "probandum",
+            "probandum-edge",
+        ]
+        | None = None,
+    ) -> Iterable[
+        ResolutionSupersede
+        | EntitySupersede
+        | CrossDocRelationSupersede
+        | ProbandumSupersede
+        | ProbandumEdgeSupersede
+    ]:
         """Yield supersede records from the mixed ``supersedes/`` directory.
 
         Distinguishes record type by id prefix:
         - ``s-`` prefix → ``ResolutionSupersede``
         - ``t-`` prefix → ``EntitySupersede``
         - ``v-`` prefix → ``CrossDocRelationSupersede`` (Phase 2b)
+        - ``u-`` prefix → ``ProbandumSupersede`` (Phase 2c)
+        - ``o-`` prefix → ``ProbandumEdgeSupersede`` (Phase 2c)
 
         Args:
             kind: If ``"resolution"``, yield only ResolutionSupersede.
                 If ``"entity"``, yield only EntitySupersede.
                 If ``"cross-doc-relation"``, yield only
                 CrossDocRelationSupersede (Phase 2b cleanup-1).
+                If ``"probandum"``, yield only ProbandumSupersede
+                (Phase 2c M2.5).
+                If ``"probandum-edge"``, yield only
+                ProbandumEdgeSupersede (Phase 2c M2.5).
                 If ``None``, yield all.
         """
         supersedes_dir = self.mappings_root / "supersedes"
@@ -840,6 +867,14 @@ class Substrate:
                 if kind is not None and kind != "cross-doc-relation":
                     continue
                 yield parse_cross_doc_relation_supersede_yaml(path.read_text(encoding="utf-8"))
+            elif stem.startswith("u-"):
+                if kind is not None and kind != "probandum":
+                    continue
+                yield parse_probandum_supersede_yaml(path.read_text(encoding="utf-8"))
+            elif stem.startswith("o-"):
+                if kind is not None and kind != "probandum-edge":
+                    continue
+                yield parse_probandum_edge_supersede_yaml(path.read_text(encoding="utf-8"))
             # Unknown prefix: skip silently (forward-compat)
 
     # --- T3.6: supersede-chain walkers with cycle guard ------------------
@@ -1564,11 +1599,11 @@ class Substrate:
         Gates enforced (in order):
 
         1. **Parent existence gate** — ``edge.parent_probandum_id`` must
-           exist in ``mappings/probanda/`` (direct file check here; M2.5
-           will refactor to chain-walk via ``latest_probandum_for``).
-           Raises ``ParentProbandumMissing``.
+           exist in ``mappings/probanda/``, chain-walked via
+           ``latest_probandum_for`` (M2.5). Raises
+           ``ParentProbandumMissing``.
         2. **Child existence gate** — depending on ``edge.child_kind``:
-           - ``"probandum"`` → must exist in ``mappings/probanda/``.
+           - ``"probandum"`` → chain-walked via ``latest_probandum_for``.
            - ``"atom"`` → must exist at
              ``distillations/<child_source_id>/atoms/<child_id>.md``.
            - ``"cross-doc-relation"`` → must exist in
@@ -1581,21 +1616,19 @@ class Substrate:
         INV-16 (no-cycle) and INV-17 (lineage-reaches-ultimate) are
         deferred to Phase 2c M4 — this method does NOT enforce them.
         """
-        # Gate 1: parent existence (direct file check; M2.5 will
-        # upgrade this to a chain-walk via ``latest_probandum_for``).
-        parent_path = self.probandum_path(edge.parent_probandum_id)
-        if not parent_path.is_file():
+        # Gate 1: parent existence (chain-walked via latest_probandum_for,
+        # M2.5). Returns None if the chain terminus has no on-disk record.
+        if self.latest_probandum_for(edge.parent_probandum_id) is None:
             raise ParentProbandumMissing(
                 f"ProbandumEdge {edge.id}: parent_probandum_id "
-                f"{edge.parent_probandum_id!r} not found at {parent_path}"
+                f"{edge.parent_probandum_id!r} not found in mappings/probanda/"
             )
         # Gate 2: child existence (kind-dispatched)
         if edge.child_kind == "probandum":
-            child_path = self.probandum_path(edge.child_id)
-            if not child_path.is_file():
+            if self.latest_probandum_for(edge.child_id) is None:
                 raise EdgeChildMissing(
                     f"ProbandumEdge {edge.id}: child_kind=probandum "
-                    f"child_id={edge.child_id!r} not found at {child_path}"
+                    f"child_id={edge.child_id!r} not found in mappings/probanda/"
                 )
         elif edge.child_kind == "atom":
             # Schema validator already requires child_source_id when
@@ -1685,3 +1718,159 @@ class Substrate:
             if kind is not None and edge.kind != kind:
                 continue
             yield edge
+
+    # --- Phase 2c: probandum supersedes + chain walking (M2.5) -----------
+
+    def add_probandum_supersede(self, sup: ProbandumSupersede) -> Path:
+        """Write a ProbandumSupersede record atomically.
+
+        Lands under ``mappings/supersedes/<sup.id>.yaml`` — the same
+        shared directory used by Phase 2a/2b supersedes. Records are
+        distinguished by id-prefix (``u-`` here) and the ``kind``
+        discriminator (``"probandum"``).
+
+        Gates: id discipline + INV-13 immutability (byte-identical →
+        no-op; divergent → ``MutationOfImmutableRecord``).
+        """
+        self._require_id_matches(sup)
+        path = self.supersede_path(sup.id)
+        serialized = serialize_probandum_supersede_yaml(sup)
+        if path.is_file():
+            existing_bytes = path.read_bytes()
+            if existing_bytes == serialized.encode("utf-8"):
+                return path  # idempotent
+            raise MutationOfImmutableRecord(
+                f"ProbandumSupersede at {path} already exists with "
+                f"different content; refusing to overwrite (INV-13)"
+            )
+        atomic_write_text(path, serialized)
+        return path
+
+    def get_probandum_supersede(self, supersede_id: str) -> ProbandumSupersede:
+        """Read and return a ProbandumSupersede by its id."""
+        path = self.supersede_path(supersede_id)
+        if not path.is_file():
+            raise SubstrateNotFound(f"probandum supersede not found at {path}")
+        return parse_probandum_supersede_yaml(path.read_text(encoding="utf-8"))
+
+    def add_probandum_edge_supersede(self, sup: ProbandumEdgeSupersede) -> Path:
+        """Write a ProbandumEdgeSupersede record atomically.
+
+        Lands under ``mappings/supersedes/<sup.id>.yaml`` (id prefix
+        ``o-``, ``kind`` discriminator ``"probandum-edge"``). Gates: id
+        discipline + INV-13 immutability.
+        """
+        self._require_id_matches(sup)
+        path = self.supersede_path(sup.id)
+        serialized = serialize_probandum_edge_supersede_yaml(sup)
+        if path.is_file():
+            existing_bytes = path.read_bytes()
+            if existing_bytes == serialized.encode("utf-8"):
+                return path  # idempotent
+            raise MutationOfImmutableRecord(
+                f"ProbandumEdgeSupersede at {path} already exists with "
+                f"different content; refusing to overwrite (INV-13)"
+            )
+        atomic_write_text(path, serialized)
+        return path
+
+    def get_probandum_edge_supersede(self, supersede_id: str) -> ProbandumEdgeSupersede:
+        """Read and return a ProbandumEdgeSupersede by its id."""
+        path = self.supersede_path(supersede_id)
+        if not path.is_file():
+            raise SubstrateNotFound(f"probandum edge supersede not found at {path}")
+        return parse_probandum_edge_supersede_yaml(path.read_text(encoding="utf-8"))
+
+    def latest_probandum_for(
+        self,
+        probandum_id: str,
+        max_depth: int = 256,
+    ) -> Probandum | None:
+        """Walk the ProbandumSupersede chain and return the terminal probandum.
+
+        Starting from ``probandum_id``, follows ProbandumSupersede records
+        (``supersedes_id`` → ``superseded_by_id``) until no further
+        supersede exists. Returns the terminal ``Probandum`` if it can be
+        loaded, else ``None``.
+
+        Args:
+            probandum_id: Starting probandum id (``p-`` prefix).
+            max_depth: Maximum chain depth before raising
+                ``SupersedeChainTooDeep``.
+
+        Returns:
+            The terminal ``Probandum``, or ``None`` if no probandum
+            exists at the chain terminus.
+
+        Raises:
+            SupersedeCycleDetected: if the chain contains a cycle.
+            SupersedeChainTooDeep: if the chain exceeds ``max_depth``.
+        """
+        # Build supersede map filtered to ``u-`` records (probandum kind).
+        # Mirrors the Phase 2b cleanup-1 pattern for
+        # ``latest_cross_doc_relation_for``.
+        supersede_map: dict[str, str] = {}
+        for record in self.list_supersedes(kind="probandum"):
+            if not isinstance(record, ProbandumSupersede):
+                continue  # type-narrowing for Pyright
+            supersede_map[record.supersedes_id] = record.superseded_by_id
+
+        visited: set[str] = set()
+        current_id = probandum_id
+        depth = 0
+        while True:
+            if current_id in visited:
+                raise SupersedeCycleDetected(
+                    f"Supersede cycle detected at probandum {current_id!r}"
+                )
+            visited.add(current_id)
+            if depth > max_depth:
+                raise SupersedeChainTooDeep(
+                    f"Supersede chain exceeded max_depth={max_depth} "
+                    f"(started from {probandum_id!r})"
+                )
+            next_id = supersede_map.get(current_id)
+            if next_id is None:
+                path = self.probandum_path(current_id)
+                if not path.is_file():
+                    return None
+                return parse_probandum_md(path.read_text(encoding="utf-8"))
+            current_id = next_id
+            depth += 1
+
+    def latest_probandum_edge_for(
+        self,
+        edge_id: str,
+        max_depth: int = 256,
+    ) -> ProbandumEdge | None:
+        """Walk the ProbandumEdgeSupersede chain and return the terminal edge.
+
+        Mirror of ``latest_probandum_for`` for edge-level supersedes.
+        """
+        supersede_map: dict[str, str] = {}
+        for record in self.list_supersedes(kind="probandum-edge"):
+            if not isinstance(record, ProbandumEdgeSupersede):
+                continue
+            supersede_map[record.supersedes_id] = record.superseded_by_id
+
+        visited: set[str] = set()
+        current_id = edge_id
+        depth = 0
+        while True:
+            if current_id in visited:
+                raise SupersedeCycleDetected(
+                    f"Supersede cycle detected at probandum-edge {current_id!r}"
+                )
+            visited.add(current_id)
+            if depth > max_depth:
+                raise SupersedeChainTooDeep(
+                    f"Supersede chain exceeded max_depth={max_depth} (started from {edge_id!r})"
+                )
+            next_id = supersede_map.get(current_id)
+            if next_id is None:
+                path = self.probandum_edge_path(current_id)
+                if not path.is_file():
+                    return None
+                return parse_probandum_edge_yaml(path.read_text(encoding="utf-8"))
+            current_id = next_id
+            depth += 1

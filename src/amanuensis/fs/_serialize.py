@@ -39,6 +39,8 @@ from amanuensis.schemas import (
     ParagraphEntry,
     Probandum,
     ProbandumEdge,
+    ProbandumEdgeSupersede,
+    ProbandumSupersede,
     ProvenanceRecord,
     Relation,
     Resolution,
@@ -341,3 +343,23 @@ def serialize_probandum_edge_yaml(edge: ProbandumEdge) -> str:
 def parse_probandum_edge_yaml(text: str) -> ProbandumEdge:
     """Parse a plain-YAML probandum-edge file into a ProbandumEdge."""
     return ProbandumEdge(**_safe_load(text))
+
+
+def serialize_probandum_supersede_yaml(sup: ProbandumSupersede) -> str:
+    """Serialize a ProbandumSupersede to plain YAML."""
+    return _safe_dump(sup.model_dump(mode="python"))
+
+
+def parse_probandum_supersede_yaml(text: str) -> ProbandumSupersede:
+    """Parse a plain-YAML probandum-supersede file."""
+    return ProbandumSupersede(**_safe_load(text))
+
+
+def serialize_probandum_edge_supersede_yaml(sup: ProbandumEdgeSupersede) -> str:
+    """Serialize a ProbandumEdgeSupersede to plain YAML."""
+    return _safe_dump(sup.model_dump(mode="python"))
+
+
+def parse_probandum_edge_supersede_yaml(text: str) -> ProbandumEdgeSupersede:
+    """Parse a plain-YAML probandum-edge-supersede file."""
+    return ProbandumEdgeSupersede(**_safe_load(text))
