@@ -31,6 +31,13 @@ Phase 2a (Resolve) adds four more **content-addressable** types:
 | `EntitySupersede` | `schemas/entity_supersede.py` | `t-` | `{provenance_id}` |
 | `ResolutionSupersede` | `schemas/resolution_supersede.py` | `s-` | `{provenance_id}` |
 
+Phase 2b (Connect) adds two more **content-addressable** types:
+
+| Type | Module | Prefix | Volatile fields |
+| --- | --- | --- | --- |
+| `CrossDocRelation` | `schemas/cross_doc_relation.py` | `x-` | `{provenance_id}` |
+| `CrossDocRelationSupersede` | `schemas/cross_doc_relation_supersede.py` | `v-` | `{provenance_id, at}` |
+
 The remaining Phase 1 schemas — `ReplayLogEntry`, `Vocabulary`,
 `VocabularyEntry`, `OperandTypeSchema` — are NOT content-addressable.
 See [Non-content-addressable types](#non-content-addressable-types).
@@ -350,6 +357,112 @@ On-disk: `mappings/supersedes/s-<hash>.yaml` — pure YAML.
 
 ---
 
+### `CrossDocRelation` (`schemas/cross_doc_relation.py`)
+
+Directed warrant-bearing edge between two atoms in **different**
+distillations, grounded by at least one shared canonical entity. The
+cross-document analogue of Phase 1's `Relation`. Phase 2b (Connect)
+schema. Content-addressable.
+
+| Field | Type | Required | Notes |
+| --- | --- | --- | --- |
+| `id` | `str` | yes | `x-<16 hex chars>`. Prefix `x` = "cross-doc". |
+| `from_atom_id` | `str` | yes | Source endpoint atom. |
+| `from_source_id` | `str` | yes | MUST differ from `to_source_id`. Cross-doc-only is a M2 substrate-write gate, not a schema validator. |
+| `to_atom_id` | `str` | yes | Sink endpoint atom. |
+| `to_source_id` | `str` | yes | MUST differ from `from_source_id`. |
+| `kind` | `Literal["supports", "attacks", "undercuts"]` | yes | Same closed set as Phase 1 `Relation`. Wigmore-flavored extensions (`corroborates`, `contradicts`, ...) deferred to Phase 2c. |
+| `warrant` | `str` | yes | The generalization licensing the edge — one paragraph. |
+| `warrant_defensibility` | `Literal["literature-backed", "methodology-derived", "conventional", "contested"]` | yes | When `"contested"`, the Map-Auditor auto-raises a clarification via the M4 reconciler (`_auto_raise_resolution_clarification`). |
+| `warrant_basis` | `str` | yes | One-line rationale / citation. |
+| `confidence` | `Literal["high", "medium", "low"]` | yes | |
+| `shared_entities` | `list[str]` | yes | One or more canonical-entity ids (`e-`). INV-15: list MUST be non-empty AND every listed entity MUST be resolved by BOTH endpoints. Enforced by `Substrate.add_cross_doc_relation` at write-time and re-checked by the INV-15 invariant gate test at audit-time. The schema layer accepts an empty list; M2 rejects it (raises `SharedEntityGateViolation`). |
+| `provenance_id` | `str` | yes | Volatile under canonical-form hashing; same rationale as `Relation.provenance_id`. |
+| `role_attributions` | `list[RoleAttribution]` | yes | |
+| `schema_version` | `int` | no (default `1`) | |
+
+**Volatile fields:** `{"provenance_id"}`.
+
+**Invariants enforced:**
+
+- **[INV-9](../INVARIANTS.md#inv-9--cross-document-reasoning-is-phase-2s-job-not-phase-1s)**:
+  Substrate writes for cross-doc relations are confined to
+  `mappings/relations/`; any attempt to write `x-<hash>.yaml` under
+  `distillations/<src>/` is rejected by the path resolver.
+- **[INV-13](../INVARIANTS.md#inv-13--substrate-records-are-immutable-once-written)**:
+  Cross-doc relations are immutable once written; corrections flow through
+  `CrossDocRelationSupersede`. The same atomic-write-then-add path that
+  protects Phase 2a entities and resolutions protects cross-doc relations.
+- **[INV-15](../INVARIANTS.md#inv-15--cross-doc-edges-are-grounded-in-shared-resolved-entities)**:
+  `shared_entities` is non-empty AND every listed entity id (a) exists in
+  `mappings/entities/` (chain-walked via `latest_entity_for`) and (b) is
+  resolved by BOTH endpoint atoms. Enforced at write-time
+  (`Substrate.add_cross_doc_relation`) and at audit-time
+  (`tests/invariants/test_cross_doc_shared_entity.py`).
+
+On-disk: `mappings/relations/x-<hash>.yaml` — pure YAML.
+
+Example YAML:
+
+```yaml
+id: x-3a9b12ff4c6d8e10
+from_atom_id: a-aabb112233445566
+from_source_id: case-2024-001
+to_atom_id: a-ccdd778899aabbcc
+to_source_id: case-2024-002
+kind: supports
+warrant: |
+  Both endpoints attest Smith's role as the signing officer of the
+  shared parent corporation, evidence from independent filings.
+warrant_defensibility: methodology-derived
+warrant_basis: "two independent filings + shared canonical entity"
+confidence: medium
+shared_entities:
+  - e-1122334455667788
+provenance_id: p-cd1234...
+schema_version: 1
+```
+
+---
+
+### `CrossDocRelationSupersede` (`schemas/cross_doc_relation_supersede.py`)
+
+Records a supervisor correction at the cross-doc relation level. Carries
+no semantic content beyond the old → new pointer; the corrected
+`CrossDocRelation` is a separate new record. Walking the supersede chain
+yields the current cross-doc relation for the (from, to, shared entity)
+context. Content-addressable.
+
+| Field | Type | Required | Notes |
+| --- | --- | --- | --- |
+| `id` | `str` | yes | `v-<16 hex chars>`. Prefix `v` = "vacated" (entity-and-resolution supersedes already claim `t-` and `s-`). |
+| `supersedes_id` | `str` | yes | The cross-doc relation id (`x-`) being replaced. |
+| `superseded_by_id` | `str` | yes | The new cross-doc relation id (`x-`) that takes its place. |
+| `kind` | `Literal["cross-doc-relation"]` | yes (default `"cross-doc-relation"`) | Discriminator; distinguishes from entity / resolution supersedes. |
+| `reason` | `str` | yes | Non-empty reason. Validator `_reason_non_empty` rejects blank strings. |
+| `provenance_id` | `str` | yes | Volatile under canonical-form hashing. |
+| `role_attributions` | `list[RoleAttribution]` | yes | |
+| `at` | `AwareDatetime` | yes | Volatile under canonical-form hashing (observational metadata, not identity content). |
+| `schema_version` | `int` | no (default `1`) | |
+
+**Volatile fields:** `{"provenance_id", "at"}`. The `at` timestamp is
+observational — different supersede events for the same logical
+correction (replays, re-runs) carry different wall-clock timestamps and
+must therefore not perturb identity.
+
+**Validators:** `_reason_non_empty` (rejects blank `reason`).
+
+**Invariants enforced:**
+
+- **[INV-13](../INVARIANTS.md#inv-13--substrate-records-are-immutable-once-written)**:
+  Cross-doc relation corrections do NOT rewrite the superseded record;
+  they append a supersede record alongside it. The supersede chain is
+  walked at read-time to surface the current relation.
+
+On-disk: `mappings/supersedes/v-<hash>.yaml` — pure YAML.
+
+---
+
 ### `ReplayLogEntry` (`schemas/replay_log.py`)
 
 One append-only entry in a workspace's replay log. **NOT
@@ -459,6 +572,17 @@ section mirrors them. (Plan source: §5.)
     failures/<role>-<seq>.yaml               retry exhaustion
 
   cache/<input-hash>.yaml                    content-addressable LLM-call cache
+
+  mappings/                                  Phase 2a + 2b cross-document layer (INV-12)
+    entity-vocabulary-snapshot.yaml          active entity-kind registry (INV-12)
+    entities/e-<hash>.md                     canonical Entity records (frontmatter + notes)
+    resolutions/j-<hash>.yaml                Resolution records (pure YAML)
+    relations/x-<hash>.yaml                  Phase 2b CrossDocRelation records (pure YAML; INV-15)
+    supersedes/t-<hash>.yaml                 EntitySupersede records
+    supersedes/s-<hash>.yaml                 ResolutionSupersede records
+    supersedes/v-<hash>.yaml                 Phase 2b CrossDocRelationSupersede records
+    provenance/<prov-id>.yaml                PROV-O records for mapping-phase artifacts
+    replay-log/                              mappings-scoped replay log
 ```
 
 ### Path conventions
@@ -601,6 +725,8 @@ Given a Pydantic model instance:
 | `Resolution` | `{"provenance_id"}` | Resolution identity is the triple + entity target + confidence + basis. Same PROV-O direction argument as Atom. |
 | `EntitySupersede` | `{"provenance_id"}` | Supersede identity is the old → new pointer + reason. Same argument as Atom. |
 | `ResolutionSupersede` | `{"provenance_id"}` | Same rationale. |
+| `CrossDocRelation` | `{"provenance_id"}` | Cross-doc relation identity is the (from, to, kind, warrant) tuple plus `shared_entities`. Provenance pointer is observational. |
+| `CrossDocRelationSupersede` | `{"provenance_id", "at"}` | Supersede identity is the old → new pointer + reason. The wall-clock `at` is volatile because replays of the same logical correction carry different timestamps. |
 
 The "lifecycle-completion" volatility on `Clarification` and
 `IterationDirective` is the spec's intent: resolving a clarification
