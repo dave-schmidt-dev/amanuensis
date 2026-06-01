@@ -116,7 +116,15 @@
     {% endif %}
   </section>
 
-  {# Tree-view link section lands in T10.4. #}
+  <section class="rounded border border-neutral-800 bg-neutral-900 p-4">
+    <h2 class="text-lg font-semibold text-neutral-50">tree view</h2>
+    <p class="mt-2 text-sm text-neutral-300">
+      <a
+        href="/probanda/{{ probandum.id }}/tree"
+        class="text-neutral-100 underline decoration-neutral-700 underline-offset-2 hover:decoration-neutral-300"
+      >open Cytoscape subtree view &rarr;</a>
+    </p>
+  </section>
 
   <section class="rounded border border-neutral-800 bg-neutral-900 p-4">
     <h2 class="text-lg font-semibold text-neutral-50">provenance</h2>

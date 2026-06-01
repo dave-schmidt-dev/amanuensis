@@ -1,4 +1,4 @@
-"""Probanda routes — list browser + detail page (Phase 2c M10).
+"""Probanda routes — list browser, detail page, and Cytoscape tree view (Phase 2c M10).
 
 Routes:
 
@@ -12,24 +12,39 @@ Routes:
   edges, provenance, and the supersede chain. Returns 404 on unknown
   id. Headers: ``Cache-Control: no-store``.
 
-Read-only per Phase 2c spec: probandum mutations are CLI-only. T10.4
-will add the Cytoscape tree view routes to this module.
+- ``GET /probanda/<id>/tree`` — Cytoscape-mounted HTML page that
+  visualises the subtree rooted at ``<id>`` using the ``dagre``
+  layout. The page loads its data from the sibling JSON endpoint.
+
+- ``GET /probanda/<id>/tree.json`` — JSON fragment compatible with
+  Cytoscape's ``elements`` shape. Soft-cap fallback: when the
+  expanded subtree exceeds 500 nodes the endpoint returns only the
+  immediate children of ``<id>`` and a ``"truncated": true`` flag so
+  the page can render expand controls.
+
+Read-only per Phase 2c spec: probandum mutations are CLI-only.
 """
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 
 from amanuensis.fs import Substrate, SubstrateNotFound
-from amanuensis.schemas import Probandum, ProbandumSupersede
+from amanuensis.schemas import Probandum, ProbandumEdge, ProbandumSupersede
 
 from ..dependencies import get_substrate
 
 router = APIRouter()
+
+
+# Soft-cap on the tree JSON endpoint. The spec calls for a 500-node
+# fallback that returns only the immediate children when exceeded.
+TREE_SOFT_CAP_NODES = 500
 
 
 @dataclass
@@ -305,3 +320,264 @@ async def probandum_detail(
     )
     response.headers["cache-control"] = "no-store"
     return response  # pyright: ignore[reportReturnType]
+
+
+# ---------------------------------------------------------------------------
+# T10.4 — Cytoscape tree visualization (HTML + JSON)
+# ---------------------------------------------------------------------------
+
+
+def _build_child_node(substrate: Substrate, edge: ProbandumEdge) -> dict[str, object]:
+    """Build a Cytoscape node payload for the child of ``edge``.
+
+    Handles all three child kinds (``probandum`` / ``atom`` /
+    ``cross-doc-relation``). Missing children carry a
+    ``<missing: ...>`` label so the canvas still shows them.
+    """
+    if edge.child_kind == "probandum":
+        try:
+            child = substrate.get_probandum(edge.child_id)
+            return {
+                "data": {
+                    "id": edge.child_id,
+                    "kind": child.kind,
+                    "label": _statement_excerpt(child.statement, max_chars=80),
+                }
+            }
+        except SubstrateNotFound:
+            return {
+                "data": {
+                    "id": edge.child_id,
+                    "kind": "probandum",
+                    "label": f"<missing: {edge.child_id}>",
+                }
+            }
+    if edge.child_kind == "atom":
+        try:
+            assert edge.child_source_id is not None  # schema-enforced
+            atom = substrate.get_atom(edge.child_source_id, edge.child_id)
+            return {
+                "data": {
+                    "id": edge.child_id,
+                    "kind": "atom",
+                    "label": _statement_excerpt(atom.narrative, max_chars=80),
+                    "source_id": edge.child_source_id,
+                }
+            }
+        except SubstrateNotFound:
+            return {
+                "data": {
+                    "id": edge.child_id,
+                    "kind": "atom",
+                    "label": f"<missing: {edge.child_id}>",
+                    "source_id": edge.child_source_id,
+                }
+            }
+    # cross-doc-relation
+    try:
+        rel = substrate.get_cross_doc_relation(edge.child_id)
+        return {
+            "data": {
+                "id": edge.child_id,
+                "kind": "cross-doc-relation",
+                "label": _statement_excerpt(rel.warrant, max_chars=80),
+            }
+        }
+    except SubstrateNotFound:
+        return {
+            "data": {
+                "id": edge.child_id,
+                "kind": "cross-doc-relation",
+                "label": f"<missing: {edge.child_id}>",
+            }
+        }
+
+
+def _build_tree_json_truncated(substrate: Substrate, root_id: str) -> dict[str, object]:
+    """Return only the root + its immediate children + flag ``truncated=True``.
+
+    Used when the full subtree expansion would exceed
+    ``TREE_SOFT_CAP_NODES``. The HTML page renders an "expand subtree"
+    hint when this flag is set.
+    """
+    nodes: list[dict[str, object]] = []
+    edges: list[dict[str, object]] = []
+    try:
+        root = substrate.get_probandum(root_id)
+        nodes.append(
+            {
+                "data": {
+                    "id": root_id,
+                    "kind": root.kind,
+                    "label": _statement_excerpt(root.statement, max_chars=80),
+                }
+            }
+        )
+    except SubstrateNotFound:
+        nodes.append(
+            {
+                "data": {
+                    "id": root_id,
+                    "kind": "probandum",
+                    "label": f"<missing: {root_id}>",
+                }
+            }
+        )
+    for edge in substrate.list_probandum_edges(parent_probandum_id=root_id):
+        edges.append(
+            {
+                "data": {
+                    "id": edge.id,
+                    "source": edge.parent_probandum_id,
+                    "target": edge.child_id,
+                    "kind": edge.kind,
+                }
+            }
+        )
+        nodes.append(_build_child_node(substrate, edge))
+    return {"nodes": nodes, "edges": edges, "truncated": True}
+
+
+def _build_tree_json(substrate: Substrate, root_id: str) -> dict[str, object]:
+    """Build the Cytoscape-compatible payload for the subtree rooted at ``root_id``.
+
+    Walks outgoing probandum-edges from ``root_id`` BFS-style. Recurses
+    into probandum children; atoms and cross-doc-relations are leaves.
+    Nodes carry a ``kind`` discriminator (probandum kind for probanda;
+    ``atom`` / ``cross-doc-relation`` for leaves) and a short
+    ``label``.
+
+    Soft-cap fallback: when the expanded node count exceeds
+    ``TREE_SOFT_CAP_NODES``, the function bails out and calls
+    :func:`_build_tree_json_truncated` to return only the immediate
+    children alongside a ``"truncated": true`` flag.
+
+    Missing children (referenced by an edge but absent from substrate)
+    still produce a node with a ``<missing: ...>`` label so the visual
+    structure stays complete.
+    """
+    # Seed: the root probandum itself.
+    visited_nodes: dict[str, dict[str, object]] = {}
+    collected_edges: list[dict[str, object]] = []
+    try:
+        root = substrate.get_probandum(root_id)
+        visited_nodes[root_id] = {
+            "data": {
+                "id": root_id,
+                "kind": root.kind,
+                "label": _statement_excerpt(root.statement, max_chars=80),
+            }
+        }
+    except SubstrateNotFound:
+        visited_nodes[root_id] = {
+            "data": {
+                "id": root_id,
+                "kind": "probandum",
+                "label": f"<missing: {root_id}>",
+            }
+        }
+
+    # BFS frontier of probandum nodes whose outgoing edges we still want.
+    frontier: list[str] = [root_id]
+    seen_frontier: set[str] = {root_id}
+    truncated = False
+    while frontier:
+        next_frontier: list[str] = []
+        for parent_id in frontier:
+            for edge in substrate.list_probandum_edges(parent_probandum_id=parent_id):
+                edge_node: dict[str, object] = {
+                    "data": {
+                        "id": edge.id,
+                        "source": edge.parent_probandum_id,
+                        "target": edge.child_id,
+                        "kind": edge.kind,
+                    }
+                }
+                collected_edges.append(edge_node)
+                # Build / merge the child node.
+                if edge.child_id in visited_nodes:
+                    # Already in tree (tolerate diamond shapes
+                    # defensively even though INV-16 rules them out
+                    # for the active graph).
+                    continue
+                child_node = _build_child_node(substrate, edge)
+                visited_nodes[edge.child_id] = child_node
+                # Soft-cap check happens *after* the add: if we
+                # exceeded the cap, switch to truncated rendering.
+                if len(visited_nodes) > TREE_SOFT_CAP_NODES:
+                    truncated = True
+                # Only probandum children recurse.
+                if edge.child_kind == "probandum" and edge.child_id not in seen_frontier:
+                    seen_frontier.add(edge.child_id)
+                    next_frontier.append(edge.child_id)
+        if truncated:
+            break
+        frontier = next_frontier
+
+    if truncated:
+        return _build_tree_json_truncated(substrate, root_id)
+
+    return {
+        "nodes": list(visited_nodes.values()),
+        "edges": collected_edges,
+        "truncated": False,
+    }
+
+
+@router.get("/probanda/{probandum_id}/tree", response_class=HTMLResponse)
+async def probandum_tree_html(
+    request: Request,
+    probandum_id: str,
+    substrate: Annotated[Substrate, Depends(get_substrate)],
+) -> HTMLResponse:
+    """Render the Cytoscape tree visualization for a probandum subtree.
+
+    The page itself is a thin shell that mounts Cytoscape and fetches
+    its data from the sibling JSON endpoint at
+    ``/probanda/<id>/tree.json``. Returns 404 if the root probandum
+    is unknown.
+    """
+    try:
+        root = substrate.get_probandum(probandum_id)
+    except SubstrateNotFound as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"probandum {probandum_id!r} not found",
+        ) from exc
+
+    templates = request.app.state.templates
+    response = templates.TemplateResponse(  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType,reportReturnType]
+        request,
+        "probandum_tree.html",
+        {
+            "probandum": root,
+        },
+    )
+    response.headers["cache-control"] = "no-store"
+    return response  # pyright: ignore[reportReturnType]
+
+
+@router.get("/probanda/{probandum_id}/tree.json", response_class=JSONResponse)
+async def probandum_tree_json(
+    probandum_id: str,
+    substrate: Annotated[Substrate, Depends(get_substrate)],
+) -> JSONResponse:
+    """Return the Cytoscape-compatible subtree payload for ``probandum_id``.
+
+    See :func:`_build_tree_json` for the soft-cap semantics. Returns
+    404 if the root probandum is unknown.
+    """
+    try:
+        substrate.get_probandum(probandum_id)
+    except SubstrateNotFound as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"probandum {probandum_id!r} not found",
+        ) from exc
+
+    payload = _build_tree_json(substrate, probandum_id)
+    # Pre-serialize with sort_keys so test assertions are stable.
+    return JSONResponse(
+        content=json.loads(json.dumps(payload, ensure_ascii=False, sort_keys=True)),
+        headers={"Cache-Control": "no-store"},
+    )

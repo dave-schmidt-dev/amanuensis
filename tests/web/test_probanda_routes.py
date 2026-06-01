@@ -248,3 +248,124 @@ def test_edge_detail_route_404(
     client = TestClient(web_app)
     response = client.get("/probandum-edges/q-nonexistent00000")
     assert response.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# T10.4 — GET /probanda/<id>/tree + /tree.json (Cytoscape view)
+# ---------------------------------------------------------------------------
+
+
+def test_tree_json_endpoint_returns_subtree(
+    tmp_workspace_with_probandum_tree: dict[str, str],
+    web_app: FastAPI,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """tree.json returns nodes + edges in Cytoscape shape, untruncated."""
+    monkeypatch.setenv("AMANUENSIS_WORKSPACE", tmp_workspace_with_probandum_tree["workspace"])
+    client = TestClient(web_app)
+    ultimate_id = tmp_workspace_with_probandum_tree["ultimate"]
+    response = client.get(f"/probanda/{ultimate_id}/tree.json")
+    assert response.status_code == 200
+    data = response.json()
+    assert "nodes" in data and isinstance(data["nodes"], list)
+    assert "edges" in data and isinstance(data["edges"], list)
+    assert data.get("truncated") is False
+    # All three probanda must appear as nodes.
+    node_ids = {n["data"]["id"] for n in data["nodes"]}
+    for role in ("ultimate", "penultimate", "interim"):
+        assert tmp_workspace_with_probandum_tree[role] in node_ids
+    # Both edges must appear.
+    edge_ids = {e["data"]["id"] for e in data["edges"]}
+    assert tmp_workspace_with_probandum_tree["edge_ult_pen"] in edge_ids
+    assert tmp_workspace_with_probandum_tree["edge_pen_int"] in edge_ids
+
+
+def test_tree_json_node_carries_kind_and_label(
+    tmp_workspace_with_probandum_tree: dict[str, str],
+    web_app: FastAPI,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Each node carries data.id + data.kind + data.label."""
+    monkeypatch.setenv("AMANUENSIS_WORKSPACE", tmp_workspace_with_probandum_tree["workspace"])
+    client = TestClient(web_app)
+    ultimate_id = tmp_workspace_with_probandum_tree["ultimate"]
+    response = client.get(f"/probanda/{ultimate_id}/tree.json")
+    assert response.status_code == 200
+    data = response.json()
+    for n in data["nodes"]:
+        nd = n["data"]
+        assert "id" in nd
+        assert "kind" in nd
+        assert "label" in nd
+    for e in data["edges"]:
+        ed = e["data"]
+        assert {"id", "source", "target", "kind"}.issubset(ed.keys())
+
+
+def test_tree_json_truncates_at_cap(
+    tmp_workspace_with_probandum_tree: dict[str, str],
+    web_app: FastAPI,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Soft-cap fallback: monkeypatched cap of 1 forces truncation."""
+    monkeypatch.setenv("AMANUENSIS_WORKSPACE", tmp_workspace_with_probandum_tree["workspace"])
+    # Drop the soft-cap to 1 so any tree with at least one edge will
+    # trigger the truncation branch.
+    monkeypatch.setattr(
+        "amanuensis.web.routes.probanda.TREE_SOFT_CAP_NODES",
+        1,
+    )
+    client = TestClient(web_app)
+    ultimate_id = tmp_workspace_with_probandum_tree["ultimate"]
+    response = client.get(f"/probanda/{ultimate_id}/tree.json")
+    assert response.status_code == 200
+    data = response.json()
+    assert data.get("truncated") is True
+    # Truncated payload must still include the root + its immediate
+    # children, but NOT the interim (which is the grandchild).
+    node_ids = {n["data"]["id"] for n in data["nodes"]}
+    assert tmp_workspace_with_probandum_tree["ultimate"] in node_ids
+    assert tmp_workspace_with_probandum_tree["penultimate"] in node_ids
+    assert tmp_workspace_with_probandum_tree["interim"] not in node_ids
+
+
+def test_tree_html_page_includes_cytoscape_script(
+    tmp_workspace_with_probandum_tree: dict[str, str],
+    web_app: FastAPI,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The HTML page references the cytoscape + dagre vendor bundles."""
+    monkeypatch.setenv("AMANUENSIS_WORKSPACE", tmp_workspace_with_probandum_tree["workspace"])
+    client = TestClient(web_app)
+    ultimate_id = tmp_workspace_with_probandum_tree["ultimate"]
+    response = client.get(f"/probanda/{ultimate_id}/tree")
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-store"
+    assert "/static/vendor/cytoscape.min.js" in response.text
+    assert "/static/vendor/dagre.min.js" in response.text
+    assert "/static/vendor/cytoscape-dagre.js" in response.text
+    assert "/static/js/probandum_tree.js" in response.text
+
+
+def test_tree_html_404_for_unknown_probandum(
+    web_app: FastAPI,
+    tmp_workspace_with_probandum_tree: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Unknown probandum id on the tree HTML returns 404."""
+    monkeypatch.setenv("AMANUENSIS_WORKSPACE", tmp_workspace_with_probandum_tree["workspace"])
+    client = TestClient(web_app)
+    response = client.get("/probanda/p-nonexistent00000/tree")
+    assert response.status_code == 404
+
+
+def test_tree_json_404_for_unknown_probandum(
+    web_app: FastAPI,
+    tmp_workspace_with_probandum_tree: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Unknown probandum id on the tree.json endpoint returns 404."""
+    monkeypatch.setenv("AMANUENSIS_WORKSPACE", tmp_workspace_with_probandum_tree["workspace"])
+    client = TestClient(web_app)
+    response = client.get("/probanda/p-nonexistent00000/tree.json")
+    assert response.status_code == 404

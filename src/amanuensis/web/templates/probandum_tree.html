@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% block title %}tree &middot; {{ probandum.id }} &middot; amanuensis{% endblock %}
+{% block nav %}
+<a href="/" class="text-neutral-300 hover:text-neutral-50">&larr; dashboard</a>
+<a href="/probanda" class="text-neutral-300 hover:text-neutral-50">probanda</a>
+<a href="/probanda/{{ probandum.id }}" class="text-neutral-300 hover:text-neutral-50">detail</a>
+{% endblock %}
+{% block content %}
+<section class="space-y-4">
+  <header class="space-y-1">
+    <p class="text-xs uppercase tracking-wider text-neutral-500">probandum subtree</p>
+    <h1 class="font-mono text-xl font-semibold tracking-tight text-neutral-50 break-all">{{ probandum.id }}</h1>
+    <p class="text-sm text-neutral-400">{{ probandum.statement }}</p>
+  </header>
+
+  <div
+    id="probandum-tree-root"
+    data-probandum-id="{{ probandum.id }}"
+    data-tree-url="/probanda/{{ probandum.id }}/tree.json"
+    class="rounded border border-neutral-800 bg-neutral-900 p-2"
+  >
+    {# Cytoscape mounts here. Sized large enough to be useful on a
+       laptop screen; the page does not auto-resize because the
+       relation-graph page uses a static height too. #}
+    <div
+      id="cy-tree"
+      class="w-full"
+      style="width: 100%; height: 600px;"
+    ></div>
+  </div>
+
+  {# Status / fallback messages. Populated by probandum_tree.js. #}
+  <p id="probandum-tree-status" class="text-xs text-neutral-500"></p>
+
+  {# Expand-subtree control. Shown only when the JSON endpoint flags
+     ``truncated: true`` (subtree exceeded the soft cap of 500 nodes).
+     The button itself is just a hint — drilling into a specific
+     child via its detail page is the supported expansion path. #}
+  <div id="probandum-tree-expand-controls" class="hidden">
+    <p class="text-xs text-amber-400">
+      subtree exceeded 500 nodes &mdash; showing immediate children only.
+      click a child node above to drill in.
+    </p>
+  </div>
+
+  <details class="rounded border border-neutral-800 bg-neutral-900 p-3 text-xs text-neutral-400">
+    <summary class="cursor-pointer text-neutral-300">legend</summary>
+    <ul class="mt-2 space-y-1">
+      <li><span class="inline-block h-3 w-3 rounded-full" style="background-color: #ef4444;"></span> ultimate</li>
+      <li><span class="inline-block h-3 w-3 rounded-full" style="background-color: #f97316;"></span> penultimate</li>
+      <li><span class="inline-block h-3 w-3 rounded-full" style="background-color: #facc15;"></span> interim</li>
+      <li><span class="inline-block h-3 w-3" style="background-color: #3b82f6;"></span> atom</li>
+      <li><span class="inline-block h-3 w-3 rotate-45" style="background-color: #a855f7;"></span> cross-doc-relation</li>
+      <li>solid green &rarr; supports &middot; solid red &rarr; attacks &middot; dashed gray &rarr; undercuts</li>
+    </ul>
+  </details>
+</section>
+
+{# Vendored deps. Load order: dagre (the layout's graph algorithm),
+   cytoscape core, cytoscape-dagre adapter, then our boot script. #}
+<script src="/static/vendor/dagre.min.js"></script>
+<script src="/static/vendor/cytoscape.min.js"></script>
+<script src="/static/vendor/cytoscape-dagre.js"></script>
+<script src="/static/js/probandum_tree.js" defer></script>
+{% endblock %}

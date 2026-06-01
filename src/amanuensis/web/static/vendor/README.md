@@ -88,3 +88,40 @@ Used by M8.4 (relation-graph view) for the ``htmx:afterSwap`` binding
 that re-feeds elements into a stable Cytoscape instance without
 rebuilding the canvas. Loaded only by ``relation_graph.html`` (not in
 ``base.html``) so other pages are unaffected.
+
+## dagre.min.js
+
+- Source: https://unpkg.com/dagre@0.8.5/dist/dagre.min.js
+- Version: 0.8.5 (pinned)
+- License: MIT (https://github.com/dagrejs/dagre/blob/master/LICENSE)
+- Vendored on: 2026-06-01
+
+Re-vendor with:
+
+```
+curl -fsSL -o src/amanuensis/web/static/vendor/dagre.min.js \
+  https://unpkg.com/dagre@0.8.5/dist/dagre.min.js
+```
+
+Graph layout algorithm used by the M10 probandum tree page. Must load
+BEFORE ``cytoscape-dagre.js`` because the latter reads ``window.dagre``
+at registration time.
+
+## cytoscape-dagre.js
+
+- Source: https://unpkg.com/cytoscape-dagre@2.5.0/cytoscape-dagre.js
+- Version: 2.5.0 (pinned)
+- License: MIT (https://github.com/cytoscape/cytoscape.js-dagre/blob/master/LICENSE)
+- Vendored on: 2026-06-01
+
+Re-vendor with:
+
+```
+curl -fsSL -o src/amanuensis/web/static/vendor/cytoscape-dagre.js \
+  https://unpkg.com/cytoscape-dagre@2.5.0/cytoscape-dagre.js
+```
+
+Cytoscape adapter that wires the ``dagre`` layout into Cytoscape's
+layout registry. Used by ``probandum_tree.html`` (M10 T10.4). Load
+order in the browser: ``dagre.min.js`` → ``cytoscape.min.js`` →
+``cytoscape-dagre.js`` → ``cytoscape.use(window.cytoscapeDagre)``.
