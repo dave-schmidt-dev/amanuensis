@@ -14,6 +14,13 @@ T6.7 extension: ``map-resolve`` and ``map-audit`` output directories use
 multi-component names (e.g. ``map-resolve-<hash>``). The isolation
 machinery accepts them as valid ``allowed_subtree`` values just like
 single-component role dirs (``extractor-<hash>``).
+
+Phase 2b M4 extension: the new ``connect`` role lands its outputs under
+``dispatch/outputs/connect-<inputs_hash>/`` per the spec. INV-11 demands
+the same write-isolation contract as Phase 1 / Phase 2a roles. The
+parametrized fixtures below cover ``connect-<hash>`` alongside the
+existing map and extractor / auditor cases so the isolation machinery
+remains role-agnostic.
 """
 
 from __future__ import annotations
@@ -169,6 +176,9 @@ def test_violation_list_is_sorted(dispatch_workspace: Path) -> None:
         # Phase 1 roles for comparison: single-component names still work.
         "extractor-" + "c" * 64,
         "auditor-" + "d" * 64,
+        # Phase 2b M4: connect role uses a single-component name; INV-11
+        # write-isolation contract applies identically.
+        "connect-" + "e" * 64,
     ],
 )
 def test_map_role_output_dir_no_violation_when_writing_inside(
@@ -193,6 +203,8 @@ def test_map_role_output_dir_no_violation_when_writing_inside(
     [
         "map-resolve-" + "e" * 64,
         "map-audit-" + "f" * 64,
+        # Phase 2b M4: connect role's outside-write contract.
+        "connect-" + "0" * 64,
     ],
 )
 def test_map_role_output_dir_violation_when_writing_outside(
