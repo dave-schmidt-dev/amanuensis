@@ -353,6 +353,100 @@ def test_inv4_map_relation_show_is_deterministic_with_records(
     assert before == after_second, _diff_snapshots(before, after_second)
 
 
+# ---------------------------------------------------------------------------
+# Phase 2c M9 (T9.9) — determinism for the map probandum / walton-scheme
+# read verbs. The walton-snapshot fixture pins the bundled catalogue (so
+# ``walton-scheme show`` has content); the planted-probandum fixture
+# additionally writes one Probandum so ``probandum show`` / ``probandum
+# lineage`` have a real on-disk id to point at.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.invariants
+def test_inv4_map_walton_scheme_show_is_deterministic(
+    tmp_workspace_with_walton_snapshot: Path,
+) -> None:
+    """``map walton-scheme show`` is pure + deterministic."""
+    workspace = tmp_workspace_with_walton_snapshot
+    argv = ["map", "walton-scheme", "show", "--workspace", str(workspace)]
+
+    before = _snapshot_workspace(workspace)
+    first = runner.invoke(app, argv)
+    assert first.exit_code == 0, first.output
+    after_first = _snapshot_workspace(workspace)
+    assert before == after_first, _diff_snapshots(before, after_first)
+
+    second = runner.invoke(app, argv)
+    assert second.exit_code == 0, second.output
+    assert first.stdout == second.stdout
+    after_second = _snapshot_workspace(workspace)
+    assert before == after_second, _diff_snapshots(before, after_second)
+
+
+@pytest.mark.invariants
+def test_inv4_map_probandum_list_is_deterministic(
+    tmp_workspace_with_planted_probandum: tuple[Path, str],
+) -> None:
+    """``map probandum list`` is pure + deterministic on a planted record."""
+    workspace, prob_id = tmp_workspace_with_planted_probandum
+    argv = ["map", "probandum", "list", "--workspace", str(workspace)]
+
+    before = _snapshot_workspace(workspace)
+    first = runner.invoke(app, argv)
+    assert first.exit_code == 0, first.output
+    assert prob_id in first.stdout
+    after_first = _snapshot_workspace(workspace)
+    assert before == after_first, _diff_snapshots(before, after_first)
+
+    second = runner.invoke(app, argv)
+    assert second.exit_code == 0, second.output
+    assert first.stdout == second.stdout
+    after_second = _snapshot_workspace(workspace)
+    assert before == after_second, _diff_snapshots(before, after_second)
+
+
+@pytest.mark.invariants
+def test_inv4_map_probandum_show_is_deterministic(
+    tmp_workspace_with_planted_probandum: tuple[Path, str],
+) -> None:
+    """``map probandum show <id>`` is pure + deterministic on a planted id."""
+    workspace, prob_id = tmp_workspace_with_planted_probandum
+    argv = ["map", "probandum", "show", prob_id, "--workspace", str(workspace)]
+
+    before = _snapshot_workspace(workspace)
+    first = runner.invoke(app, argv)
+    assert first.exit_code == 0, first.output
+    after_first = _snapshot_workspace(workspace)
+    assert before == after_first, _diff_snapshots(before, after_first)
+
+    second = runner.invoke(app, argv)
+    assert second.exit_code == 0, second.output
+    assert first.stdout == second.stdout
+    after_second = _snapshot_workspace(workspace)
+    assert before == after_second, _diff_snapshots(before, after_second)
+
+
+@pytest.mark.invariants
+def test_inv4_map_probandum_lineage_is_deterministic(
+    tmp_workspace_with_planted_probandum: tuple[Path, str],
+) -> None:
+    """``map probandum lineage <id>`` is pure + deterministic on a planted id."""
+    workspace, prob_id = tmp_workspace_with_planted_probandum
+    argv = ["map", "probandum", "lineage", prob_id, "--workspace", str(workspace)]
+
+    before = _snapshot_workspace(workspace)
+    first = runner.invoke(app, argv)
+    assert first.exit_code == 0, first.output
+    after_first = _snapshot_workspace(workspace)
+    assert before == after_first, _diff_snapshots(before, after_first)
+
+    second = runner.invoke(app, argv)
+    assert second.exit_code == 0, second.output
+    assert first.stdout == second.stdout
+    after_second = _snapshot_workspace(workspace)
+    assert before == after_second, _diff_snapshots(before, after_second)
+
+
 # =====================================================================
 # Mutating side (M5.3): LLM-call boundary writes the three artefacts
 # =====================================================================

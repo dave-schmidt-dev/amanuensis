@@ -280,6 +280,56 @@ def tmp_workspace_with_walton_snapshot(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
+def tmp_workspace_with_planted_probandum(
+    tmp_workspace_with_walton_snapshot: Path,
+) -> tuple[Path, str]:
+    """Workspace with walton snapshot + one committed Probandum record.
+
+    Used by the Phase 2c INV-4 determinism gate (T9.9) for the
+    ``map probandum show`` / ``map probandum lineage`` verbs that need
+    a real on-disk probandum id. Returns ``(workspace, probandum_id)``.
+    """
+    from datetime import UTC, datetime
+
+    from amanuensis.schemas import Probandum
+
+    workspace = tmp_workspace_with_walton_snapshot
+    sub = Substrate(workspace)
+
+    agent = AgentAttribution(kind="human", identifier="fixture", role="human_supervisor")
+    role_attr = RoleAttribution(
+        agent=agent,
+        activity="proposed",
+        at=datetime(2026, 5, 31, 12, 0, 0, tzinfo=UTC),
+    )
+    draft = Probandum(
+        id="p-" + "0" * 16,
+        statement="Fixture probandum for determinism gate.",
+        kind="ultimate",
+        scheme="argument-from-sign",
+        alternatives_considered=[],
+        confidence="high",
+        provenance_id="p-fixture-prob",
+        role_attributions=[role_attr],
+        schema_version=1,
+    )
+    prob_id = compute_id(draft)
+    final = Probandum(
+        id=prob_id,
+        statement="Fixture probandum for determinism gate.",
+        kind="ultimate",
+        scheme="argument-from-sign",
+        alternatives_considered=[],
+        confidence="high",
+        provenance_id="p-fixture-prob",
+        role_attributions=[role_attr],
+        schema_version=1,
+    )
+    sub.add_probandum(final)
+    return workspace, prob_id
+
+
+@pytest.fixture
 def tmp_workspace_with_two_cross_doc_relations(tmp_path: Path) -> Path:
     """Workspace with two committed CrossDocRelation records.
 
