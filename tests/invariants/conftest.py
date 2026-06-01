@@ -30,6 +30,7 @@ from amanuensis.fs._serialize import serialize_yaml
 from amanuensis.schemas import (
     AgentAttribution,
     Atom,
+    CrossDocRelation,
     Entity,
     EntitySupersede,
     OperandRef,
@@ -738,3 +739,248 @@ def cross_doc_violation_workspace(
         serialize_yaml(bad_relation), encoding="utf-8"
     )
     return tmp_path
+
+
+# ---------------------------------------------------------------------------
+# Phase 2b INV-15 fixtures (M3 — invariant gate)
+# ---------------------------------------------------------------------------
+#
+# The fixtures below build workspaces that intentionally bypass
+# Substrate.add_cross_doc_relation by writing tampered YAML directly.
+# Each tampered relation still satisfies content-addressability (its id is
+# the hash of its on-disk content) so the substrate's id check at re-walk
+# time passes — only the INV-15 gate fires.
+
+_INV15_ENTITY_ID = "e-smith"
+_INV15_FROM_SOURCE = "src-A"
+_INV15_FROM_ATOM = "a-fixture0001"
+_INV15_TO_SOURCE = "src-B"
+_INV15_TO_ATOM = "a-fixture0002"
+
+
+def _inv15_forged_entity(entity_id: str, role_attribution: RoleAttribution) -> Entity:
+    """Build an Entity with a literal id (bypasses content-addressability)."""
+    return Entity(
+        id=entity_id,
+        kind="party",
+        canonical_name="Smith",
+        aliases=[],
+        notes=None,
+        provenance_id="p-inv15-ent",
+        role_attributions=[role_attribution],
+        schema_version=1,
+    )
+
+
+def _inv15_forged_resolution(
+    *,
+    resolution_id: str,
+    source_id: str,
+    atom_id: str,
+    entity_id: str,
+    role_attribution: RoleAttribution,
+) -> Resolution:
+    """Build a Resolution with a literal id (bypasses content-addressability)."""
+    return Resolution(
+        id=resolution_id,
+        source_id=source_id,
+        atom_id=atom_id,
+        operand_index=0,
+        entity_id=entity_id,
+        confidence="high",
+        basis="fixture-planted for INV-15 invariant gate",
+        provenance_id="p-inv15-res",
+        role_attributions=[role_attribution],
+        schema_version=1,
+    )
+
+
+def _inv15_plant_entity(tmp_path: Path, entity: Entity) -> None:
+    from amanuensis.fs._serialize import serialize_entity_md
+
+    path = tmp_path / "mappings" / "entities" / f"{entity.id}.md"
+    atomic_write_text(path, serialize_entity_md(entity))
+
+
+def _inv15_plant_resolution(tmp_path: Path, resolution: Resolution) -> None:
+    from amanuensis.fs._serialize import serialize_resolution_yaml
+
+    path = tmp_path / "mappings" / "resolutions" / f"{resolution.id}.yaml"
+    atomic_write_text(path, serialize_resolution_yaml(resolution))
+
+
+def _inv15_build_relation(
+    role_attribution: RoleAttribution,
+    *,
+    shared_entities: list[str],
+    from_source_id: str = _INV15_FROM_SOURCE,
+    from_atom_id: str = _INV15_FROM_ATOM,
+    to_source_id: str = _INV15_TO_SOURCE,
+    to_atom_id: str = _INV15_TO_ATOM,
+) -> CrossDocRelation:
+    """Build a CrossDocRelation whose id matches ``compute_id`` for its content."""
+    payload: dict[str, Any] = {
+        "id": "x-" + "0" * 16,
+        "from_atom_id": from_atom_id,
+        "from_source_id": from_source_id,
+        "to_atom_id": to_atom_id,
+        "to_source_id": to_source_id,
+        "kind": "supports",
+        "warrant": "Both atoms refer to the same Smith party.",
+        "warrant_defensibility": "conventional",
+        "warrant_basis": "Naming conventions match across documents.",
+        "confidence": "medium",
+        "shared_entities": shared_entities,
+        "provenance_id": "p-inv15-cdr",
+        "role_attributions": [role_attribution],
+        "schema_version": 1,
+    }
+    draft = CrossDocRelation(**payload)
+    payload["id"] = compute_id(draft)
+    return CrossDocRelation(**payload)
+
+
+def _inv15_plant_cross_doc_relation(tmp_path: Path, rel: CrossDocRelation) -> None:
+    """Write a CrossDocRelation YAML directly, bypassing the substrate gate."""
+    from amanuensis.fs._serialize import serialize_cross_doc_relation_yaml
+
+    path = tmp_path / "mappings" / "relations" / f"{rel.id}.yaml"
+    atomic_write_text(path, serialize_cross_doc_relation_yaml(rel))
+
+
+def _inv15_workspace_with_marker(tmp_path: Path, project_name: str) -> Path:
+    """Create a workspace with the INV-1 marker file."""
+    marker = tmp_path / "amanuensis.yaml"
+    marker.write_text(
+        f"schema_version: 1\nproject_name: {project_name}\n",
+        encoding="utf-8",
+    )
+    return tmp_path
+
+
+@pytest.fixture
+def tmp_workspace_with_one_valid_cross_doc_relation(
+    tmp_path: Path, role_attribution: RoleAttribution
+) -> Path:
+    """Workspace with bilateral resolutions + one valid cross-doc edge."""
+    workspace = _inv15_workspace_with_marker(tmp_path, "inv15-valid")
+    entity = _inv15_forged_entity(_INV15_ENTITY_ID, role_attribution)
+    _inv15_plant_entity(workspace, entity)
+    _inv15_plant_resolution(
+        workspace,
+        _inv15_forged_resolution(
+            resolution_id="j-inv15-from",
+            source_id=_INV15_FROM_SOURCE,
+            atom_id=_INV15_FROM_ATOM,
+            entity_id=_INV15_ENTITY_ID,
+            role_attribution=role_attribution,
+        ),
+    )
+    _inv15_plant_resolution(
+        workspace,
+        _inv15_forged_resolution(
+            resolution_id="j-inv15-to",
+            source_id=_INV15_TO_SOURCE,
+            atom_id=_INV15_TO_ATOM,
+            entity_id=_INV15_ENTITY_ID,
+            role_attribution=role_attribution,
+        ),
+    )
+    rel = _inv15_build_relation(role_attribution, shared_entities=[_INV15_ENTITY_ID])
+    _inv15_plant_cross_doc_relation(workspace, rel)
+    return workspace
+
+
+@pytest.fixture
+def tmp_workspace_with_manually_authored_empty_shared_entities(
+    tmp_path: Path, role_attribution: RoleAttribution
+) -> Path:
+    """Workspace with a CrossDocRelation whose ``shared_entities`` is empty.
+
+    Bilateral resolutions exist (so the only violation is the empty list).
+    """
+    workspace = _inv15_workspace_with_marker(tmp_path, "inv15-empty-shared")
+    entity = _inv15_forged_entity(_INV15_ENTITY_ID, role_attribution)
+    _inv15_plant_entity(workspace, entity)
+    _inv15_plant_resolution(
+        workspace,
+        _inv15_forged_resolution(
+            resolution_id="j-inv15-from",
+            source_id=_INV15_FROM_SOURCE,
+            atom_id=_INV15_FROM_ATOM,
+            entity_id=_INV15_ENTITY_ID,
+            role_attribution=role_attribution,
+        ),
+    )
+    _inv15_plant_resolution(
+        workspace,
+        _inv15_forged_resolution(
+            resolution_id="j-inv15-to",
+            source_id=_INV15_TO_SOURCE,
+            atom_id=_INV15_TO_ATOM,
+            entity_id=_INV15_ENTITY_ID,
+            role_attribution=role_attribution,
+        ),
+    )
+    rel = _inv15_build_relation(role_attribution, shared_entities=[])
+    _inv15_plant_cross_doc_relation(workspace, rel)
+    return workspace
+
+
+@pytest.fixture
+def tmp_workspace_with_dangling_shared_entity_on_disk(
+    tmp_path: Path, role_attribution: RoleAttribution
+) -> Path:
+    """Workspace whose CrossDocRelation references an entity with no record on disk."""
+    workspace = _inv15_workspace_with_marker(tmp_path, "inv15-dangling-entity")
+    # No entity records planted.
+    rel = _inv15_build_relation(role_attribution, shared_entities=["e-nonexistent"])
+    _inv15_plant_cross_doc_relation(workspace, rel)
+    return workspace
+
+
+@pytest.fixture
+def tmp_workspace_with_unresolved_from_endpoint_on_disk(
+    tmp_path: Path, role_attribution: RoleAttribution
+) -> Path:
+    """Workspace where the from-endpoint Resolution is missing."""
+    workspace = _inv15_workspace_with_marker(tmp_path, "inv15-no-from-res")
+    entity = _inv15_forged_entity(_INV15_ENTITY_ID, role_attribution)
+    _inv15_plant_entity(workspace, entity)
+    # Only the to-endpoint resolution.
+    _inv15_plant_resolution(
+        workspace,
+        _inv15_forged_resolution(
+            resolution_id="j-inv15-to",
+            source_id=_INV15_TO_SOURCE,
+            atom_id=_INV15_TO_ATOM,
+            entity_id=_INV15_ENTITY_ID,
+            role_attribution=role_attribution,
+        ),
+    )
+    rel = _inv15_build_relation(role_attribution, shared_entities=[_INV15_ENTITY_ID])
+    _inv15_plant_cross_doc_relation(workspace, rel)
+    return workspace
+
+
+@pytest.fixture
+def tmp_workspace_with_unresolved_to_endpoint_on_disk(
+    tmp_path: Path, role_attribution: RoleAttribution
+) -> Path:
+    """Workspace where the to-endpoint Resolution is missing (mirror)."""
+    workspace = _inv15_workspace_with_marker(tmp_path, "inv15-no-to-res")
+    entity = _inv15_forged_entity(_INV15_ENTITY_ID, role_attribution)
+    _inv15_plant_entity(workspace, entity)
+    _inv15_plant_resolution(
+        workspace,
+        _inv15_forged_resolution(
+            resolution_id="j-inv15-from",
+            source_id=_INV15_FROM_SOURCE,
+            atom_id=_INV15_FROM_ATOM,
+            entity_id=_INV15_ENTITY_ID,
+            role_attribution=role_attribution,
+        ),
+    )
+    rel = _inv15_build_relation(role_attribution, shared_entities=[_INV15_ENTITY_ID])
+    _inv15_plant_cross_doc_relation(workspace, rel)
+    return workspace
