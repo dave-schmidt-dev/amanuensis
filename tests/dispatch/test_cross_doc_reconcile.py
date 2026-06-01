@@ -14,6 +14,8 @@ Coverage map:
   clarification under the from-endpoint distillation.
 - T4.3 — supersede flow end-to-end through the reconciler + the M2
   ``CrossDocRelationSupersede`` IO.
+- T4.4 — re-running the reconciler after the supervisor lands the
+  missing Resolution succeeds (clarification-cycle happy ending).
 """
 
 # pyright: reportPrivateUsage=false
@@ -28,6 +30,7 @@ from amanuensis.fs import Substrate
 from amanuensis.schemas import (
     CrossDocRelationSupersede,
     ProvenanceRecord,
+    Resolution,
     RoleAttribution,
     compute_id,
 )
@@ -186,3 +189,71 @@ def test_supersede_flow_writes_supersede_record(
     terminus = sub.latest_cross_doc_relation_for(rel_v1.id)
     assert terminus is not None
     assert terminus.id == rel_v2.id
+
+
+# --- T4.4: re-add after resolution lands ------------------------------
+
+
+def test_re_add_after_resolution_lands(
+    tmp_workspace_with_partial_resolutions: Path,
+    role_attribution: RoleAttribution,
+    fake_provenance: ProvenanceRecord,
+) -> None:
+    """Clarification-cycle happy ending: missing Resolution lands → candidate commits.
+
+    The narrative:
+
+    1. The Connector proposes a cross-doc edge whose from-endpoint has
+       no Resolution → ``_build_cross_doc_relation`` returns None and
+       raises a ``resolution-ambiguous`` Clarification (the T4.2
+       path).
+    2. A supervisor responds to the clarification by adding the
+       missing Resolution via ``substrate.add_resolution`` (the M7
+       CLI ``map resolve`` will mediate this in production).
+    3. The dispatch driver re-runs the same candidate (cache key
+       changes only if the input changed, but this test exercises a
+       same-key replay to verify the reconciler now succeeds because
+       the substrate state changed underneath it).
+
+    This is the only sanctioned recovery path for an INV-15 rejection:
+    the Connector role cannot itself add Resolutions, and the
+    Clarification's resolution UI surfaces the missing-Resolution gap
+    so a human supervisor can close the loop.
+    """
+    sub = Substrate(tmp_workspace_with_partial_resolutions)
+
+    result_1 = _build_cross_doc_relation(
+        _base_candidate(),
+        sub,
+        fake_provenance,
+        role_attributions=[role_attribution],
+    )
+    assert result_1 is None  # rejected — from-endpoint Resolution missing
+
+    # Supervisor resolves the clarification by adding the missing
+    # Resolution. Build it with a real content-addressable id via
+    # compute_id (the substrate's add_resolution validates id discipline).
+    res_draft = Resolution(
+        id="j-" + "0" * 16,
+        source_id=FROM_SOURCE_ID,
+        atom_id=FROM_ATOM_ID,
+        operand_index=0,
+        entity_id=SHARED_ENTITY_ID,
+        confidence="high",
+        basis="supervisor resolved resolution-ambiguous clarification",
+        provenance_id=fake_provenance.id,
+        role_attributions=[role_attribution],
+        schema_version=1,
+    )
+    res = res_draft.model_copy(update={"id": compute_id(res_draft)})
+    sub.add_resolution(res)
+
+    # Re-run reconciler with the same candidate.
+    result_2 = _build_cross_doc_relation(
+        _base_candidate(),
+        sub,
+        fake_provenance,
+        role_attributions=[role_attribution],
+    )
+    assert result_2 is not None
+    assert result_2.shared_entities == [SHARED_ENTITY_ID]
