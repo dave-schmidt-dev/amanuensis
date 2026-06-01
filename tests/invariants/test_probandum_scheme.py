@@ -16,6 +16,7 @@ records whose scheme is absent from the snapshot the gate raises
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Literal
 
 import pytest
 
@@ -45,7 +46,7 @@ def _probandum(
     *,
     statement: str = "ACME breached the contract by failing to pay.",
     scheme: str = "argument-from-expert-opinion",
-    kind: str = "ultimate",
+    kind: Literal["ultimate", "penultimate", "interim"] = "ultimate",
 ) -> Probandum:
     """Build a Probandum with a real content-addressable id."""
     draft = Probandum(

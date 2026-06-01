@@ -97,7 +97,7 @@ def test_snapshot_rewrite_invalidates_cache(
     sub.snapshot_walton_schemes()
     p1 = _probandum_basic_payload(role_attribution, statement="Cache-priming add.")
     sub.add_probandum(p1)  # priming
-    assert sub._walton_snapshot_cache is not None
+    assert sub._walton_snapshot_cache is not None  # pyright: ignore[reportPrivateUsage]
     # Idempotent re-snapshot still invalidates the cache (simplest contract).
     sub.snapshot_walton_schemes()
-    assert sub._walton_snapshot_cache is None
+    assert sub._walton_snapshot_cache is None  # pyright: ignore[reportPrivateUsage]
