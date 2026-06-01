@@ -109,6 +109,100 @@ def test_appendix_page_links_shared_entities(
 
 
 # ---------------------------------------------------------------------------
+# T9.2 — Per-entity edge listing on entity pages
+# ---------------------------------------------------------------------------
+
+
+def test_entity_page_exists_per_canonical_entity(
+    tmp_workspace_with_two_cross_doc_relations: Path,
+    tmp_path: Path,
+) -> None:
+    """One ``entities/<id>.html`` page per canonical entity."""
+    out_dir = tmp_path / "export"
+    substrate = Substrate(tmp_workspace_with_two_cross_doc_relations)
+    export_workspace_appendix(substrate=substrate, out_dir=out_dir, now=_FROZEN_NOW)
+
+    entity_page = out_dir / "entities" / "e-smith.html"
+    assert entity_page.is_file(), f"per-entity page missing at {entity_page}"
+    content = entity_page.read_text(encoding="utf-8")
+    assert content.startswith("<!DOCTYPE html>")
+
+
+def test_entity_page_lists_cross_doc_edges(
+    tmp_workspace_with_two_cross_doc_relations: Path,
+    tmp_path: Path,
+) -> None:
+    """Entity page has a 'Cross-doc edges' section listing each relation touching it."""
+    out_dir = tmp_path / "export"
+    substrate = Substrate(tmp_workspace_with_two_cross_doc_relations)
+    export_workspace_appendix(substrate=substrate, out_dir=out_dir, now=_FROZEN_NOW)
+
+    content = (out_dir / "entities" / "e-smith.html").read_text(encoding="utf-8")
+    # Section heading present.
+    assert "Cross-doc edges" in content or "cross-doc edges" in content.lower()
+    # Each relation citing e-smith in shared_entities appears on the page.
+    for rel in substrate.list_cross_doc_relations(shared_entity="e-smith"):
+        assert rel.id in content, (
+            f"relation {rel.id} missing from per-entity page despite "
+            "citing e-smith in shared_entities"
+        )
+
+
+def test_entity_page_links_back_to_appendix(
+    tmp_workspace_with_two_cross_doc_relations: Path,
+    tmp_path: Path,
+) -> None:
+    """Entity page links its cross-doc edges to anchored rows on the appendix page."""
+    out_dir = tmp_path / "export"
+    substrate = Substrate(tmp_workspace_with_two_cross_doc_relations)
+    export_workspace_appendix(substrate=substrate, out_dir=out_dir, now=_FROZEN_NOW)
+
+    content = (out_dir / "entities" / "e-smith.html").read_text(encoding="utf-8")
+    # At least one relation link points back to the appendix page anchor.
+    relations = list(substrate.list_cross_doc_relations(shared_entity="e-smith"))
+    assert relations, "fixture should produce at least one e-smith edge"
+    first = relations[0]
+    assert f"../cross-doc-relations.html#relation-{first.id}" in content
+
+
+def test_entity_page_canonical_name_present(
+    tmp_workspace_with_two_cross_doc_relations: Path,
+    tmp_path: Path,
+) -> None:
+    """Entity page shows the canonical name as a heading."""
+    out_dir = tmp_path / "export"
+    substrate = Substrate(tmp_workspace_with_two_cross_doc_relations)
+    export_workspace_appendix(substrate=substrate, out_dir=out_dir, now=_FROZEN_NOW)
+
+    content = (out_dir / "entities" / "e-smith.html").read_text(encoding="utf-8")
+    assert "Smith" in content
+
+
+def test_entity_page_is_self_contained(
+    tmp_workspace_with_two_cross_doc_relations: Path,
+    tmp_path: Path,
+) -> None:
+    """Per-entity page has no CDN URLs (T9.4 coverage for entity bundle pages)."""
+    out_dir = tmp_path / "export"
+    substrate = Substrate(tmp_workspace_with_two_cross_doc_relations)
+    export_workspace_appendix(substrate=substrate, out_dir=out_dir, now=_FROZEN_NOW)
+
+    text = (out_dir / "entities" / "e-smith.html").read_text(encoding="utf-8")
+    forbidden_hosts = (
+        "unpkg.com",
+        "cdn.jsdelivr.net",
+        "cdnjs.cloudflare.com",
+        "googleapis.com",
+        "gstatic.com",
+        "jsdelivr.net",
+    )
+    for host in forbidden_hosts:
+        assert host not in text, f"CDN reference to {host!r} leaked into entity page"
+    assert "https://" not in text, "external https:// URL leaked into entity page"
+    assert "http://" not in text, "external http:// URL leaked into entity page"
+
+
+# ---------------------------------------------------------------------------
 # T9.4 — Self-contained HTML (no CDN URLs) — absorbed here per spec
 # ---------------------------------------------------------------------------
 
