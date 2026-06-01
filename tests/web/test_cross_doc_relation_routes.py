@@ -1,4 +1,4 @@
-"""Web route tests for cross-doc relations (Phase 2b M8 T8.1 - T8.4)."""
+"""Web route tests for cross-doc relations (Phase 2b M8 T8.1 - T8.5)."""
 
 # pyright: reportPrivateUsage=false
 
@@ -281,3 +281,76 @@ def test_entity_detail_empty_cross_doc_section(
     assert response.status_code == 200
     assert "Cross-doc edges touching this entity" in response.text
     assert "no cross-doc edges cite this entity" in response.text
+
+
+# ---------------------------------------------------------------------------
+# T8.5 — atom-entity-index fragment with cross-doc overlay
+# ---------------------------------------------------------------------------
+
+
+def test_atom_entity_index_fragment_with_cross_doc(
+    tmp_workspace_with_two_cross_doc_relations: Path,
+    web_app: FastAPI,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """?include_cross_doc=1 envelopes the index and adds cross_doc_edges."""
+    monkeypatch.setenv("AMANUENSIS_WORKSPACE", str(tmp_workspace_with_two_cross_doc_relations))
+    client = TestClient(web_app)
+    response = client.get("/distillations/src-A/relations/atom-entity-index?include_cross_doc=1")
+    assert response.status_code == 200
+    data = response.json()
+    assert "cross_doc_edges" in data
+    assert isinstance(data["cross_doc_edges"], list)
+    # Both fixture relations touch src-A.
+    assert len(data["cross_doc_edges"]) >= 2
+    required_keys = {
+        "id",
+        "from_source_id",
+        "from_atom_id",
+        "to_source_id",
+        "to_atom_id",
+        "kind",
+        "shared_entities",
+    }
+    for edge in data["cross_doc_edges"]:
+        assert required_keys.issubset(edge.keys())
+        assert edge["from_source_id"] == "src-A" or edge["to_source_id"] == "src-A"
+
+
+def test_atom_entity_index_without_flag_omits_cross_doc(
+    tmp_workspace_with_two_cross_doc_relations: Path,
+    web_app: FastAPI,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No ?include_cross_doc flag → response is the legacy shape (dict only)."""
+    monkeypatch.setenv("AMANUENSIS_WORKSPACE", str(tmp_workspace_with_two_cross_doc_relations))
+    client = TestClient(web_app)
+    response = client.get("/distillations/src-A/relations/atom-entity-index")
+    assert response.status_code == 200
+    data = response.json()
+    # Legacy contract: dict[atom_id, list[entity_id]] — no envelope.
+    assert "cross_doc_edges" not in data
+    # Each value, if any, must remain a list-of-strings (canonical entity ids).
+    for entity_ids in data.values():
+        assert isinstance(entity_ids, list)
+
+
+def test_atom_entity_index_cross_doc_filtered_by_source(
+    tmp_workspace_with_two_cross_doc_relations: Path,
+    web_app: FastAPI,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Edges returned only include ones where either endpoint matches the requested source."""
+    monkeypatch.setenv("AMANUENSIS_WORKSPACE", str(tmp_workspace_with_two_cross_doc_relations))
+    client = TestClient(web_app)
+    res_a = client.get("/distillations/src-A/relations/atom-entity-index?include_cross_doc=1")
+    assert res_a.status_code == 200
+    edges_a = res_a.json()["cross_doc_edges"]
+    for edge in edges_a:
+        assert "src-A" in (edge["from_source_id"], edge["to_source_id"])
+
+    res_b = client.get("/distillations/src-B/relations/atom-entity-index?include_cross_doc=1")
+    assert res_b.status_code == 200
+    edges_b = res_b.json()["cross_doc_edges"]
+    for edge in edges_b:
+        assert "src-B" in (edge["from_source_id"], edge["to_source_id"])

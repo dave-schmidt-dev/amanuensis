@@ -38,7 +38,7 @@ from pathlib import Path
 from typing import Annotated, Any
 
 import yaml
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import ValidationError
 
@@ -224,19 +224,85 @@ def _build_atom_entity_index(substrate: Substrate, source_id: str) -> dict[str, 
 async def atom_entity_index(
     source_id: str,
     substrate: Annotated[Substrate, Depends(get_substrate)],
+    include_cross_doc: Annotated[
+        int,
+        Query(
+            description=(
+                "If truthy (1), envelope the atom→entity index in a JSON "
+                "object that also carries a ``cross_doc_edges`` key listing "
+                "every CrossDocRelation touching this distillation (Phase "
+                "2b T8.5). Defaults to 0 — legacy shape (bare dict)."
+            ),
+        ),
+    ] = 0,
 ) -> JSONResponse:
-    """Return ``dict[atom_id, list[entity_id]]`` for the given distillation.
+    """Return the atom→entity index for the given distillation.
 
-    Entity ids are canonical (CV-9: passed through
-    ``latest_entity_for``). Atoms with no resolutions are absent from
-    the dict. Keys are sorted for deterministic output.
+    Legacy shape (``include_cross_doc=0``, default): bare
+    ``dict[atom_id, list[entity_id]]``. Entity ids are canonical (CV-9:
+    passed through ``latest_entity_for``). Atoms with no resolutions
+    are absent from the dict. Keys are sorted for deterministic output.
+
+    Extended shape (``include_cross_doc=1``, Phase 2b T8.5): a
+    two-key object — the original dict is moved under ``atom_entity``
+    and a new ``cross_doc_edges`` list carries every cross-doc edge
+    where ``from_source_id == source_id`` OR ``to_source_id ==
+    source_id``. Each edge is a flat dict with ``id``,
+    ``from_source_id``, ``from_atom_id``, ``to_source_id``,
+    ``to_atom_id``, ``kind``, and ``shared_entities``. Order follows
+    ``Substrate.list_cross_doc_relations`` (lex-id).
 
     Headers:
-        Cache-Control: no-store — resolutions change during a session.
+        Cache-Control: no-store — resolutions and cross-doc relations
+        both change during a session.
     """
     _ensure_distillation_exists(substrate, source_id)
     index = _build_atom_entity_index(substrate, source_id)
+    if not include_cross_doc:
+        return JSONResponse(
+            content=index,
+            headers={"Cache-Control": "no-store"},
+        )
+    cross_doc_edges = _build_cross_doc_edges_for_source(substrate, source_id)
+    # Envelope shape: keep the atom→entity dict under ``atom_entity`` so
+    # the cross-doc-edges payload can ride along without colliding with
+    # any user-supplied atom-id keys. The cytoscape overlay JS will
+    # read ``cross_doc_edges`` and feed each edge into the canvas.
+    payload: dict[str, object] = {
+        "atom_entity": index,
+        "cross_doc_edges": cross_doc_edges,
+    }
     return JSONResponse(
-        content=index,
+        content=payload,
         headers={"Cache-Control": "no-store"},
     )
+
+
+def _build_cross_doc_edges_for_source(
+    substrate: Substrate,
+    source_id: str,
+) -> list[dict[str, object]]:
+    """Return cross-doc edges touching ``source_id`` as flat dicts.
+
+    Filters via ``Substrate.list_cross_doc_relations(touching_source=...)``
+    so the returned set contains every edge incident to the distillation
+    regardless of direction. Each entry is a JSON-serializable dict
+    suitable for the Cytoscape overlay JS to consume verbatim.
+
+    Order follows the substrate iterator (lex-id), which is
+    deterministic across runs.
+    """
+    edges: list[dict[str, object]] = []
+    for rel in substrate.list_cross_doc_relations(touching_source=source_id):
+        edges.append(
+            {
+                "id": rel.id,
+                "from_source_id": rel.from_source_id,
+                "from_atom_id": rel.from_atom_id,
+                "to_source_id": rel.to_source_id,
+                "to_atom_id": rel.to_atom_id,
+                "kind": rel.kind,
+                "shared_entities": list(rel.shared_entities),
+            }
+        )
+    return edges
