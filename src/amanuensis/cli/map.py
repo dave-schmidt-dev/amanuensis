@@ -39,6 +39,7 @@ from amanuensis.fs._serialize import serialize_yaml
 from amanuensis.llm.queue import DispatchQueueEntry
 from amanuensis.schemas import (
     AgentAttribution,
+    CrossDocRelationSupersede,
     EntitySupersede,
     ProvenanceRecord,
     Resolution,
@@ -1865,3 +1866,191 @@ def relation_show_command(
         typer.echo("(this relation is the latest in its chain)")
     elif latest is not None:
         typer.echo(f"Latest in chain: {latest.id}")
+
+
+@relation_app.command("supersede")
+@require_marker
+def relation_supersede_command(
+    old_id: Annotated[
+        str,
+        typer.Argument(help="CrossDocRelation id to supersede (e.g. x-<hash>)."),
+    ],
+    new_id: Annotated[
+        str,
+        typer.Argument(help="Replacement CrossDocRelation id (must already exist)."),
+    ],
+    reason: Annotated[
+        str,
+        typer.Option(
+            "--reason",
+            help="Human-readable reason for the correction (recorded in the supersede).",
+        ),
+    ],
+    actor: Annotated[
+        str,
+        typer.Option(
+            "--actor",
+            help="Identifier of the human performing the correction.",
+        ),
+    ] = "cli",
+    dry_run: Annotated[
+        bool,
+        typer.Option(
+            "--dry-run",
+            help="Print what would be written without making any changes.",
+        ),
+    ] = False,
+    workspace: Annotated[
+        Path | None,
+        typer.Option(
+            "--workspace",
+            "-w",
+            help="Workspace root (must contain amanuensis.yaml). Defaults to CWD.",
+        ),
+    ] = None,
+) -> None:
+    """Supersede a cross-doc relation with a replacement record (T7.3).
+
+    Mirrors ``map entity merge`` for the flock + supervisor-PROV pattern:
+
+    1. Validate that both ``<old-id>`` and ``<new-id>`` exist as
+       ``CrossDocRelation`` records on disk.
+    2. Refuse to write if ``<old-id>`` is already superseded (the chain
+       walker resolves it past itself).
+    3. Build a fresh ``CrossDocRelationSupersede`` + matching
+       ``ProvenanceRecord`` for the supervisor action.
+    4. Acquire the workspace flock and write the prov record first, then
+       the supersede record. Append a mappings replay-log entry.
+
+    The mutating path acquires the workspace flock for the duration of
+    the write; the validation reads above run without the flock (they
+    only touch path existence + an immutable supersede chain).
+    """
+    workspace_path = workspace_from_kwargs({"workspace": workspace})
+    substrate = Substrate(workspace_path)
+
+    # --- Validate both ids resolve to on-disk CrossDocRelations -------
+    if not substrate.cross_doc_relation_path(old_id).is_file():
+        typer.secho(
+            f"cross-doc relation '{old_id}' not found in mappings/relations/",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+    if not substrate.cross_doc_relation_path(new_id).is_file():
+        typer.secho(
+            f"cross-doc relation '{new_id}' not found in mappings/relations/",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+    # --- Refuse if ``old_id`` is already superseded -------------------
+    latest = substrate.latest_cross_doc_relation_for(old_id)
+    if latest is not None and latest.id != old_id:
+        typer.secho(
+            f"cross-doc relation '{old_id}' is already superseded by '{latest.id}'; "
+            "supersede the latest in the chain",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+    now = datetime.now(UTC)
+    agent = AgentAttribution(kind="human", identifier=actor, role="human_supervisor")
+    role_attr = RoleAttribution(agent=agent, activity="superseded", at=now)
+
+    # --- Build the CrossDocRelationSupersede + matching PROV ----------
+    #
+    # Pattern mirrors ``entity_merge_command``: two compute_id passes
+    # because both the supersede record and its PROV record cross-
+    # reference each other's content hash.
+    sup_draft = CrossDocRelationSupersede(
+        id="v-" + "0" * 16,
+        supersedes_id=old_id,
+        superseded_by_id=new_id,
+        kind="cross-doc-relation",
+        reason=reason,
+        provenance_id="p-" + "0" * 16,
+        role_attributions=[role_attr],
+        at=now,
+        schema_version=1,
+    )
+    sup_id = compute_id(sup_draft)
+
+    prov_draft = ProvenanceRecord(
+        id="p-" + "0" * 16,
+        entity_type="cross-doc-relation-supersede",
+        entity_id=sup_id,
+        activity="cross-doc-relation-supersede",
+        activity_started_at=now,
+        activity_ended_at=now,
+        used_entity_ids=[],
+        was_attributed_to=agent,
+        was_influenced_by=[],
+        schema_version=1,
+    )
+    prov_id = compute_id(prov_draft)
+    prov = prov_draft.model_copy(update={"id": prov_id})
+    sup = sup_draft.model_copy(update={"id": sup_id, "provenance_id": prov_id})
+
+    # --- Dry-run: print what would be written -------------------------
+    if dry_run:
+        typer.echo("[dry-run] No writes will be made.")
+        typer.echo(f"Would write CrossDocRelationSupersede: {sup.id}")
+        typer.echo(f"  supersedes_id:    {sup.supersedes_id}")
+        typer.echo(f"  superseded_by_id: {sup.superseded_by_id}")
+        typer.echo(f"  reason:           {sup.reason}")
+        typer.echo(f"Would write ProvenanceRecord: {prov.id}")
+        typer.echo(f"Resulting latest in chain for {old_id}: {new_id}")
+        return
+
+    # --- Mutating path: acquire flock and write -----------------------
+    try:
+        with acquire_workspace_lock(workspace_path, timeout=5.0):
+            substrate_changes: list[str] = []
+
+            # Write the PROV record first so the supersede record's
+            # provenance pointer always points at an existing file.
+            prov_path = substrate.mappings_provenance_path(prov.id)
+            atomic_write_text(prov_path, serialize_yaml(prov))
+            substrate_changes.append(str(prov_path.relative_to(workspace_path)))
+
+            substrate.add_cross_doc_relation_supersede(sup)
+            sup_path = substrate.supersede_path(sup.id)
+            substrate_changes.append(str(sup_path.relative_to(workspace_path)))
+
+            # Inputs hash for the replay-log entry — canonicalise the
+            # tuple (old_id, new_id, reason) so byte-equivalent inputs
+            # produce byte-equivalent hashes.
+            inputs_payload = json.dumps(
+                {
+                    "new_id": new_id,
+                    "old_id": old_id,
+                    "reason": reason,
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+            inputs_hash = hashlib.sha256(inputs_payload).hexdigest()
+
+            actor_attr = AgentAttribution(kind="human", identifier=actor, role="human_supervisor")
+            ReplayLog.for_mappings(workspace_path).append(
+                actor=actor_attr,
+                activity="cross-doc-relation-supersede",
+                inputs_hash=inputs_hash,
+                outputs_hash=inputs_hash,
+                cache_hit=False,
+                substrate_changes=substrate_changes,
+                duration_seconds=0.0,
+                _lock_held=True,
+            )
+
+    except WorkspaceLockTimeout as exc:
+        typer.secho(
+            "workspace flock held by another process — wait or release .amanuensis-lock",
+            err=True,
+        )
+        raise typer.Exit(code=2) from exc
+
+    typer.echo(
+        f"Superseded cross-doc relation '{old_id}' -> '{new_id}'. "
+        f"CrossDocRelationSupersede id: {sup.id}"
+    )

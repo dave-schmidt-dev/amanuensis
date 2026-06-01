@@ -228,13 +228,180 @@ def test_show_renders_supersede_chain_section(
 
 
 # ---------------------------------------------------------------------------
+# T7.3: amanuensis map relation supersede <old-id> <new-id> --reason "..."
+# ---------------------------------------------------------------------------
+
+
+def test_supersede_writes_supersede_record(
+    tmp_workspace_with_two_cross_doc_relations: Path,
+) -> None:
+    """The supersede verb commits a CrossDocRelationSupersede and re-routes the chain."""
+    workspace = tmp_workspace_with_two_cross_doc_relations
+    sub = Substrate(workspace)
+    rels = list(sub.list_cross_doc_relations())
+    old, new = rels[0], rels[1]
+    result = runner.invoke(
+        map_app,
+        [
+            "relation",
+            "supersede",
+            old.id,
+            new.id,
+            "--reason",
+            "test correction",
+            "--workspace",
+            str(workspace),
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    terminus = sub.latest_cross_doc_relation_for(old.id)
+    assert terminus is not None
+    assert terminus.id == new.id
+
+
+def test_supersede_requires_reason_flag(
+    tmp_workspace_with_two_cross_doc_relations: Path,
+) -> None:
+    """Omitting ``--reason`` exits non-zero (Typer required-option error)."""
+    workspace = tmp_workspace_with_two_cross_doc_relations
+    sub = Substrate(workspace)
+    rels = list(sub.list_cross_doc_relations())
+    result = runner.invoke(
+        map_app,
+        [
+            "relation",
+            "supersede",
+            rels[0].id,
+            rels[1].id,
+            "--workspace",
+            str(workspace),
+        ],
+    )
+    assert result.exit_code != 0
+
+
+def test_supersede_rejects_unknown_old_id(
+    tmp_workspace_with_two_cross_doc_relations: Path,
+) -> None:
+    """An unknown ``<old-id>`` is rejected before any write happens."""
+    workspace = tmp_workspace_with_two_cross_doc_relations
+    result = runner.invoke(
+        map_app,
+        [
+            "relation",
+            "supersede",
+            "x-nonexistent",
+            "x-also-nonexistent",
+            "--reason",
+            "r",
+            "--workspace",
+            str(workspace),
+        ],
+    )
+    assert result.exit_code != 0
+
+
+def test_supersede_rejects_unknown_new_id(
+    tmp_workspace_with_two_cross_doc_relations: Path,
+) -> None:
+    """An unknown ``<new-id>`` is rejected before any write happens."""
+    workspace = tmp_workspace_with_two_cross_doc_relations
+    sub = Substrate(workspace)
+    rels = list(sub.list_cross_doc_relations())
+    result = runner.invoke(
+        map_app,
+        [
+            "relation",
+            "supersede",
+            rels[0].id,
+            "x-nonexistent",
+            "--reason",
+            "r",
+            "--workspace",
+            str(workspace),
+        ],
+    )
+    assert result.exit_code != 0
+
+
+def test_supersede_already_superseded_rejected(
+    tmp_workspace_with_two_cross_doc_relations: Path,
+) -> None:
+    """Once a relation is superseded, a second supersede on the old id is refused."""
+    workspace = tmp_workspace_with_two_cross_doc_relations
+    sub = Substrate(workspace)
+    rels = list(sub.list_cross_doc_relations())
+    old, new = rels[0], rels[1]
+    # First supersede succeeds.
+    first = runner.invoke(
+        map_app,
+        [
+            "relation",
+            "supersede",
+            old.id,
+            new.id,
+            "--reason",
+            "first",
+            "--workspace",
+            str(workspace),
+        ],
+    )
+    assert first.exit_code == 0, first.output
+    # Second supersede on the same already-superseded id fails.
+    second = runner.invoke(
+        map_app,
+        [
+            "relation",
+            "supersede",
+            old.id,
+            new.id,
+            "--reason",
+            "second",
+            "--workspace",
+            str(workspace),
+        ],
+    )
+    assert second.exit_code != 0
+
+
+def test_supersede_dry_run_writes_nothing(
+    tmp_workspace_with_two_cross_doc_relations: Path,
+) -> None:
+    """``--dry-run`` prints the plan without touching the substrate."""
+    workspace = tmp_workspace_with_two_cross_doc_relations
+    sub = Substrate(workspace)
+    rels = list(sub.list_cross_doc_relations())
+    old, new = rels[0], rels[1]
+    result = runner.invoke(
+        map_app,
+        [
+            "relation",
+            "supersede",
+            old.id,
+            new.id,
+            "--reason",
+            "dry",
+            "--dry-run",
+            "--workspace",
+            str(workspace),
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert "dry-run" in result.stdout.lower()
+    # No supersede record was written.
+    terminus = sub.latest_cross_doc_relation_for(old.id)
+    assert terminus is not None
+    assert terminus.id == old.id
+
+
+# ---------------------------------------------------------------------------
 # Help discoverability — sanity check on the new sub-app
 # ---------------------------------------------------------------------------
 
 
-def test_map_relation_help_lists_read_verbs() -> None:
-    """``map relation --help`` lists the read-only verbs landed so far."""
+def test_map_relation_help_lists_verbs() -> None:
+    """``map relation --help`` lists the three new verbs."""
     result = runner.invoke(map_app, ["relation", "--help"])
     assert result.exit_code == 0, result.output
-    for verb in ("list", "show"):
+    for verb in ("list", "show", "supersede"):
         assert verb in result.stdout
