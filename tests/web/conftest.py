@@ -895,7 +895,7 @@ def tmp_workspace_with_probandum_tree(tmp_path: Path) -> dict[str, str]:
         child_id=penultimate.id,
         child_kind="probandum",
         child_source_id=None,
-        warrant_suffix="ult->pen",
+        warrant_suffix="ultimate to penultimate",
     )
     sub.add_probandum_edge(edge_ult_pen)
 
@@ -904,7 +904,7 @@ def tmp_workspace_with_probandum_tree(tmp_path: Path) -> dict[str, str]:
         child_id=interim.id,
         child_kind="probandum",
         child_source_id=None,
-        warrant_suffix="pen->int",
+        warrant_suffix="penultimate to interim",
     )
     sub.add_probandum_edge(edge_pen_int)
 

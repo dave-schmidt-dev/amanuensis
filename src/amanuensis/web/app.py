@@ -33,6 +33,7 @@ from .routes import dashboard as dashboard_routes
 from .routes import entities as entities_routes
 from .routes import forms as form_routes
 from .routes import probanda as probanda_routes
+from .routes import probandum_edges as probandum_edge_routes
 from .routes import relations as relation_routes
 from .routes import resolutions as resolution_routes
 from .routes import source as source_routes
@@ -154,6 +155,7 @@ def create_app() -> FastAPI:
     app.include_router(resolution_routes.router)
     app.include_router(cross_doc_relation_routes.router)
     app.include_router(probanda_routes.router)
+    app.include_router(probandum_edge_routes.router)
 
     return app
 

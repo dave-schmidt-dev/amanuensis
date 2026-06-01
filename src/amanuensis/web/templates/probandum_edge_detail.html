@@ -1,0 +1,118 @@
+{% extends "base.html" %}
+{% block title %}{{ edge.id }} &middot; probandum edge &middot; amanuensis{% endblock %}
+{% block nav %}
+<a href="/" class="text-neutral-300 hover:text-neutral-50">&larr; dashboard</a>
+<a href="/probanda" class="text-neutral-300 hover:text-neutral-50">probanda</a>
+{% endblock %}
+{% block content %}
+<section class="space-y-6">
+  <header class="space-y-1">
+    <p class="text-xs uppercase tracking-wider text-neutral-500">probandum edge</p>
+    <h1 class="font-mono text-xl font-semibold tracking-tight text-neutral-50 break-all">{{ edge.id }}</h1>
+    <p class="text-sm text-neutral-300">
+      kind: <span class="rounded bg-neutral-800 px-2 py-0.5 text-xs text-neutral-100">{{ edge.kind }}</span>
+    </p>
+  </header>
+
+  <section class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+    <div class="rounded border border-neutral-800 bg-neutral-900 p-3">
+      <p class="text-xs uppercase tracking-wider text-neutral-500">parent (probandum)</p>
+      <p class="mt-1">
+        <a
+          href="/probanda/{{ edge.parent_probandum_id }}"
+          class="font-mono text-xs text-neutral-100 underline decoration-neutral-700 underline-offset-2 hover:decoration-neutral-300"
+        >{{ edge.parent_probandum_id }}</a>
+      </p>
+      {% if parent_label %}
+      <p class="mt-2 text-xs text-neutral-400">{{ parent_label }}</p>
+      {% else %}
+      <p class="mt-2 text-xs text-neutral-500">&lt;missing on disk&gt;</p>
+      {% endif %}
+    </div>
+    <div class="rounded border border-neutral-800 bg-neutral-900 p-3">
+      <p class="text-xs uppercase tracking-wider text-neutral-500">
+        child ({{ edge.child_kind }})
+      </p>
+      <p class="mt-1">
+        {% if edge.child_kind == 'probandum' %}
+          <a
+            href="/probanda/{{ edge.child_id }}"
+            class="font-mono text-xs text-neutral-100 underline decoration-neutral-700 underline-offset-2 hover:decoration-neutral-300"
+          >{{ edge.child_id }}</a>
+        {% elif edge.child_kind == 'atom' %}
+          <a
+            href="/distillations/{{ edge.child_source_id }}/atoms/{{ edge.child_id }}"
+            class="font-mono text-xs text-neutral-100 underline decoration-neutral-700 underline-offset-2 hover:decoration-neutral-300"
+          >{{ edge.child_id }}</a>
+          <span class="ml-2 text-xs text-neutral-500">(source {{ edge.child_source_id }})</span>
+        {% elif edge.child_kind == 'cross-doc-relation' %}
+          <a
+            href="/cross-doc-relations/{{ edge.child_id }}"
+            class="font-mono text-xs text-neutral-100 underline decoration-neutral-700 underline-offset-2 hover:decoration-neutral-300"
+          >{{ edge.child_id }}</a>
+        {% endif %}
+      </p>
+      {% if child_label %}
+      <p class="mt-2 text-xs text-neutral-400">{{ child_label }}</p>
+      {% else %}
+      <p class="mt-2 text-xs text-neutral-500">&lt;missing on disk&gt;</p>
+      {% endif %}
+    </div>
+  </section>
+
+  <section class="rounded border border-neutral-800 bg-neutral-900 p-4">
+    <h2 class="text-lg font-semibold text-neutral-50">warrant</h2>
+    <p class="mt-2 text-sm text-neutral-100 whitespace-pre-wrap">{{ edge.warrant }}</p>
+    <dl class="mt-4 grid grid-cols-1 gap-2 text-xs sm:grid-cols-3">
+      <div class="rounded border border-neutral-800 bg-neutral-950 p-2">
+        <dt class="uppercase tracking-wider text-neutral-500">defensibility</dt>
+        <dd class="mt-1 text-neutral-200">{{ edge.warrant_defensibility }}</dd>
+      </div>
+      <div class="rounded border border-neutral-800 bg-neutral-950 p-2">
+        <dt class="uppercase tracking-wider text-neutral-500">confidence</dt>
+        <dd class="mt-1 text-neutral-200">{{ edge.confidence }}</dd>
+      </div>
+      <div class="rounded border border-neutral-800 bg-neutral-950 p-2 sm:col-span-3">
+        <dt class="uppercase tracking-wider text-neutral-500">basis</dt>
+        <dd class="mt-1 text-neutral-200 whitespace-pre-wrap">{{ edge.warrant_basis }}</dd>
+      </div>
+    </dl>
+  </section>
+
+  <section class="rounded border border-neutral-800 bg-neutral-900 p-4">
+    <h2 class="text-lg font-semibold text-neutral-50">provenance</h2>
+    <p class="mt-2 font-mono text-xs text-neutral-400 break-all">{{ edge.provenance_id }}</p>
+  </section>
+
+  <section class="rounded border border-neutral-800 bg-neutral-900 p-4">
+    <h2 class="text-lg font-semibold text-neutral-50">supersede chain</h2>
+    {% if chain_entries %}
+    <ul class="mt-3 space-y-2 text-sm text-neutral-300">
+      {% for entry in chain_entries %}
+      <li>
+        {% if entry.direction == 'forward' %}
+        superseded by
+        {% else %}
+        supersedes
+        {% endif %}
+        <a
+          href="/probandum-edges/{{ entry.other_id }}"
+          class="font-mono text-neutral-100 underline decoration-neutral-700 underline-offset-2 hover:decoration-neutral-300"
+        >{{ entry.other_id }}</a>
+        <span class="ml-1 text-xs text-neutral-500">(reason: {{ entry.reason }})</span>
+      </li>
+      {% endfor %}
+    </ul>
+    {% else %}
+    <p class="mt-2 text-sm text-neutral-500">(no supersede chain)</p>
+    {% endif %}
+  </section>
+
+  <p class="text-sm">
+    <a
+      href="/probanda/{{ edge.parent_probandum_id }}"
+      class="text-neutral-300 underline decoration-neutral-700 underline-offset-2 hover:decoration-neutral-300"
+    >&larr; back to parent probandum</a>
+  </p>
+</section>
+{% endblock %}

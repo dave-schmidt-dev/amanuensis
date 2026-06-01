@@ -194,3 +194,57 @@ def test_detail_route_404(
     client = TestClient(web_app)
     response = client.get("/probanda/p-nonexistent00000")
     assert response.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# T10.3 — GET /probandum-edges/<id> detail route
+# ---------------------------------------------------------------------------
+
+
+def test_edge_detail_route_renders_edge(
+    tmp_workspace_with_probandum_tree: dict[str, str],
+    web_app: FastAPI,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Edge detail page renders the warrant, defensibility, basis, confidence."""
+    monkeypatch.setenv("AMANUENSIS_WORKSPACE", tmp_workspace_with_probandum_tree["workspace"])
+    sub = Substrate(Path(tmp_workspace_with_probandum_tree["workspace"]))
+    edge = sub.get_probandum_edge(tmp_workspace_with_probandum_tree["edge_ult_pen"])
+    client = TestClient(web_app)
+    response = client.get(f"/probandum-edges/{edge.id}")
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-store"
+    assert edge.warrant in response.text
+    assert edge.warrant_defensibility in response.text
+    assert edge.warrant_basis in response.text
+    assert edge.confidence in response.text
+    assert edge.kind in response.text
+
+
+def test_edge_detail_route_links_parent_and_child(
+    tmp_workspace_with_probandum_tree: dict[str, str],
+    web_app: FastAPI,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Edge detail page links parent → /probanda/<id> and child → /probanda/<id>."""
+    monkeypatch.setenv("AMANUENSIS_WORKSPACE", tmp_workspace_with_probandum_tree["workspace"])
+    client = TestClient(web_app)
+    edge_id = tmp_workspace_with_probandum_tree["edge_ult_pen"]
+    response = client.get(f"/probandum-edges/{edge_id}")
+    assert response.status_code == 200
+    # Parent link (ultimate).
+    assert f'href="/probanda/{tmp_workspace_with_probandum_tree["ultimate"]}"' in response.text
+    # Child link (penultimate, probandum kind).
+    assert f'href="/probanda/{tmp_workspace_with_probandum_tree["penultimate"]}"' in response.text
+
+
+def test_edge_detail_route_404(
+    web_app: FastAPI,
+    tmp_workspace_with_probandum_tree: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Unknown probandum-edge id returns 404."""
+    monkeypatch.setenv("AMANUENSIS_WORKSPACE", tmp_workspace_with_probandum_tree["workspace"])
+    client = TestClient(web_app)
+    response = client.get("/probandum-edges/q-nonexistent00000")
+    assert response.status_code == 404
