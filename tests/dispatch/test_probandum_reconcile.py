@@ -35,6 +35,7 @@ from amanuensis.dispatch.reconcile import (
 from amanuensis.fs import Substrate
 from amanuensis.schemas import (
     AgentAttribution,
+    ProbandumSupersede,
     ProvenanceRecord,
     RoleAttribution,
     compute_id,
@@ -412,3 +413,66 @@ def test_lineage_incomplete_raises_clarification(
     haystack_refs = " ".join(c.context_refs)
     assert orphan_parent.id in haystack_refs
     assert orphan_child.id in haystack_refs
+
+
+# --- T6.4: Probandum supersede flow end-to-end --------------------------
+
+
+def test_probandum_supersede_flow_end_to_end(
+    tmp_workspace_with_walton_snapshot: Path,
+    hierarchize_role_attribution: RoleAttribution,
+    hierarchize_provenance: ProvenanceRecord,
+) -> None:
+    """Two reconciled Probanda + a supersede pointer chain correctly.
+
+    Phase 2c T6.4 — end-to-end smoke test of the M2 substrate IO already
+    landed, exercised through the M6 reconciler entry point. No new
+    implementation is needed.
+
+    Narrative: Hierarchize proposes v1; the auditor flags it; supervisor
+    issues a corrected v2; supersede pointer chains v1 -> v2 so the
+    chain-walker resolves v1's id to the v2 record.
+    """
+    sub = Substrate(tmp_workspace_with_walton_snapshot)
+
+    prob_v1 = _build_probandum(
+        _base_probandum_candidate(
+            statement="ACME breached the contract.",
+            kind="ultimate",
+        ),
+        sub,
+        hierarchize_provenance,
+        role_attributions=[hierarchize_role_attribution],
+    )
+    assert prob_v1 is not None
+
+    prob_v2 = _build_probandum(
+        _base_probandum_candidate(
+            statement="ACME breached §3.2 of the contract.",  # revised wording
+            kind="ultimate",
+        ),
+        sub,
+        hierarchize_provenance,
+        role_attributions=[hierarchize_role_attribution],
+    )
+    assert prob_v2 is not None
+    assert prob_v2.id != prob_v1.id
+
+    # Write the supersede pointer (mimics supervisor action).
+    sup_draft = ProbandumSupersede(
+        id="u-placeholder0000",
+        supersedes_id=prob_v1.id,
+        superseded_by_id=prob_v2.id,
+        reason="Auditor flagged imprecise wording; supervisor narrowed to §3.2.",
+        provenance_id=hierarchize_provenance.id,
+        role_attributions=[hierarchize_role_attribution],
+        at=datetime(2026, 6, 1, 14, 0, 0, tzinfo=UTC),
+        schema_version=1,
+    )
+    sup = sup_draft.model_copy(update={"id": compute_id(sup_draft)})
+    sub.add_probandum_supersede(sup)
+
+    # The chain-walker resolves prob_v1.id -> prob_v2 (the terminus).
+    terminus = sub.latest_probandum_for(prob_v1.id)
+    assert terminus is not None
+    assert terminus.id == prob_v2.id
