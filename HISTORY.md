@@ -1395,6 +1395,79 @@ Format: dated entries, newest first. Bug entries cite the area touched:
   by `@pytest.mark.e2e`). | files: INVARIANTS.md, HISTORY.md,
   TASKS.md, tests/docs/test_invariants_have_gate_tests.py
 
+## 2026-06-01
+
+- **Phase 2b (Connect) — SHIPPED.** All ~58 tasks complete across 11
+  milestones (M1 schema foundation, M2 substrate IO, M3 INV-15 gate +
+  invariant extensions, M4 reconciliation gate, M5 Connector +
+  Auditor skills, M6 dispatch driver integration, M7 CLI surface, M8
+  web routes + Cytoscape overlay, M9 static export additions, M10
+  charter + documentation sweep, M11 integration + E2E + final
+  validation). Final gates met: 1019 fast pytest cases pass
+  (≥1017 baseline ✓), 64 invariants pass (one INV-15 added to the 50
+  Phase 2a invariants + new gate cases on existing invariants ✓),
+  9 integration tests pass (2 new T11.1 Phase 2b end-to-end +
+  byte-identical-rerun cases), 15 Playwright specs pass (12 prior +
+  3 new T11.2 cross-doc overlay flow cases), pyright strict (0 NEW
+  errors in shipped files), ruff clean, vulture clean (0 findings).
+  61 commits across the phase including docs / HISTORY / TASKS
+  updates. New schemas: `CrossDocRelation` (``x-*.yaml`` under
+  ``mappings/relations/``) and `CrossDocRelationSupersede`
+  (``v-*.yaml`` under ``mappings/supersedes/``). New role:
+  ``amanuensis:map:connect`` (with `map_connect.md` skill).
+  New CLI: ``amanuensis map relation list/show/supersede`` plus
+  ``amanuensis map --connect-only`` flag and
+  ``amanuensis export --workspace-appendix``. New web routes:
+  ``GET /cross-doc-relations`` list + filters,
+  ``GET /cross-doc-relations/<id>`` detail page; Cytoscape graph
+  overlay (`cross_doc_overlay.js`) wired to a ``#cross-doc-toggle``
+  on every distillation's ``/relations`` page. New static export:
+  workspace appendix bundle (`workspace_appendix.py`) with the
+  cross-doc relation surface. INV-15 (shared-entity gate) active
+  with executable gate tests. Defects caught and fixed inline:
+  `CrossDocRelationSupersede` initially missing ``kind`` discriminator
+  and ``reason`` validator (M1 fix); re-entrant flock issue when
+  ``run_connect_phase`` was called from inside the workspace flock
+  (M6 fix); plan-vs-actual schema mismatches on `Clarification`
+  fields (``raised_by``/``question`` not ``role_attributions``/
+  ``body``) and `Atom` fields (``operands`` not ``operand_refs``;
+  ``narrative`` not ``body_excerpt``); ``Substrate.list_supersedes``
+  only yielded ``s-/t-*`` records so cross-doc supersede walking uses
+  a dedicated ``v-*.yaml`` glob; ``AgentAttribution.role`` Literal
+  and ``ProvenanceRecord.entity_type`` Literal had to be additively
+  extended to absorb the Phase 2b kinds; an ``.antigravitycli/``
+  symlink accidentally committed (cleanup at 80a25c1); workspace-
+  appendix export was Python-API-only after M9 (CLI wiring landed in
+  M10 T10.0). Pre-existing Phase 2a tech debt surfaced:
+  ``add_resolution_supersede`` and ``add_entity_supersede`` lack the
+  immutability guard the new ``add_cross_doc_relation_supersede``
+  has — worth a backport in a future cycle. Open follow-ups: real-
+  LLM Connect dispatch deferred to first engagement (mirroring Phase
+  2a M11.2's contract); cluster chunking for entities with 200+
+  atoms deferred to Phase 2b.5; Phase 2a supersede-immutability
+  backport tracked. T11.2 deliberately simplified the overlay-toggle
+  spec to a direct probe of
+  ``/distillations/<src>/relations/atom-entity-index?include_cross_doc=1``
+  because the project's Cytoscape ``cose-bilkent`` layout fails to
+  register in the headless Chromium runner (pre-existing condition;
+  the smoke specs don't depend on ``cy.init`` completing). The
+  cross-doc list + detail navigation flow is exercised as a
+  separate Playwright sub-spec without the Cytoscape dependency.
+  | files: src/amanuensis/schemas/{cross_doc_relation,
+  cross_doc_relation_supersede}.py, src/amanuensis/fs/substrate.py,
+  src/amanuensis/dispatch/{reconcile,connect_orchestrator}.py,
+  src/amanuensis/cli/{map,export}.py,
+  src/amanuensis/web/routes/{cross_doc_relations,entities,relations}.py,
+  src/amanuensis/web/templates/{cross_doc_relations_list,
+  cross_doc_relation_detail,entity_detail,relation_graph}.html,
+  src/amanuensis/web/static/js/cross_doc_overlay.js,
+  src/amanuensis/export/workspace_appendix.py,
+  src/amanuensis/skills/{map_connect,map_audit}.md, INVARIANTS.md,
+  docs/{architecture,schema-reference,cli-reference,
+  skill-author-guide,supervision-protocol}.md, TASKS.md,
+  tests/integration/test_phase2b_connect_end_to_end.py,
+  tests/e2e/{_fixture_builder.py,test_phase2b_overlay_flow.spec.ts}
+
 ## 2026-05-31
 
 - **Phase 2a (Resolve) — SHIPPED.** All 82 tasks complete across 11

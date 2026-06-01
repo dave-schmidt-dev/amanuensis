@@ -40,13 +40,21 @@ Prior plan: `~/Documents/Projects/.plans/amanuensis/phase1-distill-foundation-20
   new invariants (INV-12/13/14) active with executable gate tests.
   See HISTORY.md 2026-05-31 entry for the per-milestone breakdown,
   defects caught + remediated, and full validation transcript.
-- [pending] Phase 2b (Connect) — cross-doc support/attack edges built
-  on Phase 2a's resolved entities. Full brainstorm cycle required;
-  not blocked (Phase 2a complete). Begin with `~/.agent/prompts/
-  brainstorm.md` cycle when ready.
+- [done] **Phase 2b (Connect) — SHIPPED 2026-06-01.** All ~58 tasks
+  complete across 11 milestones. 1019 fast pytest cases + 64
+  invariants + 9 integration + 15 Playwright specs pass; pyright
+  strict (0 NEW errors) + ruff + vulture clean. 2 new schemas
+  (CrossDocRelation, CrossDocRelationSupersede); 1 new role
+  (`amanuensis:map:connect`); new CLI verbs (map relation
+  list/show/supersede, map --connect-only, export
+  --workspace-appendix); 2 new web routes (`/cross-doc-relations`
+  list + detail) plus Cytoscape overlay; 1 new invariant (INV-15
+  shared-entity gate) active with executable gate tests. See
+  HISTORY.md 2026-06-01 entry for the per-milestone breakdown,
+  defects caught + remediated, and full validation transcript.
 - [pending] Phase 2c (Hierarchize) — probandum hierarchies built on
-  Phase 2b's cross-doc edges. Full brainstorm cycle required; blocked
-  on 2b implementation.
+  Phase 2b's cross-doc edges. Full brainstorm cycle required;
+  Phase 2b complete; not blocked.
 - [pending] Phase 3 (Extend) — full brainstorm cycle (blocked on
   Phase 2 implementation).
 - [pending] Phase 4 (Synthesize) — packaging into agent-usable
