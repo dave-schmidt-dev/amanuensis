@@ -2795,7 +2795,10 @@ def probandum_link_command(
         warrant_defensibility,
     )
     confidence_lit = cast("Literal['high', 'medium', 'low']", confidence)
-    child_kind_lit = cast("Literal['probandum', 'atom', 'cross-doc-relation']", child_kind_str)
+    # ``child_kind_str`` is already a narrow literal — pyright would
+    # otherwise emit reportUnnecessaryCast. We keep the explicit alias
+    # so the type at the call site reads cleanly.
+    child_kind_lit: Literal["probandum", "atom", "cross-doc-relation"] = child_kind_str  # pyright: ignore[reportAssignmentType]
 
     now = datetime.now(UTC)
     agent = AgentAttribution(kind="human", identifier=actor, role="human_supervisor")
