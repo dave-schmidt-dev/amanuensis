@@ -25,6 +25,7 @@ import pytest
 from amanuensis.fs import Substrate
 from amanuensis.fs._atomic import atomic_write_text
 from amanuensis.fs._serialize import (
+    serialize_atom_md,
     serialize_entity_md,
     serialize_resolution_yaml,
     serialize_yaml,
@@ -40,6 +41,8 @@ from amanuensis.schemas import (
     OperandRef,
     OperandTypeSchema,
     ParagraphEntry,
+    Probandum,
+    ProbandumEdge,
     ProvenanceRecord,
     Resolution,
     RoleAttribution,
@@ -725,3 +728,192 @@ def web_app() -> object:
     from amanuensis.web.app import create_app
 
     return create_app()
+
+
+# ---------------------------------------------------------------------------
+# Phase 2c M10 — probandum tree web fixtures
+# ---------------------------------------------------------------------------
+#
+# Mirror of ``tests/dispatch/conftest.py``'s
+# ``tmp_workspace_with_probandum_tree`` but shaped per the M10 spec: one
+# ``ultimate`` + one ``penultimate`` + one ``interim`` + two edges. The
+# Walton snapshot is pinned so ``Substrate.add_probandum``'s INV-18 gate
+# passes. The fixture returns a dict mapping role labels to substrate ids
+# so route tests can build URLs without re-deriving content-addressable
+# hashes.
+
+_M10_STABLE_AT = datetime(2026, 6, 1, 12, 0, 0, tzinfo=UTC)
+_M10_SOURCE_ID = "src-tree"
+
+
+def _m10_role_attribution() -> RoleAttribution:
+    return RoleAttribution(
+        agent=AgentAttribution(kind="llm", identifier="hierarchize", role="hierarchize"),
+        activity="proposed",
+        at=_M10_STABLE_AT,
+    )
+
+
+def _m10_build_atom(
+    *,
+    atom_id: str,
+    source_id: str,
+    narrative: str,
+    char_offset: int,
+) -> Atom:
+    return Atom(
+        id=atom_id,
+        source_id=source_id,
+        section_path=["body"],
+        paragraph_index=0,
+        sentence_index=None,
+        char_span=(char_offset, char_offset + 30),
+        scale_anchor="paragraph",
+        kind="claim",
+        predicate="alleges",
+        operands=[OperandRef(role="subject", kind="entity", value="e-x", type_hint=None)],
+        narrative=narrative,
+        qualifier_level=None,
+        qualifier_basis=None,
+        provenance_id="p-m10fixture00001",
+        role_attributions=[_m10_role_attribution()],
+        schema_version=1,
+    )
+
+
+def _m10_plant_atom(workspace: Path, atom: Atom) -> None:
+    path = workspace / "distillations" / atom.source_id / "atoms" / f"{atom.id}.md"
+    atomic_write_text(path, serialize_atom_md(atom))
+
+
+def _m10_build_probandum(
+    *,
+    statement: str,
+    kind: str,
+    scheme: str,
+    alternatives_considered: list[str],
+    confidence: str = "high",
+) -> Probandum:
+    """Build a Probandum with a content-addressable id."""
+    role_attr = _m10_role_attribution()
+    draft = Probandum(
+        id="p-placeholder0001",
+        statement=statement,
+        kind=kind,  # pyright: ignore[reportArgumentType]
+        scheme=scheme,
+        alternatives_considered=alternatives_considered,
+        confidence=confidence,  # pyright: ignore[reportArgumentType]
+        provenance_id="p-m10fixture00001",
+        role_attributions=[role_attr],
+        schema_version=1,
+    )
+    return draft.model_copy(update={"id": compute_id(draft)})
+
+
+def _m10_build_edge(
+    *,
+    parent_probandum_id: str,
+    child_id: str,
+    child_kind: str,
+    child_source_id: str | None,
+    warrant_suffix: str,
+    kind: str = "supports",
+) -> ProbandumEdge:
+    role_attr = _m10_role_attribution()
+    draft = ProbandumEdge(
+        id="q-placeholder0001",
+        parent_probandum_id=parent_probandum_id,
+        child_id=child_id,
+        child_kind=child_kind,  # pyright: ignore[reportArgumentType]
+        child_source_id=child_source_id,
+        kind=kind,  # pyright: ignore[reportArgumentType]
+        warrant=f"Decomposition warrant for {warrant_suffix}.",
+        warrant_defensibility="methodology-derived",
+        warrant_basis="Wigmore §III decomposition.",
+        confidence="high",
+        provenance_id="p-m10fixture00001",
+        role_attributions=[role_attr],
+        schema_version=1,
+    )
+    return draft.model_copy(update={"id": compute_id(draft)})
+
+
+@pytest.fixture
+def tmp_workspace_with_probandum_tree(tmp_path: Path) -> dict[str, str]:
+    """Workspace with 1 ultimate + 1 penultimate + 1 interim + 2 edges.
+
+    Layout (top-to-bottom):
+        ultimate  --supports-->  penultimate  --supports-->  interim
+
+    Walton-scheme snapshot is pinned so INV-18 passes. Returns a dict
+    mapping role labels (``workspace``, ``ultimate``, ``penultimate``,
+    ``interim``, ``edge_ult_pen``, ``edge_pen_int``) to real substrate
+    ids.
+    """
+    marker = tmp_path / "amanuensis.yaml"
+    marker.write_text(
+        "schema_version: 1\nproject_name: m10-probandum-tree\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "distillations" / _M10_SOURCE_ID).mkdir(parents=True, exist_ok=True)
+
+    sub = Substrate(tmp_path)
+    sub.snapshot_walton_schemes()
+
+    ultimate = _m10_build_probandum(
+        statement="ACME prevails on its breach claim against Smith.",
+        kind="ultimate",
+        scheme="argument-from-expert-opinion",
+        alternatives_considered=[],
+    )
+    sub.add_probandum(ultimate)
+
+    penultimate = _m10_build_probandum(
+        statement="Smith breached §3 by failing to deliver the April 2024 shipment.",
+        kind="penultimate",
+        scheme="argument-from-sign",
+        alternatives_considered=[
+            "Smith tendered but ACME rejected for unrelated quality reasons.",
+            "Smith and ACME mutually deferred the April 2024 delivery.",
+        ],
+    )
+    sub.add_probandum(penultimate)
+
+    interim = _m10_build_probandum(
+        statement="Smith never tendered the April 2024 shipment under §3.",
+        kind="interim",
+        scheme="argument-from-sign",
+        alternatives_considered=[
+            "Smith tendered late but ACME's records mis-dated the receipt.",
+        ],
+        confidence="medium",
+    )
+    sub.add_probandum(interim)
+
+    edge_ult_pen = _m10_build_edge(
+        parent_probandum_id=ultimate.id,
+        child_id=penultimate.id,
+        child_kind="probandum",
+        child_source_id=None,
+        warrant_suffix="ult->pen",
+    )
+    sub.add_probandum_edge(edge_ult_pen)
+
+    edge_pen_int = _m10_build_edge(
+        parent_probandum_id=penultimate.id,
+        child_id=interim.id,
+        child_kind="probandum",
+        child_source_id=None,
+        warrant_suffix="pen->int",
+    )
+    sub.add_probandum_edge(edge_pen_int)
+
+    return {
+        "workspace": str(tmp_path),
+        "ultimate": ultimate.id,
+        "penultimate": penultimate.id,
+        "interim": interim.id,
+        "edge_ult_pen": edge_ult_pen.id,
+        "edge_pen_int": edge_pen_int.id,
+        "source_id": _M10_SOURCE_ID,
+    }

@@ -1,0 +1,96 @@
+{% extends "base.html" %}
+{% block title %}probanda &middot; amanuensis{% endblock %}
+{% block nav %}
+<a href="/" class="text-neutral-300 hover:text-neutral-50">&larr; dashboard</a>
+<a href="/cross-doc-relations" class="text-neutral-300 hover:text-neutral-50">cross-doc relations</a>
+<a href="/entities" class="text-neutral-300 hover:text-neutral-50">entities</a>
+{% endblock %}
+{% block content %}
+<section class="space-y-6">
+  <header class="space-y-1">
+    <p class="text-xs uppercase tracking-wider text-neutral-500">probanda</p>
+    <h1 class="text-2xl font-semibold tracking-tight text-neutral-50">probandum browser</h1>
+    <p class="text-sm text-neutral-400">
+      {{ filtered_count }} probandum{{ '' if filtered_count == 1 else 'a' }}
+      {% if kind or scheme %}
+      <span class="text-neutral-500">&mdash; filtered</span>
+      {% endif %}
+    </p>
+  </header>
+
+  <form
+    method="get"
+    action="/probanda"
+    class="grid grid-cols-1 gap-3 rounded border border-neutral-800 bg-neutral-900 p-4 sm:grid-cols-2 lg:grid-cols-3"
+  >
+    <label class="flex flex-col gap-1 text-xs">
+      <span class="uppercase tracking-wider text-neutral-500">kind</span>
+      <select
+        name="kind"
+        class="rounded border border-neutral-700 bg-neutral-950 px-2 py-1.5 text-sm text-neutral-100 focus:border-neutral-500 focus:outline-none"
+        onchange="this.form.submit()"
+      >
+        <option value="" {% if kind == "" %}selected{% endif %}>all</option>
+        {% for k in kinds %}
+        <option value="{{ k }}" {% if kind == k %}selected{% endif %}>{{ k }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label class="flex flex-col gap-1 text-xs">
+      <span class="uppercase tracking-wider text-neutral-500">scheme</span>
+      <input
+        type="text"
+        name="scheme"
+        value="{{ scheme }}"
+        placeholder="exact Walton scheme name…"
+        class="rounded border border-neutral-700 bg-neutral-950 px-2 py-1.5 text-sm text-neutral-100 focus:border-neutral-500 focus:outline-none"
+      />
+    </label>
+    <div class="flex items-end">
+      <button
+        type="submit"
+        class="rounded border border-neutral-700 bg-neutral-800 px-3 py-1.5 text-sm text-neutral-100 hover:bg-neutral-700"
+      >apply filters</button>
+    </div>
+  </form>
+
+  {% if probanda %}
+  <div class="overflow-x-auto rounded border border-neutral-800">
+    <table class="min-w-full divide-y divide-neutral-800 text-sm">
+      <thead class="bg-neutral-900 text-left text-xs uppercase tracking-wider text-neutral-400">
+        <tr>
+          <th scope="col" class="px-4 py-2">id</th>
+          <th scope="col" class="px-4 py-2">kind</th>
+          <th scope="col" class="px-4 py-2">scheme</th>
+          <th scope="col" class="px-4 py-2">statement</th>
+          <th scope="col" class="px-4 py-2">confidence</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-neutral-800 bg-neutral-950">
+        {% for p in probanda %}
+        <tr class="hover:bg-neutral-900">
+          <td class="px-4 py-2">
+            <a
+              href="/probanda/{{ p.id }}"
+              class="font-mono text-xs text-neutral-100 underline decoration-neutral-700 underline-offset-2 hover:decoration-neutral-300"
+            >{{ p.id }}</a>
+          </td>
+          <td class="px-4 py-2 text-neutral-300">{{ p.kind }}</td>
+          <td class="px-4 py-2 text-xs text-neutral-400">{{ p.scheme }}</td>
+          <td class="px-4 py-2 text-neutral-200">{{ p.statement_excerpt }}</td>
+          <td class="px-4 py-2 text-xs text-neutral-400">{{ p.confidence }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="rounded border border-dashed border-neutral-800 bg-neutral-900 p-6 text-center">
+    <p class="text-neutral-300">no probanda found</p>
+    <p class="mt-1 text-xs text-neutral-500">
+      run the Map-Hierarchize pipeline to populate the argument tree.
+    </p>
+  </div>
+  {% endif %}
+</section>
+{% endblock %}
