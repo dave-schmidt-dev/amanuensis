@@ -1,10 +1,13 @@
-"""Tests for the CrossDocRelationSupersede schema (Phase 2b M1).
+"""Tests for the CrossDocRelationSupersede schema.
 
-Coverage:
+Coverage (one test per requirement):
 
-- T1.4: minimal-valid construction (round-trip via attribute access);
-  ``extra="forbid"`` rejects unknown fields
-- T1.5: content-addressable id stability — ``at`` is volatile, ``v-`` prefix
+- Round-trip: build → ``model_dump()`` → reconstruct → equal
+- Minimal-valid construction
+- ``extra="forbid"`` rejects unknown fields
+- Literal discriminator: ``kind`` defaults to ``"cross-doc-relation"``
+- ``reason`` validator rejects empty / whitespace-only strings
+- Content-addressable id stability: ``at`` is volatile, ``v-`` prefix
 """
 
 from __future__ import annotations
@@ -36,6 +39,21 @@ def cross_doc_relation_supersede_payload(
         "at": datetime(2026, 5, 31, 12, 0, 0, tzinfo=UTC),
         "schema_version": 1,
     }
+
+
+@pytest.fixture
+def cross_doc_relation_supersede(
+    cross_doc_relation_supersede_payload: dict[str, Any],
+) -> CrossDocRelationSupersede:
+    return CrossDocRelationSupersede(**cross_doc_relation_supersede_payload)
+
+
+def test_cross_doc_relation_supersede_round_trip(
+    cross_doc_relation_supersede: CrossDocRelationSupersede,
+) -> None:
+    dump = cross_doc_relation_supersede.model_dump()
+    rebuilt = CrossDocRelationSupersede(**dump)
+    assert rebuilt == cross_doc_relation_supersede
 
 
 def test_minimal_supersede(

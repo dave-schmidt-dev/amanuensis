@@ -1,12 +1,14 @@
-"""Tests for the CrossDocRelation schema (Phase 2b M1).
+"""Tests for the CrossDocRelation schema.
 
-Coverage grows across tasks:
+Coverage (one test per requirement):
 
-- T1.1: minimal-valid construction
-- T1.2: rejection cases — extra-field, invalid-kind; empty
-  ``shared_entities`` is accepted at the schema layer (the non-empty
-  gate lives in M2 substrate, INV-15)
-- T1.3: content-addressable id stability — ``provenance_id`` is volatile;
+- Round-trip: build → ``model_dump()`` → reconstruct → equal
+- Minimal-valid construction
+- ``extra="forbid"`` rejects unknown fields
+- Empty ``shared_entities`` is accepted at the schema layer (the
+  non-empty gate lives in M2 substrate, INV-15)
+- Literal discriminator: invalid ``kind`` raises
+- Content-addressable id stability: ``provenance_id`` is volatile;
   id changes when ``kind`` changes; ``x-`` prefix
 """
 
@@ -42,6 +44,17 @@ def cross_doc_relation_payload(
         "role_attributions": [role_attribution],
         "schema_version": 1,
     }
+
+
+@pytest.fixture
+def cross_doc_relation(cross_doc_relation_payload: dict[str, Any]) -> CrossDocRelation:
+    return CrossDocRelation(**cross_doc_relation_payload)
+
+
+def test_cross_doc_relation_round_trip(cross_doc_relation: CrossDocRelation) -> None:
+    dump = cross_doc_relation.model_dump()
+    rebuilt = CrossDocRelation(**dump)
+    assert rebuilt == cross_doc_relation
 
 
 def test_minimal_valid_cross_doc_relation(
