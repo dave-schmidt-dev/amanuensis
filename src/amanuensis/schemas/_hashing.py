@@ -42,6 +42,10 @@ canonical-form bytes, prefixed by the record-kind letter:
 - ``t-`` for ``EntitySupersede`` (Phase 2a)
 - ``x-`` for ``CrossDocRelation`` (Phase 2b)
 - ``v-`` for ``CrossDocRelationSupersede`` (Phase 2b)
+- ``p-`` for ``Probandum`` (Phase 2c) — shares the ``p-`` prefix with
+  ``ProvenanceRecord``; the two artifacts live in disjoint directories
+  (``provenance/`` vs ``mappings/probanda/``) so prefix collision is
+  namespaced away at the filesystem layer.
 
 Collision discipline: 8-byte truncation gives ~2^32 records before
 birthday-collision risk approaches 50%, well above any realistic
@@ -66,6 +70,7 @@ Per-model volatile-field sets (rationale in ``docs/schema-reference.md``):
 - ``EntitySupersede``: ``{"provenance_id"}``
 - ``CrossDocRelation``: ``{"provenance_id"}``
 - ``CrossDocRelationSupersede``: ``{"provenance_id", "at"}``
+- ``Probandum``: ``{"provenance_id"}``
 
 The "lifecycle-completion" volatile fields on ``Clarification`` /
 ``IterationDirective`` (``status``, ``resolved_*``, ``applied_*``)
@@ -105,6 +110,7 @@ _KIND_PREFIX: dict[str, str] = {
     "EntitySupersede": "t-",
     "CrossDocRelation": "x-",
     "CrossDocRelationSupersede": "v-",
+    "Probandum": "p-",
 }
 
 # Universally-volatile field (always dropped from canonical form, on
@@ -141,7 +147,7 @@ def compute_id(model: BaseModel) -> str:
             f"compute_id() only accepts Atom, Relation, ProvenanceRecord, "
             f"Clarification, IterationDirective, SourceMirrorManifest, "
             f"Entity, Resolution, ResolutionSupersede, EntitySupersede, "
-            f"CrossDocRelation, CrossDocRelationSupersede"
+            f"CrossDocRelation, CrossDocRelationSupersede, Probandum"
         )
     _empty: frozenset[str] = frozenset()
     per_class_raw: Any = getattr(cls, "_VOLATILE_FIELDS", _empty)
