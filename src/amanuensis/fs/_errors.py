@@ -136,3 +136,16 @@ class CrossSourceConstraintViolation(SubstrateError, ValueError):
     substrate base class handle it uniformly) and ``ValueError`` (so it
     survives the natural "this is malformed input" idiom).
     """
+
+
+class SharedEntityGateViolation(SubstrateError, ValueError):
+    """Raised when a CrossDocRelation fails the INV-15 shared-entity gate.
+
+    Specifically: shared_entities is empty, OR a listed entity is not found
+    in mappings/entities/, OR a listed entity is not resolved by one or both
+    endpoint atoms (via Resolution records).
+
+    Inherits from both ``SubstrateError`` (so callers catching the substrate
+    base class handle it uniformly) and ``ValueError`` (so it survives the
+    natural "this is malformed input" idiom).
+    """

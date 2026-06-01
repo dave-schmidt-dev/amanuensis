@@ -356,3 +356,181 @@ def make_entity_supersede(
         "schema_version": 1,
     }
     return _entity_supersede_with_hash(payload)
+
+
+# --- Phase 2b INV-15 fixtures (M3) -----------------------------------
+#
+# These fixtures plant Entity + Resolution records on disk via direct
+# file writes (bypassing the substrate's content-addressable id check)
+# so the cross-doc-relation gate tests can use a literal entity id like
+# ``e-smith`` and matching endpoints ``a-fixture0001`` / ``a-fixture0002``
+# — the same literals the M2 ``_rel()`` helper hard-codes. The id check
+# on Entity/Resolution would otherwise force us to thread real
+# content-hashes through every M2 test, multiplying churn for no gain
+# (the gate is what we're exercising, not Entity content-addressing).
+
+_PHASE2B_ENTITY_ID = "e-smith"
+_PHASE2B_FROM_SOURCE = "src-A"
+_PHASE2B_FROM_ATOM = "a-fixture0001"
+_PHASE2B_TO_SOURCE = "src-B"
+_PHASE2B_TO_ATOM = "a-fixture0002"
+
+
+def _forged_entity(entity_id: str, role_attribution: RoleAttribution) -> Entity:
+    """Build an Entity whose ``id`` is the literal value (no hash check)."""
+    return Entity(
+        id=entity_id,
+        kind="party",
+        canonical_name="Smith",
+        aliases=[],
+        notes=None,
+        provenance_id="p-fixture-inv15-ent",
+        role_attributions=[role_attribution],
+        schema_version=1,
+    )
+
+
+def _forged_resolution(
+    *,
+    resolution_id: str,
+    source_id: str,
+    atom_id: str,
+    entity_id: str,
+    role_attribution: RoleAttribution,
+) -> Resolution:
+    """Build a Resolution whose ``id`` is the literal value (no hash check)."""
+    return Resolution(
+        id=resolution_id,
+        source_id=source_id,
+        atom_id=atom_id,
+        operand_index=0,
+        entity_id=entity_id,
+        confidence="high",
+        basis="fixture-planted resolution for INV-15 gate",
+        provenance_id="p-fixture-inv15-res",
+        role_attributions=[role_attribution],
+        schema_version=1,
+    )
+
+
+def plant_entity(tmp_path: Path, entity: Entity) -> None:
+    """Write an Entity directly to disk at ``mappings/entities/<id>.md``.
+
+    Bypasses ``Substrate.add_entity`` (which would reject the literal id
+    via ``_require_id_matches``). The gate test does not care that the
+    entity's id is the canonical hash — it only cares that an Entity
+    record exists at the canonical path with the given id.
+    """
+    from amanuensis.fs._atomic import atomic_write_text
+    from amanuensis.fs._serialize import serialize_entity_md
+
+    path = tmp_path / "mappings" / "entities" / f"{entity.id}.md"
+    atomic_write_text(path, serialize_entity_md(entity))
+
+
+def plant_resolution(tmp_path: Path, resolution: Resolution) -> None:
+    """Write a Resolution directly to disk at ``mappings/resolutions/<id>.yaml``.
+
+    Bypasses ``Substrate.add_resolution`` for the same reason as
+    ``plant_entity``.
+    """
+    from amanuensis.fs._atomic import atomic_write_text
+    from amanuensis.fs._serialize import serialize_resolution_yaml
+
+    path = tmp_path / "mappings" / "resolutions" / f"{resolution.id}.yaml"
+    atomic_write_text(path, serialize_resolution_yaml(resolution))
+
+
+# Public aliases — exported for use by test modules under tests/fs/.
+forged_entity = _forged_entity
+forged_resolution = _forged_resolution
+PHASE2B_ENTITY_ID = _PHASE2B_ENTITY_ID
+PHASE2B_FROM_SOURCE = _PHASE2B_FROM_SOURCE
+PHASE2B_FROM_ATOM = _PHASE2B_FROM_ATOM
+PHASE2B_TO_SOURCE = _PHASE2B_TO_SOURCE
+PHASE2B_TO_ATOM = _PHASE2B_TO_ATOM
+
+
+@pytest.fixture
+def tmp_workspace_with_bilateral_resolutions(
+    tmp_workspace: Path, role_attribution: RoleAttribution
+) -> Path:
+    """Workspace with ``e-smith`` Entity + BOTH endpoint Resolutions.
+
+    Plants:
+    - Entity ``e-smith``.
+    - Resolution j-from-1 mapping ``(src-A, a-fixture0001, 0) → e-smith``.
+    - Resolution j-to-1 mapping ``(src-B, a-fixture0002, 0) → e-smith``.
+
+    A CrossDocRelation with ``shared_entities=["e-smith"]`` and the
+    matching endpoints passes INV-15 against this workspace.
+    """
+    entity = _forged_entity(_PHASE2B_ENTITY_ID, role_attribution)
+    plant_entity(tmp_workspace, entity)
+    res_from = _forged_resolution(
+        resolution_id="j-from-aaaaaaaa",
+        source_id=_PHASE2B_FROM_SOURCE,
+        atom_id=_PHASE2B_FROM_ATOM,
+        entity_id=_PHASE2B_ENTITY_ID,
+        role_attribution=role_attribution,
+    )
+    res_to = _forged_resolution(
+        resolution_id="j-to-bbbbbbbbbb",
+        source_id=_PHASE2B_TO_SOURCE,
+        atom_id=_PHASE2B_TO_ATOM,
+        entity_id=_PHASE2B_ENTITY_ID,
+        role_attribution=role_attribution,
+    )
+    plant_resolution(tmp_workspace, res_from)
+    plant_resolution(tmp_workspace, res_to)
+    return tmp_workspace
+
+
+@pytest.fixture
+def tmp_workspace_with_partial_resolutions(
+    tmp_workspace: Path, role_attribution: RoleAttribution
+) -> Path:
+    """Workspace with ``e-smith`` Entity + only the TO-endpoint Resolution.
+
+    No resolution maps ``(src-A, a-fixture0001, 0) → e-smith``, so the
+    INV-15 gate fires with "from endpoint does not resolve".
+    """
+    entity = _forged_entity(_PHASE2B_ENTITY_ID, role_attribution)
+    plant_entity(tmp_workspace, entity)
+    res_to = _forged_resolution(
+        resolution_id="j-to-bbbbbbbbbb",
+        source_id=_PHASE2B_TO_SOURCE,
+        atom_id=_PHASE2B_TO_ATOM,
+        entity_id=_PHASE2B_ENTITY_ID,
+        role_attribution=role_attribution,
+    )
+    plant_resolution(tmp_workspace, res_to)
+    return tmp_workspace
+
+
+@pytest.fixture
+def tmp_workspace_with_partial_resolutions_to_missing(
+    tmp_workspace: Path, role_attribution: RoleAttribution
+) -> Path:
+    """Workspace with ``e-smith`` Entity + only the FROM-endpoint Resolution.
+
+    Mirrors ``tmp_workspace_with_partial_resolutions`` — the gate fires
+    with "to endpoint does not resolve".
+    """
+    entity = _forged_entity(_PHASE2B_ENTITY_ID, role_attribution)
+    plant_entity(tmp_workspace, entity)
+    res_from = _forged_resolution(
+        resolution_id="j-from-aaaaaaaa",
+        source_id=_PHASE2B_FROM_SOURCE,
+        atom_id=_PHASE2B_FROM_ATOM,
+        entity_id=_PHASE2B_ENTITY_ID,
+        role_attribution=role_attribution,
+    )
+    plant_resolution(tmp_workspace, res_from)
+    return tmp_workspace
+
+
+@pytest.fixture
+def tmp_workspace_with_dangling_entity_ref(tmp_workspace: Path) -> Path:
+    """Workspace with no Entity records — shared_entities reference dangles."""
+    return tmp_workspace

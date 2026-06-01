@@ -80,6 +80,7 @@ from ._errors import (
     MappingVocabularyAlreadyPinned,
     MutationOfImmutableRecord,
     ResolutionDuplicateTriple,
+    SharedEntityGateViolation,
     SubstrateIdMismatch,
     SubstrateInvalidId,
     SubstrateMarkerMissing,
@@ -1067,6 +1068,34 @@ class Substrate:
 
     # --- Phase 2b: cross-doc relation IO (M2) -----------------------------
 
+    def _has_resolution(self, source_id: str, atom_id: str, entity_id: str) -> bool:
+        """Return True if any Resolution joins ``(source_id, atom_id, *)`` to ``entity_id``.
+
+        The comparison is supersede-chain aware: each candidate
+        Resolution's ``entity_id`` is walked via ``latest_entity_for`` and
+        the terminus is compared against ``entity_id``. This covers the
+        case where the original Resolution pointed to an Entity ``E_v1``
+        that has since been superseded by ``E_v2`` — the cross-doc
+        relation may legitimately reference ``E_v2``'s id even though no
+        Resolution literally names it.
+
+        Missing entities in the chain (e.g. an orphaned resolution whose
+        ``entity_id`` has no on-disk Entity) are silently skipped: the
+        caller's job is to drive the gate, not diagnose dangling state.
+        """
+        for res in self.list_resolutions(source_id=source_id):
+            if res.atom_id != atom_id:
+                continue
+            try:
+                chain_terminus = self.latest_entity_for(res.entity_id)
+            except SubstrateNotFound:
+                # Resolution references an entity that no longer exists;
+                # cannot use this resolution to ground a shared-entity claim.
+                continue
+            if chain_terminus.id == entity_id:
+                return True
+        return False
+
     def add_cross_doc_relation(self, rel: CrossDocRelation) -> None:
         """Write a CrossDocRelation atomically.
 
@@ -1076,22 +1105,20 @@ class Substrate:
            to_source_id``. Intra-source edges belong in Phase 1
            ``Relation`` records under ``distillations/<src>/relations/``,
            not the workspace-level ``mappings/relations/`` directory.
-        2. **Id discipline** — ``rel.id == compute_id(rel)`` (INV-8 path-
+        2. **INV-15 shared-entity gate** — ``shared_entities`` must be
+           non-empty, every listed entity must exist in
+           ``mappings/entities/`` (chain-walked to its terminus via
+           ``latest_entity_for``), and the terminus id must be resolved
+           by BOTH endpoint atoms via Phase 2a ``Resolution`` records.
+        3. **Id discipline** — ``rel.id == compute_id(rel)`` (INV-8 path-
            as-truth).
-        3. **INV-13 immutability** — if the canonical path exists, reads
+        4. **INV-13 immutability** — if the canonical path exists, reads
            and parses the on-disk record. If the canonical-form bytes are
            byte-identical, this is a no-op (idempotent). If they differ,
            raises ``MutationOfImmutableRecord``.
 
         Lands the file at ``mappings/relations/<rel.id>.yaml`` via the
         atomic-write helper (write-to-tmp-then-rename).
-
-        **INV-15 (shared-entity gate) is enforced in M3's gate test and a
-        follow-up addition to this method — M2 ships only the cross-source
-        + immutability gates.** Specifically, the requirement that every
-        id in ``shared_entities`` be resolved by BOTH endpoints (via
-        Phase 2a ``Resolution`` records) requires a Substrate cross-
-        reference that M3 wires in.
         """
         # Gate 1: cross-source constraint — checked BEFORE id verification
         # so callers with malformed-but-id-matching records still get the
@@ -1102,7 +1129,35 @@ class Substrate:
                 f"are both {rel.from_source_id!r}; cross-doc relations must "
                 f"span two distinct distillations"
             )
-        # Gate 2: id discipline
+        # Gate 2: INV-15 shared-entity gate — checked BEFORE id discipline
+        # so semantic violations surface even if the id is well-formed.
+        if not rel.shared_entities:
+            raise SharedEntityGateViolation(
+                f"CrossDocRelation {rel.id}: shared_entities is empty; "
+                "INV-15 requires at least one resolved shared entity"
+            )
+        for entity_id in rel.shared_entities:
+            try:
+                terminus = self.latest_entity_for(entity_id)
+            except SubstrateNotFound as exc:
+                raise SharedEntityGateViolation(
+                    f"CrossDocRelation {rel.id}: shared entity {entity_id!r} "
+                    "not found in mappings/entities/ (INV-15)"
+                ) from exc
+            canonical_entity_id = terminus.id
+            if not self._has_resolution(rel.from_source_id, rel.from_atom_id, canonical_entity_id):
+                raise SharedEntityGateViolation(
+                    f"CrossDocRelation {rel.id}: from endpoint "
+                    f"({rel.from_source_id}/{rel.from_atom_id}) does not "
+                    f"resolve to {entity_id!r} (INV-15)"
+                )
+            if not self._has_resolution(rel.to_source_id, rel.to_atom_id, canonical_entity_id):
+                raise SharedEntityGateViolation(
+                    f"CrossDocRelation {rel.id}: to endpoint "
+                    f"({rel.to_source_id}/{rel.to_atom_id}) does not "
+                    f"resolve to {entity_id!r} (INV-15)"
+                )
+        # Gate 3: id discipline
         self._require_id_matches(rel)
         # Gate 3: INV-13 immutability via byte-identical compare of the
         # canonical serialization. CrossDocRelation has volatile fields
