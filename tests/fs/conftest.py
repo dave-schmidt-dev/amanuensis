@@ -48,6 +48,20 @@ def tmp_workspace(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
+def tmp_workspace_with_walton_snapshot(tmp_workspace: Path) -> Path:
+    """Workspace + a pinned generic Walton-scheme snapshot (Phase 2c M3).
+
+    Phase 2c M2 probandum tests (which predate INV-18) clear the closed-
+    vocabulary gate by depending on this fixture instead of plain
+    ``tmp_workspace``.
+    """
+    from amanuensis.fs import Substrate
+
+    Substrate(tmp_workspace).snapshot_walton_schemes()
+    return tmp_workspace
+
+
+@pytest.fixture
 def agent() -> AgentAttribution:
     return AgentAttribution(
         kind="llm",
@@ -582,7 +596,7 @@ def tmp_workspace_with_dangling_entity_ref(tmp_workspace: Path) -> Path:
 
 @pytest.fixture
 def tmp_workspace_with_probanda(
-    tmp_workspace: Path, role_attribution: RoleAttribution
+    tmp_workspace_with_walton_snapshot: Path, role_attribution: RoleAttribution
 ) -> tuple[Path, Probandum, Probandum]:
     """Workspace with one ultimate + one penultimate probandum planted.
 
@@ -591,12 +605,16 @@ def tmp_workspace_with_probanda(
     their canonical paths and ids are consistent with normal substrate
     discipline.
 
+    Phase 2c M3: depends on ``tmp_workspace_with_walton_snapshot`` so
+    the INV-18 closed-vocabulary gate at write-time is satisfied.
+
     Returns the workspace path, the ultimate probandum, and the
     penultimate probandum (for the caller to reference by id).
     """
     from amanuensis.fs import Substrate
 
-    sub = Substrate(tmp_workspace)
+    workspace = tmp_workspace_with_walton_snapshot
+    sub = Substrate(workspace)
     ult = _probandum_basic_payload(
         role_attribution,
         kind="ultimate",
@@ -611,4 +629,4 @@ def tmp_workspace_with_probanda(
     )
     sub.add_probandum(ult)
     sub.add_probandum(pen)
-    return tmp_workspace, ult, pen
+    return workspace, ult, pen

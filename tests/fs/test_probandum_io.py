@@ -31,37 +31,37 @@ def _new(workspace: Path) -> Substrate:
 
 
 def test_add_probandum_writes_to_mappings_probanda(
-    tmp_workspace: Path, role_attribution: RoleAttribution
+    tmp_workspace_with_walton_snapshot: Path, role_attribution: RoleAttribution
 ) -> None:
-    sub = _new(tmp_workspace)
+    sub = _new(tmp_workspace_with_walton_snapshot)
     p = _probandum_basic_payload(role_attribution)
     sub.add_probandum(p)
-    path = tmp_workspace / "mappings" / "probanda" / f"{p.id}.md"
+    path = tmp_workspace_with_walton_snapshot / "mappings" / "probanda" / f"{p.id}.md"
     assert path.is_file()
 
 
 def test_add_probandum_is_idempotent(
-    tmp_workspace: Path, role_attribution: RoleAttribution
+    tmp_workspace_with_walton_snapshot: Path, role_attribution: RoleAttribution
 ) -> None:
-    sub = _new(tmp_workspace)
+    sub = _new(tmp_workspace_with_walton_snapshot)
     p = _probandum_basic_payload(role_attribution)
     sub.add_probandum(p)
     # Second write with identical content must not raise; exactly one file
     # must exist on disk.
     sub.add_probandum(p)
-    probanda_dir = tmp_workspace / "mappings" / "probanda"
+    probanda_dir = tmp_workspace_with_walton_snapshot / "mappings" / "probanda"
     files = [f for f in probanda_dir.iterdir() if f.is_file() and f.suffix == ".md"]
     assert len(files) == 1
 
 
 def test_add_probandum_raises_on_diverging_content(
-    tmp_workspace: Path, role_attribution: RoleAttribution
+    tmp_workspace_with_walton_snapshot: Path, role_attribution: RoleAttribution
 ) -> None:
     """Tampered on-disk content with same id triggers INV-13."""
-    sub = _new(tmp_workspace)
+    sub = _new(tmp_workspace_with_walton_snapshot)
     p = _probandum_basic_payload(role_attribution)
     sub.add_probandum(p)
-    path = tmp_workspace / "mappings" / "probanda" / f"{p.id}.md"
+    path = tmp_workspace_with_walton_snapshot / "mappings" / "probanda" / f"{p.id}.md"
     # Append a manual edit so the existing bytes differ from canonical.
     path.write_text(path.read_text(encoding="utf-8") + "manual edit\n", encoding="utf-8")
     with pytest.raises(MutationOfImmutableRecord):
@@ -69,9 +69,9 @@ def test_add_probandum_raises_on_diverging_content(
 
 
 def test_rejects_empty_alternatives_on_penultimate(
-    tmp_workspace: Path, role_attribution: RoleAttribution
+    tmp_workspace_with_walton_snapshot: Path, role_attribution: RoleAttribution
 ) -> None:
-    sub = _new(tmp_workspace)
+    sub = _new(tmp_workspace_with_walton_snapshot)
     p = _probandum_basic_payload(
         role_attribution,
         kind="penultimate",
@@ -82,9 +82,9 @@ def test_rejects_empty_alternatives_on_penultimate(
 
 
 def test_rejects_empty_alternatives_on_interim(
-    tmp_workspace: Path, role_attribution: RoleAttribution
+    tmp_workspace_with_walton_snapshot: Path, role_attribution: RoleAttribution
 ) -> None:
-    sub = _new(tmp_workspace)
+    sub = _new(tmp_workspace_with_walton_snapshot)
     p = _probandum_basic_payload(
         role_attribution,
         kind="interim",
@@ -95,25 +95,25 @@ def test_rejects_empty_alternatives_on_interim(
 
 
 def test_accepts_empty_alternatives_on_ultimate(
-    tmp_workspace: Path, role_attribution: RoleAttribution
+    tmp_workspace_with_walton_snapshot: Path, role_attribution: RoleAttribution
 ) -> None:
-    sub = _new(tmp_workspace)
+    sub = _new(tmp_workspace_with_walton_snapshot)
     p = _probandum_basic_payload(
         role_attribution,
         kind="ultimate",
         alternatives_considered=[],
     )
     sub.add_probandum(p)  # no raise
-    assert (tmp_workspace / "mappings" / "probanda" / f"{p.id}.md").is_file()
+    assert (tmp_workspace_with_walton_snapshot / "mappings" / "probanda" / f"{p.id}.md").is_file()
 
 
 # --- T2.2: list_probanda with composable filters ---------------------
 
 
 def test_list_probanda_filters_by_kind(
-    tmp_workspace: Path, role_attribution: RoleAttribution
+    tmp_workspace_with_walton_snapshot: Path, role_attribution: RoleAttribution
 ) -> None:
-    sub = _new(tmp_workspace)
+    sub = _new(tmp_workspace_with_walton_snapshot)
     p_ult = _probandum_basic_payload(role_attribution, kind="ultimate")
     p_pen = _probandum_basic_payload(
         role_attribution,
@@ -137,9 +137,9 @@ def test_list_probanda_filters_by_kind(
 
 
 def test_list_probanda_filters_by_scheme(
-    tmp_workspace: Path, role_attribution: RoleAttribution
+    tmp_workspace_with_walton_snapshot: Path, role_attribution: RoleAttribution
 ) -> None:
-    sub = _new(tmp_workspace)
+    sub = _new(tmp_workspace_with_walton_snapshot)
     p1 = _probandum_basic_payload(role_attribution, scheme="argument-from-expert-opinion")
     p2 = _probandum_basic_payload(
         role_attribution,
@@ -154,8 +154,10 @@ def test_list_probanda_filters_by_scheme(
     assert result[0].id == p2.id
 
 
-def test_list_probanda_lists_all(tmp_workspace: Path, role_attribution: RoleAttribution) -> None:
-    sub = _new(tmp_workspace)
+def test_list_probanda_lists_all(
+    tmp_workspace_with_walton_snapshot: Path, role_attribution: RoleAttribution
+) -> None:
+    sub = _new(tmp_workspace_with_walton_snapshot)
     p1 = _probandum_basic_payload(role_attribution, statement="First.")
     p2 = _probandum_basic_payload(role_attribution, statement="Second.")
     sub.add_probandum(p1)
@@ -166,9 +168,9 @@ def test_list_probanda_lists_all(tmp_workspace: Path, role_attribution: RoleAttr
 
 
 def test_list_probanda_respects_limit(
-    tmp_workspace: Path, role_attribution: RoleAttribution
+    tmp_workspace_with_walton_snapshot: Path, role_attribution: RoleAttribution
 ) -> None:
-    sub = _new(tmp_workspace)
+    sub = _new(tmp_workspace_with_walton_snapshot)
     p1 = _probandum_basic_payload(role_attribution, statement="A.")
     p2 = _probandum_basic_payload(role_attribution, statement="B.")
     p3 = _probandum_basic_payload(role_attribution, statement="C.")
@@ -216,9 +218,9 @@ def _probandum_supersede(
 
 
 def test_add_probandum_supersede_writes_to_supersedes_dir(
-    tmp_workspace: Path, role_attribution: RoleAttribution
+    tmp_workspace_with_walton_snapshot: Path, role_attribution: RoleAttribution
 ) -> None:
-    sub = _new(tmp_workspace)
+    sub = _new(tmp_workspace_with_walton_snapshot)
     p_old = _probandum_basic_payload(role_attribution, statement="Initial proposition.")
     p_new = _probandum_basic_payload(role_attribution, statement="Refined proposition.")
     sub.add_probandum(p_old)
@@ -226,15 +228,15 @@ def test_add_probandum_supersede_writes_to_supersedes_dir(
     sup = _probandum_supersede(role_attribution, p_old, p_new)
     sub.add_probandum_supersede(sup)
 
-    path = tmp_workspace / "mappings" / "supersedes" / f"{sup.id}.yaml"
+    path = tmp_workspace_with_walton_snapshot / "mappings" / "supersedes" / f"{sup.id}.yaml"
     assert path.is_file()
     assert sup.id.startswith("u-")
 
 
 def test_add_probandum_supersede_is_idempotent(
-    tmp_workspace: Path, role_attribution: RoleAttribution
+    tmp_workspace_with_walton_snapshot: Path, role_attribution: RoleAttribution
 ) -> None:
-    sub = _new(tmp_workspace)
+    sub = _new(tmp_workspace_with_walton_snapshot)
     p_old = _probandum_basic_payload(role_attribution, statement="Initial.")
     p_new = _probandum_basic_payload(role_attribution, statement="Refined.")
     sub.add_probandum(p_old)
@@ -242,15 +244,15 @@ def test_add_probandum_supersede_is_idempotent(
     sup = _probandum_supersede(role_attribution, p_old, p_new)
     sub.add_probandum_supersede(sup)
     sub.add_probandum_supersede(sup)  # must not raise
-    sup_dir = tmp_workspace / "mappings" / "supersedes"
+    sup_dir = tmp_workspace_with_walton_snapshot / "mappings" / "supersedes"
     files = [f for f in sup_dir.iterdir() if f.is_file() and f.name.startswith("u-")]
     assert len(files) == 1
 
 
 def test_latest_probandum_for_returns_terminus(
-    tmp_workspace: Path, role_attribution: RoleAttribution
+    tmp_workspace_with_walton_snapshot: Path, role_attribution: RoleAttribution
 ) -> None:
-    sub = _new(tmp_workspace)
+    sub = _new(tmp_workspace_with_walton_snapshot)
     p_old = _probandum_basic_payload(role_attribution, statement="Initial.")
     p_new = _probandum_basic_payload(role_attribution, statement="Refined.")
     sub.add_probandum(p_old)
@@ -275,10 +277,10 @@ def test_latest_probandum_for_returns_none_for_unknown_id(tmp_workspace: Path) -
 
 
 def test_list_supersedes_unfiltered_yields_probandum_kind(
-    tmp_workspace: Path, role_attribution: RoleAttribution
+    tmp_workspace_with_walton_snapshot: Path, role_attribution: RoleAttribution
 ) -> None:
     """``list_supersedes`` without filter must yield ``u-`` records."""
-    sub = _new(tmp_workspace)
+    sub = _new(tmp_workspace_with_walton_snapshot)
     p_old = _probandum_basic_payload(role_attribution, statement="A.")
     p_new = _probandum_basic_payload(role_attribution, statement="B.")
     sub.add_probandum(p_old)
@@ -292,10 +294,10 @@ def test_list_supersedes_unfiltered_yields_probandum_kind(
 
 
 def test_list_supersedes_kind_probandum_filter(
-    tmp_workspace: Path, role_attribution: RoleAttribution
+    tmp_workspace_with_walton_snapshot: Path, role_attribution: RoleAttribution
 ) -> None:
     """``kind='probandum'`` returns only ProbandumSupersede records."""
-    sub = _new(tmp_workspace)
+    sub = _new(tmp_workspace_with_walton_snapshot)
     p_old = _probandum_basic_payload(role_attribution, statement="A.")
     p_new = _probandum_basic_payload(role_attribution, statement="B.")
     sub.add_probandum(p_old)
@@ -313,7 +315,7 @@ def test_list_supersedes_kind_probandum_filter(
 
 
 def test_probandum_round_trip_byte_identical(
-    tmp_workspace: Path, role_attribution: RoleAttribution
+    tmp_workspace_with_walton_snapshot: Path, role_attribution: RoleAttribution
 ) -> None:
     """Canonical-form serialization is deterministic across writes.
 
@@ -321,7 +323,7 @@ def test_probandum_round_trip_byte_identical(
     NOT mutate the on-disk bytes — this codifies the canonical-yaml
     stability invariant the idempotency guard depends on.
     """
-    sub = _new(tmp_workspace)
+    sub = _new(tmp_workspace_with_walton_snapshot)
     p = _probandum_basic_payload(
         role_attribution,
         kind="interim",
@@ -333,7 +335,7 @@ def test_probandum_round_trip_byte_identical(
         ],
     )
     sub.add_probandum(p)
-    path = tmp_workspace / "mappings" / "probanda" / f"{p.id}.md"
+    path = tmp_workspace_with_walton_snapshot / "mappings" / "probanda" / f"{p.id}.md"
     first_bytes = path.read_bytes()
     # Idempotent re-add: should be a no-op (no rewrite).
     sub.add_probandum(p)

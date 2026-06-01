@@ -177,6 +177,23 @@ class EdgeChildMissing(SubstrateError, ValueError):
     """
 
 
+class WaltonSchemeGateViolation(SubstrateError, ValueError):
+    """Raised when a ``Probandum``'s ``scheme`` is not in the pinned snapshot.
+
+    Phase 2c INV-18 requires that every probandum's ``scheme`` field
+    appear in the per-engagement Walton-scheme snapshot at
+    ``mappings/walton-scheme-snapshot.yaml``. The substrate refuses the
+    write rather than letting an unknown scheme classification land
+    silently — that would let an extracted argument lookup miss its
+    Walton critical-questions matrix and break the synthesis layer's
+    closed-vocabulary discipline.
+
+    Inherits from both ``SubstrateError`` (so callers catching the
+    substrate base class handle it uniformly) and ``ValueError`` (so it
+    survives the natural "this is malformed input" idiom).
+    """
+
+
 class SharedEntityGateViolation(SubstrateError, ValueError):
     """Raised when a CrossDocRelation fails the INV-15 shared-entity gate.
 

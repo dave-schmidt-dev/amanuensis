@@ -97,6 +97,7 @@ from ._errors import (
     SubstrateSnapshotCorrupt,
     SupersedeChainTooDeep,
     SupersedeCycleDetected,
+    WaltonSchemeGateViolation,
 )
 from ._serialize import (
     parse_atom_md,
@@ -593,6 +594,10 @@ class Substrate:
         )
 
         path = self.walton_scheme_snapshot_path()
+        # Invalidate the in-memory cache unconditionally: the simplest
+        # contract is "any snapshot call clears the cache", so the next
+        # INV-18 gate check re-reads from disk.
+        self._walton_snapshot_cache = None
         if path.is_file():
             existing_bytes = path.read_bytes()
             if existing_bytes == serialized.encode("utf-8"):
@@ -608,9 +613,6 @@ class Substrate:
             atomic_write_text(archive_path, existing_bytes.decode("utf-8"))
 
         atomic_write_text(path, serialized)
-        # Invalidate the in-memory cache so the next gate check reads
-        # the just-written bytes.
-        self._walton_snapshot_cache = None
         return path
 
     def load_walton_scheme_snapshot(self) -> WaltonSchemeRegistry | None:
@@ -1584,18 +1586,21 @@ class Substrate:
 
         Gates enforced (in order):
 
-        1. **ACH alternatives gate** — when ``probandum.kind in
+        1. **ACH alternatives gate (INV-19)** — when ``probandum.kind in
            {"penultimate", "interim"}``, ``alternatives_considered`` MUST
            be non-empty. Raises ``AchAlternativesGateViolation`` otherwise.
            ``ultimate`` probanda are exempt (they ARE the alternative the
            corpus picks between).
-        2. **Id discipline** — ``probandum.id == compute_id(probandum)``.
-        3. **INV-13 immutability** — if the canonical path exists, reads
+        2. **Walton-scheme closed-vocabulary gate (INV-18)** —
+           ``probandum.scheme`` MUST appear in the per-engagement Walton-
+           scheme snapshot at ``mappings/walton-scheme-snapshot.yaml``.
+           Raises ``SubstrateNotFound`` if no snapshot has been pinned,
+           ``WaltonSchemeGateViolation`` if the scheme is absent. The
+           snapshot is cached on the Substrate instance after first read.
+        3. **Id discipline** — ``probandum.id == compute_id(probandum)``.
+        4. **INV-13 immutability** — if the canonical path exists, reads
            the existing bytes. If byte-identical, no-op (idempotent). If
            divergent, raises ``MutationOfImmutableRecord``.
-
-        INV-18 (closed Walton scheme vocabulary) is deferred to Phase 2c
-        M3 — this method accepts any non-empty string for ``scheme``.
         """
         # Gate 1: ACH alternatives gate (INV-19)
         if (
@@ -1607,9 +1612,33 @@ class Substrate:
                 f"at least one entry in alternatives_considered "
                 f"(Analysis of Competing Hypotheses discipline)"
             )
-        # Gate 2: id discipline
+        # Gate 2: Walton-scheme closed-vocabulary gate (INV-18).
+        # The cache satisfies repeat calls in the same process; a snapshot
+        # rewrite invalidates the cache so the next gate check sees fresh
+        # bytes. Snapshot absence is a configuration error (operator must
+        # run ``amanuensis map walton-scheme snapshot``); unknown scheme
+        # is a content error.
+        if self._walton_snapshot_cache is None:
+            snap = self.load_walton_scheme_snapshot()
+            if snap is None:
+                raise SubstrateNotFound(
+                    "Walton scheme snapshot not found at "
+                    f"{self.walton_scheme_snapshot_path()}; "
+                    "run `amanuensis map walton-scheme snapshot` to pin"
+                )
+            self._walton_snapshot_cache = snap
+        if not self._walton_snapshot_cache.has_scheme(probandum.scheme):
+            raise WaltonSchemeGateViolation(
+                f"Probandum {probandum.id}: scheme={probandum.scheme!r} is "
+                "not in the pinned Walton-scheme snapshot "
+                f"({self.walton_scheme_snapshot_path()}); "
+                "either pin an extended snapshot via "
+                "`amanuensis map walton-scheme snapshot --extend` or "
+                "use one of the registered schemes"
+            )
+        # Gate 3: id discipline
         self._require_id_matches(probandum)
-        # Gate 3: INV-13 immutability via byte-identical compare. The
+        # Gate 4: INV-13 immutability via byte-identical compare. The
         # statement body is the markdown body; frontmatter carries every
         # other field. Volatile fields (``provenance_id``) DO drift between
         # writes, but ``serialize_probandum_md`` dumps the whole model so

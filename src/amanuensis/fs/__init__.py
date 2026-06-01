@@ -36,6 +36,7 @@ from ._errors import (
     SubstrateSnapshotCorrupt,
     SupersedeChainTooDeep,
     SupersedeCycleDetected,
+    WaltonSchemeGateViolation,
     WorkspaceLockTimeout,
 )
 from .lock import DEFAULT_TIMEOUT_SECONDS, LOCK_FILENAME, acquire_workspace_lock
@@ -64,6 +65,7 @@ __all__ = [
     "SubstrateSnapshotCorrupt",
     "SupersedeChainTooDeep",
     "SupersedeCycleDetected",
+    "WaltonSchemeGateViolation",
     "WorkspaceLockTimeout",
     "acquire_workspace_lock",
 ]
