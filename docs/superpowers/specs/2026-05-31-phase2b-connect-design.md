@@ -174,11 +174,19 @@ class CrossDocRelationSupersede(BaseModel):
     id: str                               # v-<hash>
     supersedes_id: str                    # x-<hash> of prior CrossDocRelation
     superseded_by_id: str                 # x-<hash> of new CrossDocRelation
+    kind: Literal["cross-doc-relation"] = "cross-doc-relation"
     reason: str
     provenance_id: str
     role_attributions: list[RoleAttribution]
     at: AwareDatetime                     # volatile (matches Phase 2a supersede pattern)
     schema_version: int = 1
+
+    @field_validator("reason")
+    @classmethod
+    def _reason_non_empty(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("reason must be non-empty")
+        return v
 ```
 
 **Id prefix:** `v-` (revision). Mirrors Phase 2a's `EntitySupersede`

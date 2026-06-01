@@ -15,11 +15,6 @@ Notes
   resolved by BOTH endpoints (INV-15). That cross-reference check
   requires a Substrate handle, so it lives in M2 — NOT this schema. The
   schema accepts an empty list; M2 rejects it.
-- ``provenance_id`` is volatile for canonical-form hashing, same rule
-  as Phase 1 ``Atom`` / ``Relation`` and Phase 2a ``Entity`` /
-  ``Resolution``. PROV-O direction is Activity → Entity, so the
-  outbound provenance pointer is observational metadata, not identity
-  content.
 - ``warrant_defensibility == "contested"`` will (in M5) trigger a
   Map-Auditor clarification; M1 only defines the schema.
 - Id prefix is ``x-`` (cross-doc); ``r-`` is reserved for Phase 1

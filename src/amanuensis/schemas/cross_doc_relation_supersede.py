@@ -3,28 +3,13 @@
 Correction record for a ``CrossDocRelation``. Mirror of Phase 2a's
 ``EntitySupersede`` / ``ResolutionSupersede`` for the new
 ``CrossDocRelation`` schema. Immutable; carries its own PROV-O record.
-
-Notes
------
-- ``id`` is a content-addressable hash with prefix ``v-`` (revision).
-- ``supersedes_id`` and ``superseded_by_id`` are both
-  ``CrossDocRelation`` ids (prefix ``x-``).
-- ``reason`` is a free-form string describing the correction; the M2
-  substrate layer is expected to require non-empty, but the schema
-  layer does NOT enforce that (mirroring INV-13's existing pattern
-  flexibility — the substrate gate is what we trust on writes).
-- ``provenance_id`` is volatile for canonical-form hashing.
-- ``at`` is volatile (when the supersession was authored is
-  observational metadata, not identity content).
-- Strict Pydantic v2 mode + ``extra="forbid"`` is enforced via
-  ``model_config``.
 """
 
 from __future__ import annotations
 
-from typing import ClassVar
+from typing import ClassVar, Literal
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict
+from pydantic import AwareDatetime, BaseModel, ConfigDict, field_validator
 
 from ._shared import RoleAttribution
 
@@ -50,8 +35,16 @@ class CrossDocRelationSupersede(BaseModel):
     id: str
     supersedes_id: str
     superseded_by_id: str
+    kind: Literal["cross-doc-relation"] = "cross-doc-relation"
     reason: str
     provenance_id: str
     role_attributions: list[RoleAttribution]
     at: AwareDatetime
     schema_version: int = 1
+
+    @field_validator("reason")
+    @classmethod
+    def _reason_non_empty(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("reason must be non-empty")
+        return v
