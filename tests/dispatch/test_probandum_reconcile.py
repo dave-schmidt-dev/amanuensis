@@ -1,21 +1,20 @@
-"""Reconciliation gate for Probandum candidates (Phase 2c M6).
+"""Reconciliation gate for Probandum + ProbandumEdge candidates (Phase 2c M6).
 
-The Hierarchize role surfaces candidate probanda as plain dicts.
-``_build_probandum`` is the reconciler's choke point: it builds the
-typed record, runs the M3/M4 substrate gates (INV-18 closed-vocab,
-INV-19 ACH alternatives), and on INV-18 failure auto-raises a
-``scheme-missing`` Clarification rather than propagating. INV-19
-failures propagate as ``AchAlternativesGateViolation`` — the auditor
-is expected to pre-check that shape-class invariant.
+The Hierarchize role surfaces candidate probanda and edges as plain
+dicts. ``_build_probandum`` / ``_build_probandum_edge`` are the
+reconciler's choke points: they build the typed record, run the M3/M4
+substrate gates (INV-16 tree-shape, INV-17 lineage-completeness,
+INV-18 closed-vocab, INV-19 ACH alternatives), and on INV-17 / INV-18
+failure auto-raise a Clarification rather than propagating. INV-16
+(tree-shape) and INV-19 (ACH alternatives) failures propagate — the
+auditor is expected to pre-check these shape-class invariants.
 
-Coverage map (T6.2 — initial probandum reconciler):
+Coverage map:
 
-- happy path: ultimate probandum candidate commits.
-- scheme-missing path: INV-18 failure auto-raises a clarification.
-- candidate-shape-error path: pydantic ValidationError wraps as
-  ``CandidateShapeError``.
+- T6.2 — happy + scheme-missing paths for ``_build_probandum``.
+- T6.3 — happy + lineage-incomplete paths for ``_build_probandum_edge``.
 
-T6.3 (edge reconciler) and T6.4 / T6.5 (supersede + re-add flows) are
+T6.4 (supersede flow) and T6.5 (re-add after lineage resolved) are
 covered by additional tests in this same file landed in later commits.
 """
 
@@ -31,6 +30,7 @@ import pytest
 from amanuensis.dispatch.reconcile import (
     CandidateShapeError,
     _build_probandum,
+    _build_probandum_edge,
 )
 from amanuensis.fs import Substrate
 from amanuensis.schemas import (
@@ -255,3 +255,160 @@ def test_probandum_candidate_shape_error_propagates(
             hierarchize_provenance,
             role_attributions=[hierarchize_role_attribution],
         )
+
+
+# --- T6.3: _build_probandum_edge ----------------------------------------
+
+
+def _seed_ultimate_and_penultimate(
+    workspace: Path,
+    hierarchize_role_attribution: RoleAttribution,
+    hierarchize_provenance: ProvenanceRecord,
+) -> tuple[str, str]:
+    """Plant an ``ultimate`` + a ``penultimate`` probandum in the substrate.
+
+    Returns ``(ultimate_id, penultimate_id)`` for the tests to reference
+    when proposing edges.
+    """
+    sub = Substrate(workspace)
+    ultimate = _build_probandum(
+        _base_probandum_candidate(
+            statement="ACME breached the contract.",
+            kind="ultimate",
+            alternatives_considered=[],
+        ),
+        sub,
+        hierarchize_provenance,
+        role_attributions=[hierarchize_role_attribution],
+    )
+    assert ultimate is not None
+
+    penultimate = _build_probandum(
+        _base_probandum_candidate(
+            statement="ACME failed to pay on the due date.",
+            kind="penultimate",
+            alternatives_considered=["ACME paid on time", "Payment was waived"],
+        ),
+        sub,
+        hierarchize_provenance,
+        role_attributions=[hierarchize_role_attribution],
+    )
+    assert penultimate is not None
+    return ultimate.id, penultimate.id
+
+
+def _base_edge_candidate(
+    *,
+    parent_probandum_id: str,
+    child_id: str,
+    child_kind: str = "probandum",
+    child_source_id: str | None = None,
+    kind: str = "supports",
+) -> dict[str, Any]:
+    """Return a syntactically-valid Hierarchize edge candidate dict."""
+    return {
+        "parent_probandum_id": parent_probandum_id,
+        "child_id": child_id,
+        "child_kind": child_kind,
+        "child_source_id": child_source_id,
+        "kind": kind,
+        "warrant": "Statement decomposes the parent's obligation.",
+        "warrant_defensibility": "conventional",
+        "warrant_basis": "Wigmore §III",
+        "confidence": "high",
+    }
+
+
+def test_valid_edge_candidate_builds(
+    tmp_workspace_with_walton_snapshot: Path,
+    hierarchize_role_attribution: RoleAttribution,
+    hierarchize_provenance: ProvenanceRecord,
+) -> None:
+    """An edge candidate that satisfies INV-16/17 commits a ProbandumEdge."""
+    sub = Substrate(tmp_workspace_with_walton_snapshot)
+    ult_id, pen_id = _seed_ultimate_and_penultimate(
+        tmp_workspace_with_walton_snapshot,
+        hierarchize_role_attribution,
+        hierarchize_provenance,
+    )
+
+    edge = _build_probandum_edge(
+        _base_edge_candidate(parent_probandum_id=ult_id, child_id=pen_id),
+        sub,
+        hierarchize_provenance,
+        role_attributions=[hierarchize_role_attribution],
+    )
+
+    assert edge is not None
+    assert edge.parent_probandum_id == ult_id
+    assert edge.child_id == pen_id
+    # The substrate now has the edge (read-back path).
+    written = list(sub.list_probandum_edges())
+    assert len(written) == 1
+    assert written[0].id == edge.id
+
+
+def test_lineage_incomplete_raises_clarification(
+    tmp_workspace_with_walton_snapshot_and_distillation: Path,
+    hierarchize_role_attribution: RoleAttribution,
+    hierarchize_provenance: ProvenanceRecord,
+) -> None:
+    """Orphan parent (no path to ultimate) -> reconciler raises ``lineage-incomplete``.
+
+    Asserts:
+
+    1. ``_build_probandum_edge`` returns ``None``.
+    2. No ProbandumEdge lands in the substrate.
+    3. Exactly one open ``lineage-incomplete`` Clarification is filed
+       under the first distillation.
+    4. The clarification's context_refs carries both the parent and
+       child ids so a human supervisor can navigate either way.
+    """
+    sub = Substrate(tmp_workspace_with_walton_snapshot_and_distillation)
+    # Two penultimate probanda — neither linked to an ultimate.
+    orphan_parent = _build_probandum(
+        _base_probandum_candidate(
+            statement="Orphan parent — no ultimate lineage.",
+            kind="penultimate",
+            alternatives_considered=["alt-1"],
+        ),
+        sub,
+        hierarchize_provenance,
+        role_attributions=[hierarchize_role_attribution],
+    )
+    orphan_child = _build_probandum(
+        _base_probandum_candidate(
+            statement="Orphan child — also has no lineage path.",
+            kind="penultimate",
+            alternatives_considered=["alt-2"],
+        ),
+        sub,
+        hierarchize_provenance,
+        role_attributions=[hierarchize_role_attribution],
+    )
+    assert orphan_parent is not None
+    assert orphan_child is not None
+
+    result = _build_probandum_edge(
+        _base_edge_candidate(
+            parent_probandum_id=orphan_parent.id,
+            child_id=orphan_child.id,
+        ),
+        sub,
+        hierarchize_provenance,
+        role_attributions=[hierarchize_role_attribution],
+    )
+
+    assert result is None
+    # No edge was written.
+    assert list(sub.list_probandum_edges()) == []
+    open_clarifications = list_open_clarifications_for_source(
+        sub, "src-A", kind="lineage-incomplete"
+    )
+    assert len(open_clarifications) == 1
+    c = open_clarifications[0]
+    assert c.kind == "lineage-incomplete"
+    # Both endpoints appear in context_refs.
+    haystack_refs = " ".join(c.context_refs)
+    assert orphan_parent.id in haystack_refs
+    assert orphan_child.id in haystack_refs

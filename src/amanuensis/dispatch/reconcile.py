@@ -67,6 +67,7 @@ from pydantic import ValidationError
 
 from amanuensis.fs import (
     CrossSourceConstraintViolation,
+    LineageIncomplete,
     ReplayLog,
     SharedEntityGateViolation,
     Substrate,
@@ -83,6 +84,7 @@ from amanuensis.schemas import (
     Entity,
     OperandRef,
     Probandum,
+    ProbandumEdge,
     ProvenanceRecord,
     Relation,
     Resolution,
@@ -131,6 +133,7 @@ _KIND_CONNECT_RESOLUTION_AMBIGUOUS: str = "connect-resolution-ambiguous"
 # can distinguish them from Phase 2a/2b raisers that also use distinct
 # ``kind`` discriminators.
 _KIND_HIERARCHIZE_SCHEME_MISSING: str = "hierarchize-scheme-missing"
+_KIND_HIERARCHIZE_LINEAGE_INCOMPLETE: str = "hierarchize-lineage-incomplete"
 
 # Phase 2c M6 — Sentinel "source id" used when an auto-raised Phase 2c
 # Clarification has no natural distillation to file under (probanda are
@@ -1677,6 +1680,163 @@ def _auto_raise_scheme_clarification(
         raised_at=now,
         raised_by=raised_by,
         raised_by_activity=_KIND_HIERARCHIZE_SCHEME_MISSING,
+        context_refs=context_refs,
+        question=question,
+        options=None,
+        resolved_at=None,
+        resolved_by=None,
+        resolution=None,
+        raised_provenance_id=prov.id,
+        resolved_provenance_id=None,
+        schema_version=2,
+    )
+    clar_id = compute_id(clar_draft)
+    clar = clar_draft.model_copy(update={"id": clar_id})
+    source_id = _pick_probandum_clarification_source_id(substrate)
+    substrate.add_clarification(source_id, clar)
+    return clar_id
+
+
+def _build_probandum_edge(
+    candidate: dict[str, Any],
+    substrate: Substrate,
+    prov: ProvenanceRecord,
+    role_attributions: list[RoleAttribution],
+) -> ProbandumEdge | None:
+    """Build a ``ProbandumEdge`` from a Hierarchize-role candidate dict.
+
+    Mirrors :func:`_build_cross_doc_relation` and :func:`_build_probandum`:
+    pydantic shape check -> id stamping -> substrate write. INV-17
+    (lineage-completeness) failures are NOT propagated; instead, the
+    helper auto-raises a ``lineage-incomplete`` Clarification (only a
+    supervisor can close the gap by writing the missing parent edge).
+    INV-16 (tree-shape / cycle) failures DO propagate as
+    ``ProbandumTreeViolation`` — the auditor is meant to pre-check these
+    shape-class invariants. ``ParentProbandumMissing`` and
+    ``EdgeChildMissing`` (existence checks) also propagate, because a
+    clarification cannot magically make a missing record appear.
+
+    Returns:
+        The committed ``ProbandumEdge`` (happy path) or ``None`` when
+        INV-17 rejected the candidate and the helper auto-raised a
+        ``lineage-incomplete`` Clarification.
+
+    Raises:
+        CandidateShapeError: pydantic validation failed on the candidate.
+        ProbandumTreeViolation: INV-16 (cycle / multi-parent) failure.
+        ParentProbandumMissing / EdgeChildMissing: existence gate
+            failures. Propagated because a clarification cannot
+            materialise the missing record.
+        MutationOfImmutableRecord: divergent-content collision.
+    """
+    try:
+        edge_draft = ProbandumEdge(
+            id="q-placeholder",
+            **candidate,
+            provenance_id=prov.id,
+            role_attributions=list(role_attributions),
+        )
+    except (ValidationError, TypeError) as exc:
+        raise CandidateShapeError(
+            f"Hierarchize probandum-edge candidate failed shape validation: {exc}"
+        ) from exc
+
+    edge_id = compute_id(edge_draft)
+    edge = edge_draft.model_copy(update={"id": edge_id})
+
+    try:
+        substrate.add_probandum_edge(edge)
+    except LineageIncomplete:
+        # INV-17: parent does not trace to an ultimate. Surface as a
+        # ``lineage-incomplete`` Clarification for human supervision;
+        # do NOT propagate. Recovery path: supervisor lands the missing
+        # parent-edge linking the parent up to an ultimate via
+        # ``amanuensis map probandum link <parent> <ultimate>`` and the
+        # reconciler retries.
+        _auto_raise_lineage_clarification(
+            edge,
+            substrate=substrate,
+            prov=prov,
+            role_attributions=role_attributions,
+        )
+        return None
+    # ProbandumTreeViolation / ParentProbandumMissing / EdgeChildMissing
+    # / MutationOfImmutableRecord propagate as-is.
+
+    return edge
+
+
+def _auto_raise_lineage_clarification(
+    edge: ProbandumEdge,
+    *,
+    substrate: Substrate,
+    prov: ProvenanceRecord,
+    role_attributions: list[RoleAttribution],
+) -> str:
+    """Auto-raise a ``lineage-incomplete`` Clarification for a rejected edge.
+
+    Called by :func:`_build_probandum_edge` when the INV-17 gate
+    rejects a candidate. The clarification is filed under the first
+    available distillation (or the ``_mappings`` sentinel) so the
+    operator finds it in a real source's open queue.
+
+    Returns:
+        The id of the Clarification that was written.
+
+    Notes:
+        - ``context_refs`` carries the parent probandum id and the
+          child id (prefixed by its kind: ``p:`` for probandum, ``a:``
+          for atom, ``c:`` for cross-doc-relation — matching
+          ``child_kind[:1]`` per the task brief). A human navigator
+          can pivot to either endpoint from the open-clarification view.
+        - ``raised_by_activity`` is
+          ``"hierarchize-lineage-incomplete"``.
+    """
+    now = datetime.now(UTC)
+    if role_attributions:
+        raised_by = role_attributions[0].agent
+    else:
+        # The Phase 2c "hierarchize" role is not yet present in the
+        # ``AgentAttribution.role`` Literal (a separate brief owns that
+        # extension), so fall back to the closest existing role
+        # (``"auditor"``) for the synthetic stamp. Production callers
+        # always pass a non-empty ``role_attributions`` list so this
+        # branch is defensive-only.
+        raised_by = AgentAttribution(kind="llm", identifier="hierarchize", role="auditor")
+
+    # child_kind[:1] dispatches to a single-char prefix:
+    #   p:<id> for probandum, a:<id> for atom, c:<id> for cross-doc-relation.
+    child_prefix = edge.child_kind[:1]
+    context_refs: list[str] = [
+        f"p:{edge.parent_probandum_id}",
+        f"{child_prefix}:{edge.child_id}",
+    ]
+
+    question = (
+        f"The Hierarchize role proposed a probandum-edge from parent "
+        f"`{edge.parent_probandum_id}` to child `{edge.child_id}` "
+        f"(child_kind={edge.child_kind!r}). However, the parent probandum "
+        "does not trace upward to an `ultimate` probandum, so admitting "
+        "this edge would leave the new node with an incomplete lineage "
+        "(INV-17).\n\n"
+        "Resolve by either:\n"
+        "- Adding the missing linkage from an `ultimate` down to "
+        f"`{edge.parent_probandum_id}` first (e.g. via "
+        "`amanuensis map probandum link <ultimate> "
+        f"{edge.parent_probandum_id}` so the lineage closes), and then "
+        "re-running the Hierarchize role for this edge, OR\n"
+        "- Marking this edge as a false positive (no action; "
+        "Hierarchize will not retry the same candidate due to "
+        "content-addressable caching unless inputs change)."
+    )
+
+    clar_draft = Clarification(
+        id="c-" + "0" * 16,
+        status="open",
+        kind="lineage-incomplete",
+        raised_at=now,
+        raised_by=raised_by,
+        raised_by_activity=_KIND_HIERARCHIZE_LINEAGE_INCOMPLETE,
         context_refs=context_refs,
         question=question,
         options=None,
