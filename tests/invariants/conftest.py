@@ -1123,3 +1123,38 @@ def tmp_workspace_with_dangling_to_atom_ref(
     rel = _inv15_build_relation(role_attribution, shared_entities=[_INV15_ENTITY_ID])
     _inv15_plant_cross_doc_relation(workspace, rel)
     return workspace
+
+
+# ---------------------------------------------------------------------------
+# Phase 2c INV-9 extension — probandum / edge under distillations/ rejected
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def tmp_workspace_with_probandum_in_wrong_place(tmp_path: Path) -> Path:
+    """Workspace with a stray ``p-*.md`` filed under ``distillations/<src>/``.
+
+    The file content is irrelevant; the INV-9 walker trips on the
+    ``p-`` prefix + ``.md`` suffix anywhere under a per-distillation
+    subtree. Probanda belong in ``mappings/probanda/`` (Phase 2c).
+    """
+    workspace = _inv15_workspace_with_marker(tmp_path, "inv9-probandum-misplaced")
+    stray = workspace / "distillations" / "src-A" / "p-fake000000000001.md"
+    stray.parent.mkdir(parents=True, exist_ok=True)
+    stray.write_text("# placeholder probandum -- content irrelevant\n", encoding="utf-8")
+    return workspace
+
+
+@pytest.fixture
+def tmp_workspace_with_probandum_edge_in_wrong_place(tmp_path: Path) -> Path:
+    """Workspace with a stray ``q-*.yaml`` filed under ``distillations/<src>/``.
+
+    The file content is irrelevant; the INV-9 walker trips on the
+    ``q-`` prefix + ``.yaml`` suffix anywhere under a per-distillation
+    subtree. Probandum-edges belong in ``mappings/probandum-edges/`` (Phase 2c).
+    """
+    workspace = _inv15_workspace_with_marker(tmp_path, "inv9-probandum-edge-misplaced")
+    stray = workspace / "distillations" / "src-A" / "relations" / "q-fake000000000002.yaml"
+    stray.parent.mkdir(parents=True, exist_ok=True)
+    stray.write_text("# placeholder probandum-edge -- content irrelevant\n", encoding="utf-8")
+    return workspace

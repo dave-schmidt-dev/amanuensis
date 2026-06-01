@@ -14,13 +14,20 @@ Also asserts that no Phase-2 cross-doc directories (``probanda/``,
 ``cross-doc/``) exist at the workspace root, and that no cross-doc
 relation YAML (``x-*.yaml``) is filed under any per-distillation
 ``relations/`` directory (Phase 2b extension — those edges belong in
-``mappings/relations/``).
+``mappings/relations/``). Phase 2c extension: no probandum (``p-*.md``)
+or probandum-edge (``q-*.yaml``) file is permitted anywhere under
+``distillations/<src>/`` — probanda and edges live exclusively in
+``mappings/probanda/`` and ``mappings/probandum-edges/``.
 
 The negative cases:
 - ``cross_source_violation_workspace`` — a relation filed under ``src1``
   whose ``source_id`` field names ``src2``.
 - ``tmp_workspace_with_cross_doc_in_wrong_place`` — a CrossDocRelation
   YAML filed under ``distillations/<src>/relations/`` (Phase 2b extension).
+- ``tmp_workspace_with_probandum_in_wrong_place`` — a Probandum ``.md``
+  filed under ``distillations/<src>/`` (Phase 2c extension).
+- ``tmp_workspace_with_probandum_edge_in_wrong_place`` — a ProbandumEdge
+  ``.yaml`` filed under ``distillations/<src>/`` (Phase 2c extension).
 
 Scope
 -----
@@ -49,6 +56,10 @@ def _walk_intra_doc_only(workspace: Path) -> None:
       belong to a different source).
     - A cross-doc relation file (``x-*.yaml``) filed under any
       per-distillation ``relations/`` directory.
+    - A probandum file (``p-*.md``) filed anywhere under
+      ``distillations/<src>/`` (Phase 2c extension).
+    - A probandum-edge file (``q-*.yaml``) filed anywhere under
+      ``distillations/<src>/`` (Phase 2c extension).
     """
     s = Substrate(workspace)
     distillations_dir = workspace / "distillations"
@@ -58,15 +69,31 @@ def _walk_intra_doc_only(workspace: Path) -> None:
             if not src_dir.is_dir():
                 continue
             relations_dir = src_dir / "relations"
-            if not relations_dir.is_dir():
-                continue
-            for path in relations_dir.iterdir():
+            if relations_dir.is_dir():
+                for path in relations_dir.iterdir():
+                    if not path.is_file():
+                        continue
+                    if path.name.startswith("x-") and path.name.endswith(".yaml"):
+                        raise AssertionError(
+                            f"INV-9 violation: cross-doc relation under distillations/ "
+                            f"at {path}; cross-doc edges belong in mappings/relations/"
+                        )
+            # Phase 2c extension — no probandum (``p-*.md``) or
+            # probandum-edge (``q-*.yaml``) anywhere under distillations/.
+            # Walk the source subtree recursively so stray files in any
+            # nested directory (atoms/, relations/, etc.) are caught.
+            for path in src_dir.rglob("*"):
                 if not path.is_file():
                     continue
-                if path.name.startswith("x-") and path.name.endswith(".yaml"):
+                if path.name.startswith("p-") and path.name.endswith(".md"):
                     raise AssertionError(
-                        f"INV-9 violation: cross-doc relation under distillations/ "
-                        f"at {path}; cross-doc edges belong in mappings/relations/"
+                        f"INV-9 violation: probandum under distillations/ "
+                        f"at {path}; probanda belong in mappings/probanda/"
+                    )
+                if path.name.startswith("q-") and path.name.endswith(".yaml"):
+                    raise AssertionError(
+                        f"INV-9 violation: probandum-edge under distillations/ "
+                        f"at {path}; probandum-edges belong in mappings/probandum-edges/"
                     )
     # Phase 1 invariant — every relation is intra-source.
     for src in s.list_distillations():
@@ -104,3 +131,29 @@ def test_rejects_cross_doc_relation_file_under_distillations(
     """A CrossDocRelation YAML filed under distillations/ is a violation of INV-9."""
     with pytest.raises(AssertionError, match="cross-doc relation under distillations/"):
         _walk_intra_doc_only(tmp_workspace_with_cross_doc_in_wrong_place)
+
+
+def test_rejects_probandum_file_under_distillations(
+    tmp_workspace_with_probandum_in_wrong_place: Path,
+) -> None:
+    """A Probandum (``p-*.md``) under distillations/ is a violation of INV-9.
+
+    Phase 2c extension: probanda live exclusively in ``mappings/probanda/``;
+    a stray ``p-*.md`` file under any per-distillation subtree must be
+    flagged as a cross-doc artifact filed in the wrong namespace.
+    """
+    with pytest.raises(AssertionError, match="probandum under distillations/"):
+        _walk_intra_doc_only(tmp_workspace_with_probandum_in_wrong_place)
+
+
+def test_rejects_probandum_edge_file_under_distillations(
+    tmp_workspace_with_probandum_edge_in_wrong_place: Path,
+) -> None:
+    """A ProbandumEdge (``q-*.yaml``) under distillations/ is a violation of INV-9.
+
+    Phase 2c extension: probandum-edges live exclusively in
+    ``mappings/probandum-edges/``; a stray ``q-*.yaml`` file under any
+    per-distillation subtree must be flagged.
+    """
+    with pytest.raises(AssertionError, match="probandum-edge under distillations/"):
+        _walk_intra_doc_only(tmp_workspace_with_probandum_edge_in_wrong_place)
