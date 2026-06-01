@@ -984,3 +984,23 @@ def tmp_workspace_with_unresolved_to_endpoint_on_disk(
     rel = _inv15_build_relation(role_attribution, shared_entities=[_INV15_ENTITY_ID])
     _inv15_plant_cross_doc_relation(workspace, rel)
     return workspace
+
+
+# ---------------------------------------------------------------------------
+# Phase 2b INV-9 extension — cross-doc files under distillations/ rejected
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def tmp_workspace_with_cross_doc_in_wrong_place(tmp_path: Path) -> Path:
+    """Workspace with a stray ``x-*.yaml`` filed under ``distillations/<src>/relations/``.
+
+    The file's content is irrelevant — the INV-9 walker trips on the
+    ``x-`` prefix in a per-distillation ``relations/`` directory (cross-
+    doc edges belong in ``mappings/relations/``).
+    """
+    workspace = _inv15_workspace_with_marker(tmp_path, "inv9-cross-doc-misplaced")
+    stray = workspace / "distillations" / "src-A" / "relations" / "x-fake000000000000.yaml"
+    stray.parent.mkdir(parents=True, exist_ok=True)
+    stray.write_text("# placeholder — content irrelevant to INV-9\n", encoding="utf-8")
+    return workspace
