@@ -17,6 +17,8 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from amanuensis.fs import Substrate
+
 # ---------------------------------------------------------------------------
 # T10.1 — GET /probanda list route
 # ---------------------------------------------------------------------------
@@ -109,3 +111,86 @@ def test_list_route_unknown_kind_returns_empty(
     assert response.status_code == 200
     # No probandum ids should leak into the rendered output.
     assert tmp_workspace_with_probandum_tree["ultimate"] not in response.text
+
+
+# ---------------------------------------------------------------------------
+# T10.2 — GET /probanda/<id> detail route
+# ---------------------------------------------------------------------------
+
+
+def test_detail_route_renders_probandum(
+    tmp_workspace_with_probandum_tree: dict[str, str],
+    web_app: FastAPI,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Detail page renders the statement, scheme, and confidence."""
+    monkeypatch.setenv("AMANUENSIS_WORKSPACE", tmp_workspace_with_probandum_tree["workspace"])
+    sub = Substrate(Path(tmp_workspace_with_probandum_tree["workspace"]))
+    ultimate = sub.get_probandum(tmp_workspace_with_probandum_tree["ultimate"])
+    client = TestClient(web_app)
+    response = client.get(f"/probanda/{ultimate.id}")
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-store"
+    assert ultimate.statement in response.text
+    assert ultimate.scheme in response.text
+    assert ultimate.confidence in response.text
+
+
+def test_detail_route_renders_lineage_to_ultimate(
+    tmp_workspace_with_probandum_tree: dict[str, str],
+    web_app: FastAPI,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Interim's detail page lineage walks up through penultimate to ultimate."""
+    monkeypatch.setenv("AMANUENSIS_WORKSPACE", tmp_workspace_with_probandum_tree["workspace"])
+    client = TestClient(web_app)
+    interim_id = tmp_workspace_with_probandum_tree["interim"]
+    response = client.get(f"/probanda/{interim_id}")
+    assert response.status_code == 200
+    # The lineage chain links to both ancestors.
+    assert f'href="/probanda/{tmp_workspace_with_probandum_tree["penultimate"]}"' in response.text
+    assert f'href="/probanda/{tmp_workspace_with_probandum_tree["ultimate"]}"' in response.text
+
+
+def test_detail_route_renders_outgoing_edges(
+    tmp_workspace_with_probandum_tree: dict[str, str],
+    web_app: FastAPI,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Penultimate's detail page lists its outgoing edge to the interim child."""
+    monkeypatch.setenv("AMANUENSIS_WORKSPACE", tmp_workspace_with_probandum_tree["workspace"])
+    client = TestClient(web_app)
+    penultimate_id = tmp_workspace_with_probandum_tree["penultimate"]
+    response = client.get(f"/probanda/{penultimate_id}")
+    assert response.status_code == 200
+    # The interim child must appear as a /probanda/<id> link.
+    assert f'href="/probanda/{tmp_workspace_with_probandum_tree["interim"]}"' in response.text
+
+
+def test_detail_route_renders_alternatives(
+    tmp_workspace_with_probandum_tree: dict[str, str],
+    web_app: FastAPI,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Detail page renders ``alternatives_considered`` as a bulleted list."""
+    monkeypatch.setenv("AMANUENSIS_WORKSPACE", tmp_workspace_with_probandum_tree["workspace"])
+    sub = Substrate(Path(tmp_workspace_with_probandum_tree["workspace"]))
+    pen = sub.get_probandum(tmp_workspace_with_probandum_tree["penultimate"])
+    assert pen.alternatives_considered, "fixture must plant at least one alternative"
+    client = TestClient(web_app)
+    response = client.get(f"/probanda/{pen.id}")
+    assert response.status_code == 200
+    for alt in pen.alternatives_considered:
+        assert alt in response.text
+
+
+def test_detail_route_404(
+    web_app: FastAPI,
+    tmp_workspace_with_probandum_tree: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Unknown probandum id returns 404."""
+    monkeypatch.setenv("AMANUENSIS_WORKSPACE", tmp_workspace_with_probandum_tree["workspace"])
+    client = TestClient(web_app)
+    response = client.get("/probanda/p-nonexistent00000")
+    assert response.status_code == 404
