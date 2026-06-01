@@ -72,6 +72,7 @@ from amanuensis.fs import (
     Substrate,
     SubstrateNotFound,
     SubstrateSnapshotCorrupt,
+    WaltonSchemeGateViolation,
     acquire_workspace_lock,
 )
 from amanuensis.schemas import (
@@ -81,6 +82,7 @@ from amanuensis.schemas import (
     CrossDocRelation,
     Entity,
     OperandRef,
+    Probandum,
     ProvenanceRecord,
     Relation,
     Resolution,
@@ -123,6 +125,21 @@ _KIND_VALIDATION_FAILED: str = "atom-validation-failed"
 # auto-raised ``resolution-ambiguous`` Clarification carries so a human
 # resolving the open item can recognize who raised it.
 _KIND_CONNECT_RESOLUTION_AMBIGUOUS: str = "connect-resolution-ambiguous"
+
+# Phase 2c M6 — Hierarchize-role reconciliation. Activity tags the
+# auto-raised Phase 2c Clarifications carry so per-activity dashboards
+# can distinguish them from Phase 2a/2b raisers that also use distinct
+# ``kind`` discriminators.
+_KIND_HIERARCHIZE_SCHEME_MISSING: str = "hierarchize-scheme-missing"
+
+# Phase 2c M6 — Sentinel "source id" used when an auto-raised Phase 2c
+# Clarification has no natural distillation to file under (probanda are
+# workspace-level, not source-specific). We prefer the first
+# distillation when one exists (so the operator finds the open item in a
+# real source's queue), and fall back to this sentinel when the
+# workspace contains no distillations yet. Path-safe per
+# ``_VALID_ID_RE``.
+_MAPPINGS_CLARIFICATION_SENTINEL: str = "_mappings"
 
 
 class CandidateShapeError(ValueError):
@@ -1464,6 +1481,216 @@ def _auto_raise_resolution_clarification(
     clar_id = compute_id(clar_draft)
     clar = clar_draft.model_copy(update={"id": clar_id})
     substrate.add_clarification(rel.from_source_id, clar)
+    return clar_id
+
+
+# --- Phase 2c M6: Probandum + ProbandumEdge reconciliation -------------
+#
+# ``_build_probandum`` and ``_build_probandum_edge`` are the choke points
+# the Phase 2c Hierarchize-role reconciler calls per candidate. They
+# mirror :func:`_build_cross_doc_relation` exactly:
+#
+# - pydantic shape validation -> CandidateShapeError
+# - compute_id stamping
+# - substrate gate enforcement; INV-17 / INV-18 failures auto-raise a
+#   Clarification rather than propagating (the Hierarchize role cannot
+#   itself extend the Walton-scheme snapshot OR add the missing parent
+#   linkage; only a human supervisor can close those loops). INV-16
+#   (tree-shape) failures DO propagate, because they indicate a model
+#   output a clarification cannot help with — the auditor must pre-check.
+# - INV-19 (ACH alternatives) failures also propagate as
+#   ``AchAlternativesGateViolation`` (shape-class failure).
+
+
+def _pick_probandum_clarification_source_id(substrate: Substrate) -> str:
+    """Pick a ``source_id`` to file a workspace-level Phase 2c clarification under.
+
+    Probanda live in ``mappings/`` rather than under any one source, so
+    the auto-raised Clarification has no natural home. We prefer the
+    first distillation (alphabetical, deterministic) so the operator
+    finds the open item in a real source's queue; when the workspace
+    has no distillations we fall back to the ``_mappings`` sentinel,
+    which the substrate will create on demand under
+    ``distillations/_mappings/clarifications/``.
+    """
+    for source_id in substrate.list_distillations():
+        # Skip the sentinel itself if it somehow exists already so we
+        # prefer real sources.
+        if source_id == _MAPPINGS_CLARIFICATION_SENTINEL:
+            continue
+        return source_id
+    return _MAPPINGS_CLARIFICATION_SENTINEL
+
+
+def _build_probandum(
+    candidate: dict[str, Any],
+    substrate: Substrate,
+    prov: ProvenanceRecord,
+    role_attributions: list[RoleAttribution],
+) -> Probandum | None:
+    """Build a ``Probandum`` from a Hierarchize-role candidate dict.
+
+    Mirrors :func:`_build_cross_doc_relation`: pydantic shape check ->
+    id stamping -> substrate write. INV-18 (Walton-scheme) failures are
+    NOT propagated; instead, the helper auto-raises a ``scheme-missing``
+    Clarification (only a human supervisor can extend the pinned Walton-
+    scheme snapshot via ``amanuensis map walton-scheme snapshot
+    --extend``). INV-19 (ACH alternatives) propagates as the typed
+    substrate error — that is the auditor's responsibility to pre-check.
+
+    Args:
+        candidate: Raw Hierarchize output payload. Expected keys are the
+            ``Probandum`` fields excluding ``id``, ``provenance_id``,
+            ``role_attributions``, and ``schema_version`` (those are
+            stamped by this function).
+        substrate: Bound substrate handle. Used for both the INV-18 gate
+            and the clarification raise.
+        prov: A pre-built ``ProvenanceRecord`` whose ``id`` will be
+            stamped on the probandum's ``provenance_id`` field. The
+            caller persists this record; this function does NOT call
+            ``add_provenance``.
+        role_attributions: Attribution audit trail attached to the
+            probandum and forwarded onto any auto-raised Clarification.
+
+    Returns:
+        The committed ``Probandum`` (happy path) or ``None`` when INV-18
+        rejected the candidate and the helper auto-raised a
+        ``scheme-missing`` Clarification.
+
+    Raises:
+        CandidateShapeError: pydantic validation failed on the candidate
+            dict.
+        AchAlternativesGateViolation: INV-19 (ACH alternatives) failure.
+            Propagates because the auditor is meant to pre-check this
+            shape-class invariant.
+        MutationOfImmutableRecord: divergent-content collision on the
+            probandum id.
+    """
+    try:
+        prob_draft = Probandum(
+            id="p-placeholder",
+            **candidate,
+            provenance_id=prov.id,
+            role_attributions=list(role_attributions),
+        )
+    except (ValidationError, TypeError) as exc:
+        raise CandidateShapeError(
+            f"Hierarchize probandum candidate failed shape validation: {exc}"
+        ) from exc
+
+    prob_id = compute_id(prob_draft)
+    prob = prob_draft.model_copy(update={"id": prob_id})
+
+    try:
+        substrate.add_probandum(prob)
+    except WaltonSchemeGateViolation:
+        # INV-18: scheme not in pinned snapshot. Surface as a
+        # ``scheme-missing`` Clarification for human supervision; do NOT
+        # propagate. Recovery path: supervisor extends the snapshot via
+        # ``amanuensis map walton-scheme snapshot --extend`` and the
+        # reconciler retries.
+        _auto_raise_scheme_clarification(
+            prob,
+            substrate=substrate,
+            prov=prov,
+            role_attributions=role_attributions,
+        )
+        return None
+    # AchAlternativesGateViolation and MutationOfImmutableRecord propagate
+    # as-is — INV-19 is a shape-class invariant the auditor pre-checks,
+    # and INV-13 divergence indicates real corruption.
+
+    return prob
+
+
+def _auto_raise_scheme_clarification(
+    probandum: Probandum,
+    *,
+    substrate: Substrate,
+    prov: ProvenanceRecord,
+    role_attributions: list[RoleAttribution],
+) -> str:
+    """Auto-raise a ``scheme-missing`` Clarification for a rejected probandum.
+
+    Called by :func:`_build_probandum` when the INV-18 gate rejects a
+    candidate. The clarification is filed under the first available
+    distillation (or the ``_mappings`` sentinel — see
+    :func:`_pick_probandum_clarification_source_id`) so the operator
+    finds it in a real source's open queue.
+
+    Returns:
+        The id of the Clarification that was written.
+
+    Notes:
+        - ``raised_provenance_id`` is the SAME provenance record the
+          caller already minted for the probandum attempt. We do NOT
+          call ``substrate.add_provenance(prov)`` here — the caller is
+          responsible for that. The reconciler path lives entirely
+          under the workspace flock so a partial write cannot leak.
+        - ``raised_by_activity`` is the Phase-2c-specific
+          ``"hierarchize-scheme-missing"`` so per-activity dashboards
+          can distinguish Hierarchize-raised items from other surfaces.
+    """
+    now = datetime.now(UTC)
+    if role_attributions:
+        raised_by = role_attributions[0].agent
+    else:
+        # The Phase 2c "hierarchize" role is not yet present in the
+        # ``AgentAttribution.role`` Literal (a separate brief owns that
+        # extension), so fall back to the closest existing role
+        # (``"auditor"``) for the synthetic stamp. Production callers
+        # always pass a non-empty ``role_attributions`` list so this
+        # branch is defensive-only.
+        raised_by = AgentAttribution(kind="llm", identifier="hierarchize", role="auditor")
+
+    # Truncate the statement so the context_refs entry stays compact in
+    # the on-disk markdown (the full statement is reachable via the
+    # probandum id from the resolved-clarification view).
+    excerpt = probandum.statement[:120]
+    if len(probandum.statement) > 120:
+        excerpt += "..."
+    context_refs: list[str] = [
+        f"p:{probandum.id}",
+        f"scheme:{probandum.scheme}",
+        f"statement:{excerpt}",
+    ]
+
+    question = (
+        f"The Hierarchize role proposed a probandum with statement "
+        f"`{excerpt}` and Walton scheme `{probandum.scheme}`. However, "
+        "the proposed scheme is not present in the pinned Walton-scheme "
+        "snapshot for this workspace.\n\n"
+        "Resolve by either:\n"
+        "- Extending the snapshot via "
+        "`amanuensis map walton-scheme snapshot --extend` after editing "
+        "the generic Walton-scheme catalogue to include the missing "
+        "scheme, OR\n"
+        "- Marking this probandum as a false positive (no action; "
+        "Hierarchize will not retry the same candidate due to content-"
+        "addressable caching unless inputs change)."
+    )
+
+    clar_draft = Clarification(
+        id="c-" + "0" * 16,
+        status="open",
+        kind="scheme-missing",
+        raised_at=now,
+        raised_by=raised_by,
+        raised_by_activity=_KIND_HIERARCHIZE_SCHEME_MISSING,
+        context_refs=context_refs,
+        question=question,
+        options=None,
+        resolved_at=None,
+        resolved_by=None,
+        resolution=None,
+        raised_provenance_id=prov.id,
+        resolved_provenance_id=None,
+        schema_version=2,
+    )
+    clar_id = compute_id(clar_draft)
+    clar = clar_draft.model_copy(update={"id": clar_id})
+    source_id = _pick_probandum_clarification_source_id(substrate)
+    substrate.add_clarification(source_id, clar)
     return clar_id
 
 
