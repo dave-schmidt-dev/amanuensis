@@ -143,7 +143,7 @@ def _find_first_ultimate_id(
     """
     # Materialise once; ``list_probandum_edges`` re-walks the directory
     # on each call.
-    superseded = substrate._superseded_probandum_edge_ids()
+    superseded = substrate._superseded_probandum_edge_ids()  # pyright: ignore[reportPrivateUsage]
     incoming_probandum_edges = [
         e for e in substrate.list_probandum_edges(child_kind="probandum") if e.id not in superseded
     ]
