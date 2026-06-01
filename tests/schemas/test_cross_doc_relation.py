@@ -62,7 +62,7 @@ def test_rejects_extra_field(
     assert any(err["type"] == "extra_forbidden" for err in exc.value.errors())
 
 
-def test_rejects_empty_shared_entities_via_explicit_validator(
+def test_accepts_empty_shared_entities_at_schema_layer(
     cross_doc_relation_payload: dict[str, Any],
 ) -> None:
     """Schema layer ACCEPTS empty ``shared_entities``.
