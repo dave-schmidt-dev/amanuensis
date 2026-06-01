@@ -17,6 +17,12 @@ T4.1 — INV-16 cycle + tree-shape gate (added):
 - Long linear chain (10 deep) accepted.
 - Multi-parent (probandum already has an incoming edge) rejected with
   ``ProbandumTreeViolation`` (Wigmore trees are trees, not DAGs).
+
+T4.2 — INV-17 lineage-completeness gate (added):
+- Edges from an ``ultimate`` parent always accepted (any child kind).
+- Edges from an orphan penultimate (no path to ultimate) rejected with
+  ``LineageIncomplete``.
+- Edges accepted once the parent has been linked to an ultimate.
 """
 
 from __future__ import annotations
@@ -28,6 +34,7 @@ import pytest
 
 from amanuensis.fs import (
     EdgeChildMissing,
+    LineageIncomplete,
     ParentProbandumMissing,
     ProbandumTreeViolation,
     Substrate,
@@ -741,3 +748,99 @@ def test_multi_parent_rejected(
     )
     with pytest.raises(ProbandumTreeViolation, match=r"multi-parent|multiple parents"):
         sub.add_probandum_edge(e_second)
+
+
+# --- T4.2: INV-17 lineage-completeness gate --------------------------
+
+
+def test_edge_from_ultimate_to_any_accepted(
+    tmp_workspace_with_probanda: tuple[Path, Probandum, Probandum],
+    role_attribution: RoleAttribution,
+) -> None:
+    """Edges whose parent is an ``ultimate`` probandum always pass INV-17.
+
+    An ``ultimate`` is the lineage terminus; it trivially traces to
+    itself, so the parent satisfies the lineage gate for any child kind.
+    """
+    workspace, ult, pen = tmp_workspace_with_probanda
+    sub = _new(workspace)
+    edge = _edge(
+        parent_probandum_id=ult.id,
+        child_id=pen.id,
+        child_kind="probandum",
+        role_attribution=role_attribution,
+    )
+    sub.add_probandum_edge(edge)
+    assert (workspace / "mappings" / "probandum-edges" / f"{edge.id}.yaml").is_file()
+
+
+def test_edge_from_orphan_penultimate_rejected(
+    tmp_workspace_with_probanda: tuple[Path, Probandum, Probandum],
+    role_attribution: RoleAttribution,
+) -> None:
+    """A penultimate that has no incoming edge cannot parent a new edge.
+
+    ``pen`` has no path back to an ultimate — adding any edge with
+    ``pen`` as parent would create an orphan lineage path. Rejected
+    with ``LineageIncomplete``.
+    """
+    from tests.fs.conftest import make_probandum
+
+    workspace, _ult, pen = tmp_workspace_with_probanda
+    sub = _new(workspace)
+    interim = make_probandum(
+        role_attribution,
+        kind="interim",
+        statement="Interim probandum (no lineage yet).",
+        alternatives_considered=["alt"],
+    )
+    sub.add_probandum(interim)
+    edge = _edge(
+        parent_probandum_id=pen.id,
+        child_id=interim.id,
+        child_kind="probandum",
+        role_attribution=role_attribution,
+        warrant="Edge from orphan penultimate parent.",
+    )
+    with pytest.raises(LineageIncomplete, match="lineage"):
+        sub.add_probandum_edge(edge)
+
+
+def test_edge_after_lineage_established_accepted(
+    tmp_workspace_with_probanda: tuple[Path, Probandum, Probandum],
+    role_attribution: RoleAttribution,
+) -> None:
+    """Once lineage is established (ult → pen), edges below pen pass.
+
+    The first edge ``ult → pen`` establishes pen's lineage to an
+    ultimate. A subsequent edge ``pen → interim`` is then valid because
+    pen now traces upward.
+    """
+    from tests.fs.conftest import make_probandum
+
+    workspace, ult, pen = tmp_workspace_with_probanda
+    sub = _new(workspace)
+    interim = make_probandum(
+        role_attribution,
+        kind="interim",
+        statement="Interim probandum to be linked once lineage exists.",
+        alternatives_considered=["alt"],
+    )
+    sub.add_probandum(interim)
+    e1 = _edge(
+        parent_probandum_id=ult.id,
+        child_id=pen.id,
+        child_kind="probandum",
+        role_attribution=role_attribution,
+        warrant="Establish lineage to ultimate.",
+    )
+    sub.add_probandum_edge(e1)
+    e2 = _edge(
+        parent_probandum_id=pen.id,
+        child_id=interim.id,
+        child_kind="probandum",
+        role_attribution=role_attribution,
+        warrant="pen now has lineage; this is valid.",
+    )
+    sub.add_probandum_edge(e2)
+    assert (workspace / "mappings" / "probandum-edges" / f"{e2.id}.yaml").is_file()

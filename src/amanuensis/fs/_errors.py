@@ -207,6 +207,21 @@ class SharedEntityGateViolation(SubstrateError, ValueError):
     """
 
 
+class LineageIncomplete(SubstrateError, ValueError):
+    """Raised when a ``ProbandumEdge`` write would leave a child orphaned (INV-17).
+
+    INV-17 requires that every non-``ultimate`` probandum trace upward
+    via incoming probandum-edges to at least one ``ultimate``. The
+    substrate enforces the property at write-time by checking the
+    PROPOSED edge's parent: if the parent is itself an ``ultimate`` (or
+    transitively traces to one via existing incoming edges), the new
+    edge preserves lineage; otherwise the new edge would attach the
+    child to a dangling subtree.
+
+    Inherits from both ``SubstrateError`` and ``ValueError``.
+    """
+
+
 class ProbandumTreeViolation(SubstrateError, ValueError):
     """Raised when a ``ProbandumEdge`` write would break tree-shape (INV-16).
 

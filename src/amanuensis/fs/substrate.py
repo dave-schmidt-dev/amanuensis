@@ -85,6 +85,7 @@ from ._errors import (
     AchAlternativesGateViolation,
     CrossSourceConstraintViolation,
     EdgeChildMissing,
+    LineageIncomplete,
     MappingVocabularyAlreadyPinned,
     MutationOfImmutableRecord,
     ParentProbandumMissing,
@@ -1813,6 +1814,57 @@ class Substrate:
                 return True
         return False
 
+    def _walk_to_ultimate(self, probandum_id: str) -> bool:
+        """Return True if ``probandum_id`` traces upward to an ``ultimate``.
+
+        Walks INCOMING probandum-edges (where the given probandum is the
+        ``child_id`` and ``child_kind == "probandum"``) until reaching a
+        probandum whose ``kind == "ultimate"``. Trivially True when the
+        starting probandum is itself an ``ultimate``.
+
+        Used by the INV-17 lineage-completeness gate at write-time:
+        before accepting a new edge, the substrate confirms the
+        parent's lineage is complete.
+
+        Depth-capped at 100 (defensive; matches the cycle helper).
+        Superseded edges are excluded from the walk — they represent
+        retracted state and cannot anchor lineage.
+        """
+        p = self.latest_probandum_for(probandum_id)
+        if p is None:
+            return False
+        if p.kind == "ultimate":
+            return True
+        # Materialise once; ``list_probandum_edges`` re-walks the
+        # directory on each call, which would otherwise be O(N * D).
+        # Filter out superseded edges (they represent retracted state).
+        superseded = self._superseded_probandum_edge_ids()
+        incoming_probandum_edges = [
+            e for e in self.list_probandum_edges(child_kind="probandum") if e.id not in superseded
+        ]
+        # BFS over incoming probandum-edges.
+        visited: set[str] = {probandum_id}
+        queue: deque[str] = deque([probandum_id])
+        depth = 0
+        while queue and depth < 100:
+            depth += 1
+            next_layer: deque[str] = deque()
+            while queue:
+                node = queue.popleft()
+                for edge in incoming_probandum_edges:
+                    if edge.child_id != node:
+                        continue
+                    parent_p = self.latest_probandum_for(edge.parent_probandum_id)
+                    if parent_p is None:
+                        continue
+                    if parent_p.kind == "ultimate":
+                        return True
+                    if parent_p.id not in visited:
+                        visited.add(parent_p.id)
+                        next_layer.append(parent_p.id)
+            queue = next_layer
+        return False
+
     def add_probandum_edge(self, edge: ProbandumEdge) -> Path:
         """Write a ProbandumEdge atomically.
 
@@ -1834,11 +1886,13 @@ class Substrate:
            the proposed child must not already have an incoming
            probandum-edge from a different parent (Wigmore charts are
            trees, not DAGs). Raises ``ProbandumTreeViolation``.
-        4. **Id discipline** — ``edge.id == compute_id(edge)``.
-        5. **INV-13 immutability** — byte-identical → no-op; divergent →
+        4. **INV-17 lineage-completeness gate (T4.2)** — the proposed
+           parent must trace upward to an ``ultimate`` (or BE one), so
+           the new edge preserves the property that every node has a
+           path to ultimate. Raises ``LineageIncomplete``.
+        5. **Id discipline** — ``edge.id == compute_id(edge)``.
+        6. **INV-13 immutability** — byte-identical → no-op; divergent →
            ``MutationOfImmutableRecord``.
-
-        INV-17 (lineage-completeness) is added by T4.2.
         """
         # Gate 1: parent existence (chain-walked via latest_probandum_for,
         # M2.5). Returns None if the chain terminus has no on-disk record.
@@ -1909,9 +1963,19 @@ class Substrate:
                 "Wigmore charts are trees, multi-parent (multiple parents) is "
                 "not allowed (INV-16)"
             )
-        # Gate 4: id discipline
+        # Gate 4: INV-17 lineage-completeness. The proposed parent must
+        # trace upward to an ultimate (or BE the ultimate). For an
+        # idempotent re-add (same edge bytes already on disk) this is a
+        # no-op cost: ``_walk_to_ultimate`` of the parent stays True.
+        if not self._walk_to_ultimate(edge.parent_probandum_id):
+            raise LineageIncomplete(
+                f"ProbandumEdge {edge.id}: parent_probandum_id="
+                f"{edge.parent_probandum_id!r} does not trace upward to an "
+                "ultimate probandum; lineage would be incomplete (INV-17)"
+            )
+        # Gate 5: id discipline
         self._require_id_matches(edge)
-        # Gate 5: INV-13 immutability via byte-identical compare.
+        # Gate 6: INV-13 immutability via byte-identical compare.
         path = self.probandum_edge_path(edge.id)
         serialized = serialize_probandum_edge_yaml(edge)
         if path.is_file():
