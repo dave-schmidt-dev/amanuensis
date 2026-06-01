@@ -3,9 +3,10 @@
 T11.1 — A workspace-level appendix file ``probandum-tree.html`` is
 produced under the export bundle directory, with one section per
 ultimate probandum rendering the full subtree as nested ``<details>``.
-Edges to atom leaves link to the Phase 1 per-source export page;
-edges to cross-doc-relation leaves link to the Phase 2b appendix
-anchor.
+
+T11.2 — One ``probanda/<id>.html`` page per Probandum showing
+ancestry (incoming edges up to the ultimate) and descendants
+(outgoing subtree).
 """
 
 from __future__ import annotations
@@ -131,3 +132,93 @@ def test_export_links_to_cross_doc_relations(
     assert f"cross-doc-relations.html#relation-{rel.id}" in content, (
         f"cross-doc-relation {rel.id} not linked from probandum-tree.html"
     )
+
+
+# ---------------------------------------------------------------------------
+# T11.2 — Per-probandum lineage pages
+# ---------------------------------------------------------------------------
+
+
+def test_export_writes_per_probandum_page(
+    tmp_workspace_with_probandum_tree_for_export: Path,
+    tmp_path: Path,
+) -> None:
+    """Each Probandum gets its own ``probanda/<id>.html`` page."""
+    out_dir = tmp_path / "export"
+    substrate = Substrate(tmp_workspace_with_probandum_tree_for_export)
+    export_workspace_appendix(substrate=substrate, out_dir=out_dir, now=_FROZEN_NOW)
+
+    probanda = list(substrate.list_probanda())
+    assert len(probanda) >= 3, "fixture should plant at least 3 probanda"
+    for p in probanda:
+        page = out_dir / "probanda" / f"{p.id}.html"
+        assert page.is_file(), f"per-probandum page missing at {page}"
+        content = page.read_text(encoding="utf-8")
+        assert content.startswith("<!DOCTYPE html>")
+        # Statement body is in the page.
+        assert p.statement in content, f"statement of {p.id} missing from per-probandum page"
+        # Id is in the page.
+        assert p.id in content
+
+
+def test_per_probandum_page_renders_ancestry(
+    tmp_workspace_with_probandum_tree_for_export: Path,
+    tmp_path: Path,
+) -> None:
+    """The interim probandum's page shows its ancestors up to the ultimate.
+
+    Walks the fixture tree: the interim's ancestry chain MUST contain
+    the penultimate AND the ultimate. The page renders the chain
+    explicitly under an "Ancestry" section.
+    """
+    out_dir = tmp_path / "export"
+    substrate = Substrate(tmp_workspace_with_probandum_tree_for_export)
+    export_workspace_appendix(substrate=substrate, out_dir=out_dir, now=_FROZEN_NOW)
+
+    probanda = list(substrate.list_probanda())
+    interims = [p for p in probanda if p.kind == "interim"]
+    ultimates = [p for p in probanda if p.kind == "ultimate"]
+    penultimates = [p for p in probanda if p.kind == "penultimate"]
+    assert interims and ultimates and penultimates
+
+    interim_page = out_dir / "probanda" / f"{interims[0].id}.html"
+    content = interim_page.read_text(encoding="utf-8")
+
+    assert "Ancestry" in content, "Ancestry section missing from interim page"
+    # Both upward-chain ids appear in the page (link href is
+    # ``<id>.html`` which trivially contains the id).
+    for ancestor in (ultimates[0], penultimates[0]):
+        assert ancestor.id in content, (
+            f"ancestor {ancestor.id} ({ancestor.kind}) missing from interim's page"
+        )
+
+
+def test_per_probandum_page_renders_descendants(
+    tmp_workspace_with_probandum_tree_for_export: Path,
+    tmp_path: Path,
+) -> None:
+    """The ultimate's page shows its descendants down to the leaves.
+
+    The ultimate's descendants section MUST mention the penultimate and
+    the interim (both probandum children, transitively). The atom and
+    cross-doc-relation leaves attach to the interim.
+    """
+    out_dir = tmp_path / "export"
+    substrate = Substrate(tmp_workspace_with_probandum_tree_for_export)
+    export_workspace_appendix(substrate=substrate, out_dir=out_dir, now=_FROZEN_NOW)
+
+    probanda = list(substrate.list_probanda())
+    ultimates = [p for p in probanda if p.kind == "ultimate"]
+    penultimates = [p for p in probanda if p.kind == "penultimate"]
+    interims = [p for p in probanda if p.kind == "interim"]
+    assert ultimates and penultimates and interims
+
+    ultimate_page = out_dir / "probanda" / f"{ultimates[0].id}.html"
+    content = ultimate_page.read_text(encoding="utf-8")
+    assert "Descendants" in content, "Descendants section missing from ultimate page"
+    # Penultimate + interim ids appear (descended into via the nested
+    # <details> blocks).
+    for descendant in (penultimates[0], interims[0]):
+        assert descendant.id in content, (
+            f"descendant {descendant.id} ({descendant.kind}) missing from ultimate's page"
+        )

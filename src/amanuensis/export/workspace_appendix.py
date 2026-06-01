@@ -24,17 +24,22 @@ This module emits a workspace-level *bundle*: a directory containing
   Atoms link to ``../<source_id>.html#atom-<id>`` (Phase 1 per-source
   pages); cross-doc-relation leaves link to
   ``cross-doc-relations.html#relation-<id>``.
+- ``probanda/<probandum_id>.html`` (Phase 2c M11) — one page per
+  Probandum showing statement, scheme, alternatives, confidence,
+  ancestry (incoming edges up to the ultimate), and descendants
+  (outgoing edges down to the leaves).
 
 The bundle is *self-contained*: same CSS-in-`<style>` discipline as
 Phase 1, no CDN URLs, no external network references. Pages link to
 sibling pages via relative paths (``entities/<id>.html`` from the
 appendix; ``../cross-doc-relations.html#relation-<id>`` from the
-entity pages).
+entity pages; ``../probandum-tree.html#ultimate-<id>`` from the
+per-probandum pages).
 
 INV-8 (substrate is source of truth; renderings are pure functions of
 state) is the load-bearing invariant: two runs over the same substrate
 must produce byte-identical files. Tests in
-``tests/export/test_static_export_cross_doc.py`` and (from Phase 2c)
+``tests/export/test_static_export_cross_doc.py`` and
 ``tests/export/test_static_export_probandum.py`` assert this.
 
 Output mode is ``0644`` to match the per-source exporter — bundles are
@@ -220,6 +225,23 @@ details.probandum-node ul.children > li {
 .kind-badge.atom { color: #e0b343; border-color: #e0b343; }
 .kind-badge.cross-doc-relation { color: #e07b39; border-color: #e07b39; }
 .probandum-statement { display: block; margin: 0.2rem 0; }
+.lineage-chain {
+  list-style: none;
+  padding: 0;
+  margin: 0.5rem 0;
+}
+.lineage-chain > li {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.4rem 0.7rem;
+  margin: 0.3rem 0;
+}
+.lineage-chain > li::before {
+  content: "↑ ";
+  color: var(--muted);
+  margin-right: 0.3rem;
+}
 footer {
   margin-top: 3rem;
   padding-top: 1rem;
@@ -555,6 +577,26 @@ def _index_edges_by_parent(
     return by_parent
 
 
+def _index_edges_by_child(
+    edges: list[ProbandumEdge],
+) -> dict[str, list[ProbandumEdge]]:
+    """Group edges by ``child_id`` (only ``child_kind == "probandum"``).
+
+    The lineage walk only follows probandum→probandum edges (atom and
+    cross-doc children are leaves and have no upward incoming edge in
+    the probandum graph). Per-child ordering is by edge ``id`` so the
+    "pick the first parent if multi-parent" tiebreaker is deterministic.
+    """
+    by_child: dict[str, list[ProbandumEdge]] = defaultdict(list)
+    for edge in edges:
+        if edge.child_kind != "probandum":
+            continue
+        by_child[edge.child_id].append(edge)
+    for child_id in by_child:
+        by_child[child_id].sort(key=lambda e: e.id)
+    return by_child
+
+
 def _kind_badge(label: str, css_class: str | None = None) -> str:
     """Render a ``<span class="kind-badge ...">`` tag for a probandum/edge kind."""
     classes = "kind-badge"
@@ -852,6 +894,152 @@ def _render_probandum_tree_page(
     )
 
 
+def _walk_ancestry(
+    probandum_id: str,
+    *,
+    edges_by_child: dict[str, list[ProbandumEdge]],
+    probandum_by_id: dict[str, Probandum],
+) -> list[Probandum]:
+    """Walk INCOMING probandum-edges up to the ultimate.
+
+    Returns ancestors in order: nearest parent first, ultimate last (or
+    whatever the walk reaches). Multi-parent forks (rare; Wigmore trees
+    are typically single-parent) are tie-broken by edge id so the chain
+    is deterministic.
+    """
+    chain: list[Probandum] = []
+    visited: set[str] = {probandum_id}
+    current = probandum_id
+    for _ in range(_TREE_MAX_DEPTH):
+        parents = edges_by_child.get(current, [])
+        if not parents:
+            break
+        parent_id = parents[0].parent_probandum_id
+        if parent_id in visited:
+            break
+        visited.add(parent_id)
+        parent = probandum_by_id.get(parent_id)
+        if parent is None:
+            break
+        chain.append(parent)
+        if parent.kind == "ultimate":
+            break
+        current = parent_id
+    return chain
+
+
+def _render_lineage_chain(
+    chain: list[Probandum],
+    *,
+    probandum_link_prefix: str,
+) -> str:
+    """Render the ancestry walk as an ordered list of upward steps.
+
+    Empty chains render an explicit "no ancestors" placeholder so the
+    section's shape stays stable.
+    """
+    if not chain:
+        return '<p class="empty">No ancestors — this probandum has no incoming probandum-edges.</p>'
+    items = "".join(
+        f"<li>{_kind_badge(p.kind, p.kind)}"
+        f"{_probandum_link(p.id, _excerpt(p.statement), prefix=probandum_link_prefix)}"
+        f'<div class="probandum-id-small"><code>{_esc(p.id)}</code></div>'
+        "</li>"
+        for p in chain
+    )
+    return f'<ul class="lineage-chain">{items}</ul>'
+
+
+def _render_alternatives(alternatives: list[str]) -> str:
+    """Render the ACH alternatives list as a ``<ul>`` (or an empty placeholder)."""
+    if not alternatives:
+        return '<p class="empty">No alternatives considered.</p>'
+    items = "".join(f"<li>{_esc(a)}</li>" for a in alternatives)
+    return f"<ul>{items}</ul>"
+
+
+def _render_per_probandum_page(
+    *,
+    probandum: Probandum,
+    edges_by_parent: dict[str, list[ProbandumEdge]],
+    edges_by_child: dict[str, list[ProbandumEdge]],
+    probandum_by_id: dict[str, Probandum],
+    atom_by_id: dict[str, Atom],
+    cross_doc_by_id: dict[str, CrossDocRelation],
+    generated_at: datetime,
+    version_string: str,
+) -> str:
+    """Render one ``probanda/<id>.html`` page.
+
+    Sections: header (statement + kind + scheme + alternatives +
+    confidence) → Ancestry → Descendants → Provenance link.
+    """
+    summary = (
+        '<header class="summary">'
+        f"<h1>{_kind_badge(probandum.kind, probandum.kind)}"
+        f"{_esc(_excerpt(probandum.statement, 200))}</h1>"
+        "<dl>"
+        f"<dt>id</dt><dd><code>{_esc(probandum.id)}</code></dd>"
+        f"<dt>kind</dt><dd>{_esc(probandum.kind)}</dd>"
+        f"<dt>scheme</dt><dd><code>{_esc(probandum.scheme)}</code></dd>"
+        f"<dt>confidence</dt><dd>{_esc(probandum.confidence)}</dd>"
+        f"<dt>provenance</dt><dd><code>{_esc(probandum.provenance_id)}</code></dd>"
+        "</dl>"
+        "</header>"
+    )
+
+    statement_section = f"<h2>Statement</h2><p>{_esc(probandum.statement)}</p>"
+
+    alternatives_section = (
+        f"<h2>Alternatives considered</h2>{_render_alternatives(probandum.alternatives_considered)}"
+    )
+
+    chain = _walk_ancestry(
+        probandum.id,
+        edges_by_child=edges_by_child,
+        probandum_by_id=probandum_by_id,
+    )
+    # Per-probandum pages sit under ``probanda/`` so sibling probandum
+    # links use the empty prefix; atom links go up two levels
+    # (``../../<source>.html``); the cross-doc-relations appendix lives
+    # one directory up.
+    ancestry_section = f"<h2>Ancestry</h2>{_render_lineage_chain(chain, probandum_link_prefix='')}"
+
+    descendants_html = _render_subtree(
+        probandum=probandum,
+        edges_by_parent=edges_by_parent,
+        probandum_by_id=probandum_by_id,
+        atom_by_id=atom_by_id,
+        cross_doc_by_id=cross_doc_by_id,
+        probandum_link_prefix="",
+        atom_link_prefix="../../",
+        cross_doc_link_prefix="../",
+    )
+    descendants_section = f"<h2>Descendants</h2>{descendants_html}"
+
+    back_link = '<p><a href="../probandum-tree.html">← back to probandum tree</a></p>'
+    footer = _render_footer(generated_at, version_string)
+    return (
+        "<!DOCTYPE html>\n"
+        '<html lang="en">\n'
+        "<head>\n"
+        '<meta charset="utf-8">\n'
+        f"<title>amanuensis — {_esc(_excerpt(probandum.statement, 60))}</title>\n"
+        f"<style>{_BUNDLE_CSS}</style>\n"
+        "</head>\n"
+        "<body>\n"
+        f"{summary}\n"
+        f"{statement_section}\n"
+        f"{alternatives_section}\n"
+        f"{ancestry_section}\n"
+        f"{descendants_section}\n"
+        f"{back_link}\n"
+        f"{footer}\n"
+        "</body>\n"
+        "</html>\n"
+    )
+
+
 # --- Public API -------------------------------------------------------
 
 
@@ -861,7 +1049,7 @@ def export_workspace_appendix(
     out_dir: Path,
     now: datetime | None = None,
 ) -> Path:
-    """Render a workspace-level bundle of cross-doc + per-entity + probandum-tree pages.
+    """Render a workspace-level bundle of cross-doc + per-entity + probandum pages.
 
     Emits a directory at ``out_dir`` containing:
 
@@ -871,6 +1059,9 @@ def export_workspace_appendix(
       "Cross-doc edges touching this entity" section.
     - ``probandum-tree.html`` (Phase 2c M11) — per-ultimate-probandum
       subtree rendered as nested ``<details>`` blocks.
+    - ``probanda/<id>.html`` (Phase 2c M11) — one page per Probandum
+      with ancestry (incoming edges up to ultimate) and descendants
+      (outgoing subtree).
 
     Args:
         substrate: Bound Substrate for the workspace.
@@ -904,6 +1095,8 @@ def export_workspace_appendix(
     out_dir.mkdir(parents=True, exist_ok=True)
     entities_dir = out_dir / "entities"
     entities_dir.mkdir(parents=True, exist_ok=True)
+    probanda_dir = out_dir / "probanda"
+    probanda_dir.mkdir(parents=True, exist_ok=True)
 
     generated_at = now if now is not None else datetime.now(UTC)
     version_string = _package_version()
@@ -946,9 +1139,12 @@ def export_workspace_appendix(
         page_path.write_text(page_html, encoding="utf-8")
         os.chmod(page_path, stat.S_IMODE(_OUTPUT_MODE))
 
-    # 3. Probandum tree appendix (Phase 2c M11).
+    # 3. Probandum tree + per-probandum pages (Phase 2c M11).
     probanda = _list_probanda(substrate)
     probandum_edges = _list_probandum_edges(substrate)
+    edges_by_parent = _index_edges_by_parent(probandum_edges)
+    edges_by_child = _index_edges_by_child(probandum_edges)
+    probandum_by_id = {p.id: p for p in probanda}
     atom_by_id = _gather_atoms_for_edges(substrate, probandum_edges)
     cross_doc_by_edges = _gather_cross_doc_for_edges(substrate, probandum_edges)
 
@@ -963,5 +1159,22 @@ def export_workspace_appendix(
     tree_path = out_dir / "probandum-tree.html"
     tree_path.write_text(tree_html, encoding="utf-8")
     os.chmod(tree_path, stat.S_IMODE(_OUTPUT_MODE))
+
+    # Per-probandum pages. Iteration order matches ``probanda`` (id-sorted)
+    # so file count + content is deterministic across runs.
+    for probandum in probanda:
+        page_html = _render_per_probandum_page(
+            probandum=probandum,
+            edges_by_parent=edges_by_parent,
+            edges_by_child=edges_by_child,
+            probandum_by_id=probandum_by_id,
+            atom_by_id=atom_by_id,
+            cross_doc_by_id=cross_doc_by_edges,
+            generated_at=generated_at,
+            version_string=version_string,
+        )
+        page_path = probanda_dir / f"{probandum.id}.html"
+        page_path.write_text(page_html, encoding="utf-8")
+        os.chmod(page_path, stat.S_IMODE(_OUTPUT_MODE))
 
     return out_dir
