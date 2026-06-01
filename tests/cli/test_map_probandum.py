@@ -439,3 +439,138 @@ def test_lineage_unknown_id_rejected(
         ],
     )
     assert result.exit_code != 0
+
+
+# ---------------------------------------------------------------------------
+# T9.5: amanuensis map probandum link <parent-id> <child-id>
+# ---------------------------------------------------------------------------
+
+
+def test_link_probandum_to_probandum(
+    tmp_workspace_with_walton_snapshot: Path,
+) -> None:
+    """Linking a penultimate child under an ultimate parent succeeds."""
+    workspace = tmp_workspace_with_walton_snapshot
+    ult_id = _add_probandum(workspace, "Ultimate.", "ultimate")
+    pen_id = _add_probandum(
+        workspace,
+        "Penultimate.",
+        "penultimate",
+        alternatives=["Alt"],
+    )
+    result = runner.invoke(
+        map_app,
+        [
+            "probandum",
+            "link",
+            ult_id,
+            pen_id,
+            "--kind",
+            "supports",
+            "--warrant",
+            "Supports the ultimate.",
+            "--warrant-basis",
+            "fixture",
+            "--workspace",
+            str(workspace),
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    line = result.stdout.strip().splitlines()[-1]
+    assert line.startswith("q-")
+    # The edge is persisted.
+    sub = Substrate(workspace)
+    edge = sub.get_probandum_edge(line)
+    assert edge.parent_probandum_id == ult_id
+    assert edge.child_id == pen_id
+    assert edge.child_kind == "probandum"
+
+
+def test_link_probandum_to_atom_requires_source_id(
+    tmp_workspace_with_walton_snapshot: Path,
+) -> None:
+    """Linking to an atom child without --child-source-id is rejected."""
+    workspace = tmp_workspace_with_walton_snapshot
+    ult_id = _add_probandum(workspace, "Ultimate.", "ultimate")
+    result = runner.invoke(
+        map_app,
+        [
+            "probandum",
+            "link",
+            ult_id,
+            "a-someatomid",
+            "--kind",
+            "supports",
+            "--warrant",
+            "Atom supports the ultimate.",
+            "--warrant-basis",
+            "fixture",
+            "--workspace",
+            str(workspace),
+        ],
+    )
+    assert result.exit_code != 0
+    haystack = (result.stdout or "") + (result.stderr or "")
+    assert "child-source-id" in haystack.lower()
+
+
+def test_link_probandum_to_cross_doc_relation(
+    tmp_workspace_with_walton_snapshot: Path,
+) -> None:
+    """Linking to a cross-doc-relation child dispatches the x- prefix."""
+    workspace = tmp_workspace_with_walton_snapshot
+    ult_id = _add_probandum(workspace, "Ultimate.", "ultimate")
+    # No real cross-doc relation on disk -> the EdgeChildMissing gate
+    # should fire (exit 1), but the prefix dispatch (a child_kind of
+    # cross-doc-relation) is exercised — that's what this test verifies.
+    result = runner.invoke(
+        map_app,
+        [
+            "probandum",
+            "link",
+            ult_id,
+            "x-nonexistent00",
+            "--kind",
+            "supports",
+            "--warrant",
+            "x.",
+            "--warrant-basis",
+            "fixture",
+            "--workspace",
+            str(workspace),
+        ],
+    )
+    # exits 1: child does not exist on disk (EdgeChildMissing). The
+    # prefix dispatch succeeded — we didn't get the "unknown prefix"
+    # exit-2 from the CLI's own guard.
+    assert result.exit_code == 1
+    haystack = (result.stdout or "") + (result.stderr or "")
+    assert "cross-doc-relation" in haystack.lower() or "not found" in haystack.lower()
+
+
+def test_link_rejects_unknown_child_prefix(
+    tmp_workspace_with_walton_snapshot: Path,
+) -> None:
+    """A child id with an unknown prefix is rejected at exit 2 (parse-time)."""
+    workspace = tmp_workspace_with_walton_snapshot
+    ult_id = _add_probandum(workspace, "Ultimate.", "ultimate")
+    result = runner.invoke(
+        map_app,
+        [
+            "probandum",
+            "link",
+            ult_id,
+            "z-bogusprefix",
+            "--kind",
+            "supports",
+            "--warrant",
+            "z.",
+            "--warrant-basis",
+            "fixture",
+            "--workspace",
+            str(workspace),
+        ],
+    )
+    assert result.exit_code == 2
+    haystack = (result.stdout or "") + (result.stderr or "")
+    assert "prefix" in haystack.lower() or "p-" in haystack

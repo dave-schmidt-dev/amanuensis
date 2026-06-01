@@ -43,6 +43,7 @@ from amanuensis.schemas import (
     CrossDocRelationSupersede,
     EntitySupersede,
     Probandum,
+    ProbandumEdge,
     ProbandumSupersede,
     ProvenanceRecord,
     Resolution,
@@ -2638,3 +2639,261 @@ def probandum_lineage_command(
 
     typer.echo(f"* {probandum_id}")
     _render_outgoing(probandum_id, 0, set())
+
+
+@probandum_app.command("link")
+@require_marker
+def probandum_link_command(
+    parent_id: Annotated[
+        str,
+        typer.Argument(help="Parent probandum id (must start with p-)."),
+    ],
+    child_id: Annotated[
+        str,
+        typer.Argument(
+            help="Child id: probandum (p-) / atom (a-) / cross-doc-relation (x-).",
+        ),
+    ],
+    kind: Annotated[
+        str,
+        typer.Option(
+            "--kind",
+            help="Edge kind: supports / attacks / undercuts.",
+        ),
+    ],
+    warrant: Annotated[
+        str,
+        typer.Option(
+            "--warrant",
+            help="The warrant that licenses the inference.",
+        ),
+    ],
+    warrant_basis: Annotated[
+        str,
+        typer.Option(
+            "--warrant-basis",
+            help="Basis grounding the warrant (citation / methodology / etc.).",
+        ),
+    ],
+    warrant_defensibility: Annotated[
+        str,
+        typer.Option(
+            "--warrant-defensibility",
+            help=(
+                "One of literature-backed / methodology-derived / conventional / "
+                "contested. Default: conventional."
+            ),
+        ),
+    ] = "conventional",
+    confidence: Annotated[
+        str,
+        typer.Option(
+            "--confidence",
+            help="Confidence level for the edge (high / medium / low). Default: medium.",
+        ),
+    ] = "medium",
+    child_source_id: Annotated[
+        str | None,
+        typer.Option(
+            "--child-source-id",
+            help="Source-id for the child atom (required when <child-id> is an atom).",
+        ),
+    ] = None,
+    actor: Annotated[
+        str,
+        typer.Option(
+            "--actor",
+            help="Identifier of the human authoring the edge.",
+        ),
+    ] = "cli",
+    workspace: Annotated[
+        Path | None,
+        typer.Option(
+            "--workspace",
+            "-w",
+            help="Workspace root (must contain amanuensis.yaml). Defaults to CWD.",
+        ),
+    ] = None,
+) -> None:
+    """Write a ProbandumEdge from <parent-id> to <child-id> (T9.5).
+
+    The child kind is dispatched from the id prefix: ``p-`` -> probandum,
+    ``a-`` -> atom (requires ``--child-source-id``), ``x-`` ->
+    cross-doc-relation. The substrate's ``add_probandum_edge`` enforces
+    parent / child existence, INV-16 (cycle + tree-shape), INV-17
+    (lineage reaches ultimate), id discipline, and INV-13 immutability.
+    """
+    from typing import Literal, cast
+
+    workspace_path = workspace_from_kwargs({"workspace": workspace})
+    substrate = Substrate(workspace_path)
+
+    # Enum validation.
+    if kind not in {"supports", "attacks", "undercuts"}:
+        typer.secho(
+            f"--kind must be one of supports/attacks/undercuts, got '{kind}'",
+            err=True,
+        )
+        raise typer.Exit(code=2)
+    if warrant_defensibility not in {
+        "literature-backed",
+        "methodology-derived",
+        "conventional",
+        "contested",
+    }:
+        typer.secho(
+            f"--warrant-defensibility must be one of "
+            "literature-backed/methodology-derived/conventional/contested, "
+            f"got '{warrant_defensibility}'",
+            err=True,
+        )
+        raise typer.Exit(code=2)
+    if confidence not in {"high", "medium", "low"}:
+        typer.secho(
+            f"--confidence must be one of high/medium/low, got '{confidence}'",
+            err=True,
+        )
+        raise typer.Exit(code=2)
+
+    # Dispatch child_kind from id prefix.
+    if child_id.startswith("p-"):
+        child_kind_str = "probandum"
+        if child_source_id is not None:
+            typer.secho(
+                "--child-source-id is forbidden for probandum children "
+                "(only atom children carry a source-id)",
+                err=True,
+            )
+            raise typer.Exit(code=2)
+    elif child_id.startswith("a-"):
+        child_kind_str = "atom"
+        if child_source_id is None:
+            typer.secho(
+                "--child-source-id is required when <child-id> is an atom (a-...)",
+                err=True,
+            )
+            raise typer.Exit(code=2)
+    elif child_id.startswith("x-"):
+        child_kind_str = "cross-doc-relation"
+        if child_source_id is not None:
+            typer.secho(
+                "--child-source-id is forbidden for cross-doc-relation children",
+                err=True,
+            )
+            raise typer.Exit(code=2)
+    else:
+        typer.secho(
+            f"<child-id> '{child_id}' must start with p- / a- / x- (got unknown prefix)",
+            err=True,
+        )
+        raise typer.Exit(code=2)
+
+    kind_lit = cast("Literal['supports', 'attacks', 'undercuts']", kind)
+    defens_lit = cast(
+        "Literal['literature-backed', 'methodology-derived', 'conventional', 'contested']",
+        warrant_defensibility,
+    )
+    confidence_lit = cast("Literal['high', 'medium', 'low']", confidence)
+    child_kind_lit = cast("Literal['probandum', 'atom', 'cross-doc-relation']", child_kind_str)
+
+    now = datetime.now(UTC)
+    agent = AgentAttribution(kind="human", identifier=actor, role="human_supervisor")
+    role_attr = RoleAttribution(agent=agent, activity="proposed", at=now)
+
+    # Two-pass compute_id (provenance_id is volatile for ProbandumEdge).
+    edge_draft = ProbandumEdge(
+        id="q-" + "0" * 16,
+        parent_probandum_id=parent_id,
+        child_id=child_id,
+        child_kind=child_kind_lit,
+        child_source_id=child_source_id,
+        kind=kind_lit,
+        warrant=warrant,
+        warrant_defensibility=defens_lit,
+        warrant_basis=warrant_basis,
+        confidence=confidence_lit,
+        provenance_id="p-" + "0" * 16,
+        role_attributions=[role_attr],
+        schema_version=1,
+    )
+    edge_id = compute_id(edge_draft)
+
+    prov_draft = ProvenanceRecord(
+        id="p-" + "0" * 16,
+        entity_type="probandum-edge",
+        entity_id=edge_id,
+        activity="probandum-link",
+        activity_started_at=now,
+        activity_ended_at=now,
+        used_entity_ids=[],
+        was_attributed_to=agent,
+        was_influenced_by=[],
+        schema_version=1,
+    )
+    prov_id = compute_id(prov_draft)
+    prov = prov_draft.model_copy(update={"id": prov_id})
+    edge = edge_draft.model_copy(update={"id": edge_id, "provenance_id": prov_id})
+
+    from amanuensis.fs._errors import (
+        EdgeChildMissing,
+        LineageIncomplete,
+        ParentProbandumMissing,
+        ProbandumTreeViolation,
+    )
+
+    try:
+        with acquire_workspace_lock(workspace_path, timeout=5.0):
+            substrate_changes: list[str] = []
+            prov_path = substrate.mappings_provenance_path(prov.id)
+            atomic_write_text(prov_path, serialize_yaml(prov))
+            substrate_changes.append(str(prov_path.relative_to(workspace_path)))
+
+            try:
+                edge_path = substrate.add_probandum_edge(edge)
+            except (
+                ParentProbandumMissing,
+                EdgeChildMissing,
+                ProbandumTreeViolation,
+                LineageIncomplete,
+            ) as exc:
+                typer.secho(str(exc), err=True)
+                raise typer.Exit(code=1) from exc
+            substrate_changes.append(str(edge_path.relative_to(workspace_path)))
+
+            inputs_payload = json.dumps(
+                {
+                    "child_id": child_id,
+                    "child_kind": child_kind_str,
+                    "child_source_id": child_source_id,
+                    "confidence": confidence,
+                    "kind": kind,
+                    "parent_id": parent_id,
+                    "warrant": warrant,
+                    "warrant_basis": warrant_basis,
+                    "warrant_defensibility": warrant_defensibility,
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+            inputs_hash = hashlib.sha256(inputs_payload).hexdigest()
+
+            actor_attr = AgentAttribution(kind="human", identifier=actor, role="human_supervisor")
+            ReplayLog.for_mappings(workspace_path).append(
+                actor=actor_attr,
+                activity="probandum-link",
+                inputs_hash=inputs_hash,
+                outputs_hash=inputs_hash,
+                cache_hit=False,
+                substrate_changes=substrate_changes,
+                duration_seconds=0.0,
+                _lock_held=True,
+            )
+
+    except WorkspaceLockTimeout as exc:
+        typer.secho(
+            "workspace flock held by another process — wait or release .amanuensis-lock",
+            err=True,
+        )
+        raise typer.Exit(code=2) from exc
+
+    typer.echo(edge.id)
