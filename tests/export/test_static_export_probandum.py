@@ -7,6 +7,12 @@ ultimate probandum rendering the full subtree as nested ``<details>``.
 T11.2 — One ``probanda/<id>.html`` page per Probandum showing
 ancestry (incoming edges up to the ultimate) and descendants
 (outgoing subtree).
+
+T11.3 — INV-8 render purity extended to the new probandum-tree
+fixture: two consecutive runs over the same substrate produce
+byte-identical files for every emitted page. Self-containment is
+re-asserted for the new pages (no CDN URLs, no inline JS, no external
+network references).
 """
 
 from __future__ import annotations
@@ -18,6 +24,17 @@ from amanuensis.export import export_workspace_appendix
 from amanuensis.fs import Substrate
 
 _FROZEN_NOW = datetime(2026, 1, 1, 0, 0, 0, tzinfo=UTC)
+
+# Forbidden hosts mirror the M9 self-containment test set. Kept in sync
+# so any future CDN attempt fails uniformly across the bundle.
+_FORBIDDEN_HOSTS: tuple[str, ...] = (
+    "unpkg.com",
+    "cdn.jsdelivr.net",
+    "cdnjs.cloudflare.com",
+    "googleapis.com",
+    "gstatic.com",
+    "jsdelivr.net",
+)
 
 
 # ---------------------------------------------------------------------------
@@ -49,8 +66,8 @@ def test_export_writes_probandum_tree_page(
     # statement excerpt.
     for ultimate in ultimates:
         assert f"ultimate-{ultimate.id}" in content, f"missing #ultimate-{ultimate.id} anchor"
-        # Statement excerpt — the first 40 chars of the statement will
-        # appear (the heading uses an 80-char excerpt).
+        # Statement excerpt — the first 60 chars of the statement at minimum
+        # will appear (the heading uses an 80-char excerpt).
         assert ultimate.statement[:40] in content, (
             "ultimate statement excerpt missing from probandum-tree.html"
         )
@@ -222,3 +239,78 @@ def test_per_probandum_page_renders_descendants(
         assert descendant.id in content, (
             f"descendant {descendant.id} ({descendant.kind}) missing from ultimate's page"
         )
+
+
+# ---------------------------------------------------------------------------
+# T11.3 — INV-8 render purity (byte-identical across two runs)
+# ---------------------------------------------------------------------------
+
+
+def test_render_purity_with_probandum_tree(
+    tmp_workspace_with_probandum_tree_for_export: Path,
+    tmp_path: Path,
+) -> None:
+    """Two consecutive export runs yield byte-identical bundle files.
+
+    Mirrors the Phase 2b M9 ``test_render_purity_with_cross_doc_relation``
+    but extended to the M11 probandum tree fixture: file set AND bytes
+    must match across two runs of ``export_workspace_appendix`` with a
+    frozen ``now``.
+    """
+    out_a = tmp_path / "a"
+    out_b = tmp_path / "b"
+    substrate = Substrate(tmp_workspace_with_probandum_tree_for_export)
+
+    export_workspace_appendix(substrate=substrate, out_dir=out_a, now=_FROZEN_NOW)
+    export_workspace_appendix(substrate=substrate, out_dir=out_b, now=_FROZEN_NOW)
+
+    files_a = sorted(p.relative_to(out_a) for p in out_a.rglob("*") if p.is_file())
+    files_b = sorted(p.relative_to(out_b) for p in out_b.rglob("*") if p.is_file())
+    assert files_a == files_b, f"bundle file set differs across runs:\n  a={files_a}\n  b={files_b}"
+    # Sanity: both the new probandum-tree page and at least one per-probandum
+    # page should be in the file set.
+    relposix = [p.as_posix() for p in files_a]
+    assert "probandum-tree.html" in relposix
+    assert any(rp.startswith("probanda/") and rp.endswith(".html") for rp in relposix)
+
+    for rel_path in files_a:
+        bytes_a = (out_a / rel_path).read_bytes()
+        bytes_b = (out_b / rel_path).read_bytes()
+        assert bytes_a == bytes_b, f"{rel_path} differs across two render runs (INV-8)"
+
+
+def test_probandum_tree_page_is_self_contained(
+    tmp_workspace_with_probandum_tree_for_export: Path,
+    tmp_path: Path,
+) -> None:
+    """No CDN URLs / external links leak into ``probandum-tree.html``.
+
+    Matches the Phase 2a/2b self-contained-HTML discipline: the bundle
+    must open offline, no external network references baked in.
+    """
+    out_dir = tmp_path / "export"
+    substrate = Substrate(tmp_workspace_with_probandum_tree_for_export)
+    export_workspace_appendix(substrate=substrate, out_dir=out_dir, now=_FROZEN_NOW)
+
+    content = (out_dir / "probandum-tree.html").read_text(encoding="utf-8")
+    for host in _FORBIDDEN_HOSTS:
+        assert host not in content, f"CDN reference to {host!r} leaked into probandum-tree.html"
+    assert "https://" not in content, "external https:// URL leaked into probandum-tree.html"
+    assert "http://" not in content, "external http:// URL leaked into probandum-tree.html"
+
+
+def test_per_probandum_page_is_self_contained(
+    tmp_workspace_with_probandum_tree_for_export: Path,
+    tmp_path: Path,
+) -> None:
+    """No CDN URLs / external links leak into any ``probanda/<id>.html`` page."""
+    out_dir = tmp_path / "export"
+    substrate = Substrate(tmp_workspace_with_probandum_tree_for_export)
+    export_workspace_appendix(substrate=substrate, out_dir=out_dir, now=_FROZEN_NOW)
+
+    for page in (out_dir / "probanda").glob("*.html"):
+        content = page.read_text(encoding="utf-8")
+        for host in _FORBIDDEN_HOSTS:
+            assert host not in content, f"CDN reference to {host!r} leaked into {page.name}"
+        assert "https://" not in content, f"external https:// URL leaked into {page.name}"
+        assert "http://" not in content, f"external http:// URL leaked into {page.name}"
