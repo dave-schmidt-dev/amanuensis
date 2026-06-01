@@ -23,7 +23,7 @@ from amanuensis.fs import (
     Substrate,
 )
 from amanuensis.schemas import ProbandumSupersede, RoleAttribution
-from tests.fs.conftest import _probandum_basic_payload
+from tests.fs.conftest import _probandum_basic_payload  # pyright: ignore[reportPrivateUsage]
 
 
 def _new(workspace: Path) -> Substrate:

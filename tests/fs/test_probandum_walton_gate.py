@@ -18,7 +18,7 @@ from amanuensis.fs import (
     WaltonSchemeGateViolation,
 )
 from amanuensis.schemas import RoleAttribution
-from tests.fs.conftest import _probandum_basic_payload
+from tests.fs.conftest import _probandum_basic_payload  # pyright: ignore[reportPrivateUsage]
 
 
 def _ws(tmp_path: Path) -> Substrate:

@@ -25,11 +25,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from amanuensis.dispatch.hierarchize_orchestrator import (
     enqueue_hierarchize_clusters,
     run_hierarchize_phase,
 )
 from amanuensis.fs import Substrate
+from amanuensis.llm.queue import DispatchQueueEntry
 
 
 def test_hierarchize_phase_cache_hit_on_second_run(
@@ -83,7 +86,7 @@ def test_hierarchize_phase_idempotent_on_repeat_invocation(
 
 def test_hierarchize_phase_cache_hit_via_mocked_harness(
     tmp_workspace_with_probandum_tree: dict[str, str],
-    monkeypatch,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Mock-harness call-count is stable across re-runs of identical substrate state.
 
@@ -111,7 +114,7 @@ def test_hierarchize_phase_cache_hit_via_mocked_harness(
     invocation_count = 0
     real_enqueue = orch.enqueue
 
-    def counting_enqueue(workspace_root: Path, entry):
+    def counting_enqueue(workspace_root: Path, entry: DispatchQueueEntry) -> Path:
         nonlocal invocation_count
         invocation_count += 1
         return real_enqueue(workspace_root, entry)
