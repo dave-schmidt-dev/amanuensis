@@ -343,6 +343,74 @@ Notable points:
   assigned output directory. All substrate mutations flow through the
   reconciliation gate.
 
+### Connector (`map_connect.md`, Phase 2b)
+
+Output contract, quoted from the skill:
+
+```markdown
+Emit a JSON list of candidate `CrossDocRelation` records at
+`dispatch/outputs/connect-<inputs_hash>/output.yaml`. Each candidate
+omits `id` and `provenance_id` (the reconciler computes the id and
+fills the provenance pointer). Use the YAML key `proposed_relations`
+at the top level so the reconciler can pick the list up.
+```
+
+Skill metadata:
+
+- **Role name:** `connect`.
+- **Skill file:** `amanuensis:map:connect` (`src/amanuensis/skills/map_connect.md`).
+- **Phase:** `map`.
+- **Write-isolation directory:** `dispatch/outputs/connect-<inputs_hash>/`.
+- **Reconciler entry point:** `_process_connect_output` in
+  [`src/amanuensis/dispatch/reconcile.py`](../src/amanuensis/dispatch/reconcile.py).
+  The reconciler is the only writer to `mappings/relations/`; the
+  Connector itself NEVER writes to the substrate.
+
+Input contract: the dispatch driver hands the Connector a JSON cluster
+of atoms keyed by a canonical entity, pre-filtered so every atom listed
+has a `Resolution` joining its `(source_id, atom_id, *)` triple to the
+cluster's `entity_id`:
+
+```json
+{
+  "entity_id": "e-<hash>",
+  "entity_kind": "<kind>",
+  "atoms": [
+    {
+      "atom_id": "a-<hash>",
+      "source_id": "<src>",
+      "text": "<atom narrative>",
+      "predicate": "<predicate>",
+      "operand_refs": [...]
+    },
+    ...
+  ]
+}
+```
+
+Notable points:
+
+- **Cross-doc only.** If the cluster's atoms all come from one
+  `source_id`, the Connector MUST return an empty list. The reconciler
+  treats `from_source_id == to_source_id` as a `CandidateShapeError`.
+- **INV-15 grounding.** Every candidate's `shared_entities` list MUST
+  include the cluster's seed `entity_id`. Additional shared entities are
+  permitted only if also resolved by both endpoints — the reconciler
+  re-checks at INV-15 via `Substrate.add_cross_doc_relation` and rejects
+  candidates that fail the gate. On rejection the M4 reconciler
+  auto-raises a `resolution-ambiguous` clarification via
+  `_auto_raise_resolution_clarification` so the supervisor sees the
+  ungrounded candidate rather than silently dropping it.
+- **The Connector is reused by the Map-Auditor.** The `amanuensis:map:audit`
+  skill was extended in Phase 2b (T5.2) to audit `CrossDocRelation`
+  candidates alongside the Phase 2a entity / resolution candidates.
+- **Cluster enumeration is the orchestrator's job, not the Connector's.**
+  Cluster enumeration lives in
+  [`src/amanuensis/dispatch/connect_orchestrator.py`](../src/amanuensis/dispatch/connect_orchestrator.py)
+  (`enumerate_connect_clusters`, `enqueue_connect_clusters`,
+  `run_connect_phase`); the Connector consumes one pre-built cluster per
+  dispatch invocation.
+
 ## Example — a stub (`distill_contrarian.md`)
 
 A stub skill's frontmatter and body together describe both what the
