@@ -226,7 +226,7 @@ files coexist alongside `mappings/`'s other artifacts under INV-12.
 ### INV-15 (new) — Cross-doc edges are grounded in shared resolved entities
 
 - **Status:** active (gated)
-- **Established:** Phase 2b M10
+- **Established:** 2026-05-31 (Phase 2b M3)
 - **Property:** Every `CrossDocRelation` record has a non-empty
   `shared_entities` list, AND every listed entity id satisfies all
   three conditions: (a) it exists as an `Entity` record in
@@ -240,11 +240,12 @@ files coexist alongside `mappings/`'s other artifacts under INV-12.
   raise `SharedEntityGateViolation` at `Substrate.add_cross_doc_relation`
   and are caught by the gate test.
 - **Gate test:** `tests/invariants/test_cross_doc_shared_entity.py` —
-  five cases: (1) clean edge with one shared entity passes;
-  (2) clean edge with multiple shared entities passes; (3) empty
-  `shared_entities` rejected; (4) listed entity not resolved by
-  `from` endpoint rejected; (5) listed entity not resolved by `to`
-  endpoint rejected.
+  five cases: (1) a workspace with bilateral resolutions and one
+  valid edge passes; (2) a relation with `shared_entities: []` is
+  caught; (3) a relation referencing an entity id with no on-disk
+  Entity record is caught; (4) a relation whose from-endpoint lacks
+  a Resolution to the shared entity is caught; (5) the to-endpoint
+  mirror is caught.
 - **Rationale:** Without this gate, cross-doc edges become open-ended
   in the same way Phase 1 atom extraction would have been without
   INV-5's closed vocabulary. INV-15 makes Phase 2a's `Resolution`
