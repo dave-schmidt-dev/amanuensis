@@ -1643,3 +1643,45 @@ class Substrate:
         if not path.is_file():
             raise SubstrateNotFound(f"probandum edge not found at {path}")
         return parse_probandum_edge_yaml(path.read_text(encoding="utf-8"))
+
+    def list_probandum_edges(
+        self,
+        *,
+        parent_probandum_id: str | None = None,
+        child_kind: Literal["probandum", "atom", "cross-doc-relation"] | None = None,
+        kind: Literal["supports", "attacks", "undercuts"] | None = None,
+    ) -> Iterable[ProbandumEdge]:
+        """Yield ProbandumEdge records, optionally filtered.
+
+        Walks ``mappings/probandum-edges/`` and parses every ``q-*.yaml``
+        file. Skips ``.tmp.*`` writer leftovers. Order is lexicographic
+        by id (deterministic).
+
+        Args:
+            parent_probandum_id: Exact match against
+                ``edge.parent_probandum_id``, or ``None`` for any parent.
+            child_kind: One of ``"probandum" | "atom" |
+                "cross-doc-relation"``, or ``None`` for any child kind.
+            kind: One of ``"supports" | "attacks" | "undercuts"``, or
+                ``None`` for any edge kind.
+        """
+        edges_dir = self.mappings_root / "probandum-edges"
+        if not edges_dir.is_dir():
+            return
+        for path in sorted(edges_dir.iterdir()):
+            if not path.is_file():
+                continue
+            if not path.name.endswith(".yaml"):
+                continue
+            if ".tmp." in path.name:
+                continue
+            if not path.name.startswith("q-"):
+                continue
+            edge = parse_probandum_edge_yaml(path.read_text(encoding="utf-8"))
+            if parent_probandum_id is not None and edge.parent_probandum_id != parent_probandum_id:
+                continue
+            if child_kind is not None and edge.child_kind != child_kind:
+                continue
+            if kind is not None and edge.kind != kind:
+                continue
+            yield edge

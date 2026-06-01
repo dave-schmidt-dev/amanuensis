@@ -189,3 +189,145 @@ def test_accepts_atom_child_when_atom_exists(
     )
     sub.add_probandum_edge(edge)
     assert (workspace / "mappings" / "probandum-edges" / f"{edge.id}.yaml").is_file()
+
+
+# --- T2.4: list_probandum_edges with composable filters --------------
+
+
+def test_list_probandum_edges_filters_by_parent(
+    tmp_workspace_with_probanda: tuple[Path, Probandum, Probandum],
+    role_attribution: RoleAttribution,
+) -> None:
+    workspace, ult, pen = tmp_workspace_with_probanda
+    sub = _new(workspace)
+    # Plant a second penultimate so we have two children of `ult`.
+    from tests.fs.conftest import _probandum_basic_payload
+
+    pen2 = _probandum_basic_payload(
+        role_attribution,
+        kind="penultimate",
+        statement="A second penultimate proposition.",
+        alternatives_considered=["alt"],
+    )
+    sub.add_probandum(pen2)
+
+    e1 = _edge(
+        parent_probandum_id=ult.id,
+        child_id=pen.id,
+        child_kind="probandum",
+        role_attribution=role_attribution,
+        warrant="Edge 1",
+    )
+    e2 = _edge(
+        parent_probandum_id=ult.id,
+        child_id=pen2.id,
+        child_kind="probandum",
+        role_attribution=role_attribution,
+        warrant="Edge 2",
+    )
+    e3 = _edge(
+        parent_probandum_id=pen.id,
+        child_id=pen2.id,
+        child_kind="probandum",
+        role_attribution=role_attribution,
+        warrant="Edge 3 (different parent)",
+    )
+    sub.add_probandum_edge(e1)
+    sub.add_probandum_edge(e2)
+    sub.add_probandum_edge(e3)
+
+    under_ult = list(sub.list_probandum_edges(parent_probandum_id=ult.id))
+    assert {e.id for e in under_ult} == {e1.id, e2.id}
+
+
+def test_list_probandum_edges_filters_by_child_kind(
+    tmp_workspace_with_probanda: tuple[Path, Probandum, Probandum],
+    role_attribution: RoleAttribution,
+) -> None:
+    workspace, ult, pen = tmp_workspace_with_probanda
+    sub = _new(workspace)
+    # Plant an atom so we can build an atom-child edge.
+    atom_path = workspace / "distillations" / "src-fixture-001" / "atoms" / "a-planted-aaaa.md"
+    atomic_write_text(atom_path, "---\nx: 1\n---\nplanted\n")
+
+    e_prob = _edge(
+        parent_probandum_id=ult.id,
+        child_id=pen.id,
+        child_kind="probandum",
+        role_attribution=role_attribution,
+    )
+    e_atom = _edge(
+        parent_probandum_id=ult.id,
+        child_id="a-planted-aaaa",
+        child_kind="atom",
+        child_source_id="src-fixture-001",
+        role_attribution=role_attribution,
+    )
+    sub.add_probandum_edge(e_prob)
+    sub.add_probandum_edge(e_atom)
+
+    only_atoms = list(sub.list_probandum_edges(child_kind="atom"))
+    assert len(only_atoms) == 1
+    assert only_atoms[0].id == e_atom.id
+
+
+def test_list_probandum_edges_filters_by_kind(
+    tmp_workspace_with_probanda: tuple[Path, Probandum, Probandum],
+    role_attribution: RoleAttribution,
+) -> None:
+    workspace, ult, pen = tmp_workspace_with_probanda
+    sub = _new(workspace)
+    e_supports = _edge(
+        parent_probandum_id=ult.id,
+        child_id=pen.id,
+        child_kind="probandum",
+        role_attribution=role_attribution,
+        kind="supports",
+        warrant="Supports child.",
+    )
+    e_attacks = _edge(
+        parent_probandum_id=ult.id,
+        child_id=pen.id,
+        child_kind="probandum",
+        role_attribution=role_attribution,
+        kind="attacks",
+        warrant="Attacks child.",
+    )
+    sub.add_probandum_edge(e_supports)
+    sub.add_probandum_edge(e_attacks)
+
+    only_attacks = list(sub.list_probandum_edges(kind="attacks"))
+    assert len(only_attacks) == 1
+    assert only_attacks[0].id == e_attacks.id
+
+
+def test_list_probandum_edges_lists_all(
+    tmp_workspace_with_probanda: tuple[Path, Probandum, Probandum],
+    role_attribution: RoleAttribution,
+) -> None:
+    workspace, ult, pen = tmp_workspace_with_probanda
+    sub = _new(workspace)
+    e1 = _edge(
+        parent_probandum_id=ult.id,
+        child_id=pen.id,
+        child_kind="probandum",
+        role_attribution=role_attribution,
+        warrant="Edge 1",
+    )
+    e2 = _edge(
+        parent_probandum_id=ult.id,
+        child_id=pen.id,
+        child_kind="probandum",
+        role_attribution=role_attribution,
+        warrant="Edge 2 (different warrant => different id).",
+    )
+    sub.add_probandum_edge(e1)
+    sub.add_probandum_edge(e2)
+
+    all_edges = list(sub.list_probandum_edges())
+    assert {e.id for e in all_edges} == {e1.id, e2.id}
+
+
+def test_list_probandum_edges_empty_when_no_dir(tmp_workspace: Path) -> None:
+    sub = _new(tmp_workspace)
+    assert list(sub.list_probandum_edges()) == []
