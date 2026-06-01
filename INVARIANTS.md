@@ -318,3 +318,30 @@ Status legend: `active` (gate enforced) | `near-threshold` (warn) | `waived` (ex
   Enforcing the gate at write-time AND at audit-time keeps every cross-doc
   relation traceable from atoms through resolutions through entities, which
   is the structural backbone of cross-document reasoning.
+
+## INV-18 — Closed Walton-scheme vocabulary
+
+- **Status:** active (gated)
+- **Established:** 2026-06-01 (Phase 2c M3)
+- **Property:** Every `Probandum`'s `scheme` field MUST appear in the
+  per-engagement `mappings/walton-scheme-snapshot.yaml`. Unknown schemes are
+  rejected by `Substrate.add_probandum`. The snapshot is pinned via
+  `Substrate.snapshot_walton_schemes` (and the matching CLI `amanuensis map
+  walton-scheme snapshot` once shipped) from the bundled generic catalogue at
+  `vocabularies/generic/walton-schemes.yaml`; `--extend` archives the prior
+  snapshot under `mappings/walton-scheme-archive/<hash>.yaml`. Substrate
+  caches the loaded registry per instance; the cache is invalidated on every
+  snapshot call. Violations raise `WaltonSchemeGateViolation`; absence of any
+  snapshot raises `SubstrateNotFound`.
+- **Gate test:** `tests/invariants/test_probandum_scheme.py` — three cases:
+  (1) a workspace with a snapshot and a valid probandum passes; (2) a
+  probandum whose `scheme` is absent from the snapshot raises
+  `WaltonSchemeGateViolation`; (3) a workspace with a probandum but no
+  pinned snapshot raises `SubstrateNotFound`.
+- **Rationale:** matches INV-5 (closed predicate vocabulary) + INV-10
+  (per-distillation snapshot) discipline for the synthesis layer's
+  warrant-typology field. Without a closed-vocabulary gate at write-time,
+  extracted argument schemes could miss their Walton critical-questions
+  matrix and break downstream lookup; the per-engagement snapshot keeps
+  vocabulary evolution from retroactively changing the meaning of probanda
+  already on disk.
