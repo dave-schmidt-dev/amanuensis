@@ -49,6 +49,8 @@ from amanuensis.schemas import (
     OperandRef,
     OperandTypeSchema,
     ParagraphEntry,
+    Probandum,
+    ProbandumEdge,
     ProvenanceRecord,
     Relation,
     Resolution,
@@ -633,6 +635,125 @@ def _plant_cross_doc_artifacts(substrate: Substrate) -> None:
     substrate.add_cross_doc_relation(CrossDocRelation(**rel_payload))
 
 
+def plant_probandum_tree(substrate: Substrate) -> dict[str, str]:
+    """Plant a minimal probandum tree for the Phase 2c T13.2 E2E spec.
+
+    Shape produced:
+      * Walton-scheme snapshot pinned from the bundled generic catalogue.
+      * 1 ultimate probandum.
+      * 1 penultimate probandum, linked upward to the ultimate via a
+        ``supports`` edge.
+      * 1 interim probandum, linked upward to the penultimate via a
+        ``supports`` edge.
+
+    Returns ``{"ultimate": <id>, "penultimate": <id>, "interim": <id>}``
+    so the spec can navigate by id without re-deriving the
+    content-addressable hashes.
+    """
+    # Pin the bundled Walton-scheme catalogue (idempotent across re-builds).
+    substrate.snapshot_walton_schemes()
+
+    agent = _make_agent()
+    role_attribution = _make_role_attribution(agent)
+
+    # Mappings-scope provenance for all three probanda + two edges.
+    prov_draft = ProvenanceRecord(
+        id="p-" + "0" * 16,
+        entity_type="probandum",
+        entity_id="p-placeholder",
+        activity="e2e-fixture-plant-probandum-tree",
+        activity_started_at=_now(),
+        activity_ended_at=_now(),
+        used_entity_ids=[],
+        was_attributed_to=agent,
+        was_influenced_by=[],
+        schema_version=1,
+    )
+    prov = prov_draft.model_copy(update={"id": compute_id(prov_draft)})
+    prov_path = substrate.mappings_provenance_path(prov.id)
+    prov_path.parent.mkdir(parents=True, exist_ok=True)
+    from amanuensis.fs._serialize import serialize_yaml
+
+    atomic_write_text(prov_path, serialize_yaml(prov))
+
+    # --- The three probanda ----------------------------------------------
+    ultimate_draft = Probandum(
+        id="p-placeholder",
+        statement=("The claimant prevails on the contested obligation against the respondent."),
+        kind="ultimate",
+        scheme="argument-from-expert-opinion",
+        alternatives_considered=[],
+        confidence="high",
+        provenance_id=prov.id,
+        role_attributions=[role_attribution],
+        schema_version=1,
+    )
+    ultimate = ultimate_draft.model_copy(update={"id": compute_id(ultimate_draft)})
+    substrate.add_probandum(ultimate)
+
+    penultimate_draft = Probandum(
+        id="p-placeholder",
+        statement=("The respondent breached the §3 delivery obligation in April 2024."),
+        kind="penultimate",
+        scheme="argument-from-sign",
+        alternatives_considered=[
+            "The respondent tendered but the claimant rejected for unrelated reasons.",
+            "The parties mutually deferred the April 2024 delivery date.",
+        ],
+        confidence="high",
+        provenance_id=prov.id,
+        role_attributions=[role_attribution],
+        schema_version=1,
+    )
+    penultimate = penultimate_draft.model_copy(update={"id": compute_id(penultimate_draft)})
+    substrate.add_probandum(penultimate)
+
+    interim_draft = Probandum(
+        id="p-placeholder",
+        statement=("The shipping log shows no April 2024 transit consistent with the §3 schedule."),
+        kind="interim",
+        scheme="argument-from-sign",
+        alternatives_considered=[
+            "The shipping log entry was suppressed for unrelated audit reasons.",
+            "The shipping log records a non-§3 alternative-route delivery.",
+        ],
+        confidence="medium",
+        provenance_id=prov.id,
+        role_attributions=[role_attribution],
+        schema_version=1,
+    )
+    interim = interim_draft.model_copy(update={"id": compute_id(interim_draft)})
+    substrate.add_probandum(interim)
+
+    # --- The two linking edges -------------------------------------------
+    def _edge(parent: Probandum, child: Probandum, basis: str) -> ProbandumEdge:
+        draft = ProbandumEdge(
+            id="q-placeholder",
+            parent_probandum_id=parent.id,
+            child_id=child.id,
+            child_kind="probandum",
+            child_source_id=None,
+            kind="supports",
+            warrant=f"Decomposition: {basis}",
+            warrant_defensibility="methodology-derived",
+            warrant_basis="Wigmore §III decomposition.",
+            confidence="high",
+            provenance_id=prov.id,
+            role_attributions=[role_attribution],
+            schema_version=1,
+        )
+        return draft.model_copy(update={"id": compute_id(draft)})
+
+    substrate.add_probandum_edge(_edge(ultimate, penultimate, "breach -> ultimate"))
+    substrate.add_probandum_edge(_edge(penultimate, interim, "shipping-log -> breach"))
+
+    return {
+        "ultimate": ultimate.id,
+        "penultimate": penultimate.id,
+        "interim": interim.id,
+    }
+
+
 def build(workspace: Path) -> None:
     """Plant both fixture distillations under ``workspace`` (idempotent-ish).
 
@@ -651,6 +772,8 @@ def build(workspace: Path) -> None:
     _plant_resolution_ambiguous_clarification(substrate, SMOKE_SOURCE_ID)
     # Plant Phase 2b cross-doc fixture (T11.2 — overlay flow spec).
     _plant_cross_doc_artifacts(substrate)
+    # Plant Phase 2c probandum tree fixture (T13.2 — tree flow spec).
+    plant_probandum_tree(substrate)
 
 
 def main() -> None:
