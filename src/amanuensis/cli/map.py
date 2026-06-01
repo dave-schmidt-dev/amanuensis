@@ -32,6 +32,7 @@ from typing import Annotated, Any
 import typer
 
 from amanuensis.dispatch.connect_orchestrator import run_connect_phase
+from amanuensis.dispatch.hierarchize_orchestrator import run_hierarchize_phase
 from amanuensis.dispatch.queue import enqueue
 from amanuensis.fs import ReplayLog, Substrate, WorkspaceLockTimeout, acquire_workspace_lock
 from amanuensis.fs._atomic import atomic_write_text
@@ -291,6 +292,50 @@ def map_command(
     # outputs. Always runs (including under ``--connect-only``).
     report = run_connect_phase(substrate)
     _emit_connect_phase_summary(report=report, connect_only=connect_only)
+
+    # Phase 2c Hierarchize phase: enqueue penultimate clusters + drain
+    # pending hierarchize outputs. Runs after Connect (and outside any
+    # workspace flock — ``run_hierarchize_phase`` re-acquires the flock
+    # internally via ``reconcile_outputs``).
+    #
+    # Skipped when the Walton-scheme snapshot is missing: the operator
+    # has not yet engaged Phase 2c, so silently no-op rather than
+    # raising. (``amanuensis map vocabulary walton snapshot`` pins it.)
+    if substrate.load_walton_scheme_snapshot() is not None:
+        hierarchize_report = run_hierarchize_phase(substrate)
+        _emit_hierarchize_phase_summary(report=hierarchize_report)
+
+
+# ---------------------------------------------------------------------------
+# Phase 2c Hierarchize-phase summary emitter (T8.3)
+# ---------------------------------------------------------------------------
+
+
+def _emit_hierarchize_phase_summary(*, report: Any) -> None:
+    """Echo a supervisor-facing summary of the Hierarchize-phase outcome.
+
+    Mirrors :func:`_emit_connect_phase_summary` — operators scanning
+    ``amanuensis map`` output should see one line per phase.
+
+    ``report`` is a ``HierarchizePhaseReport`` (typed loosely as
+    ``Any`` here to keep the cross-module import light; the dataclass
+    shape is stable and the only fields read are the numeric counters
+    and the committed/clarification lists).
+    """
+    label = "Hierarchize phase"
+    if report.enqueued == 0 and report.outputs_consumed == 0:
+        typer.echo(
+            f"{label}: no clusters enqueued, no outputs to consume. "
+            "Run `amanuensis dispatch --once` to drive any pending hierarchize events."
+        )
+        return
+    typer.echo(
+        f"{label}: enqueued={report.enqueued} "
+        f"outputs_consumed={report.outputs_consumed} "
+        f"probanda_committed={len(report.probanda_committed)} "
+        f"edges_committed={len(report.edges_committed)} "
+        f"clarifications_raised={len(report.clarifications_raised)}"
+    )
 
 
 # ---------------------------------------------------------------------------
