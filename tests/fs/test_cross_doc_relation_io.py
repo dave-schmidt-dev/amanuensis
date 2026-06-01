@@ -113,3 +113,61 @@ def test_rejects_intra_source(tmp_workspace: Path, role_attribution: RoleAttribu
     rel = _rel(role_attribution, to_source_id="src-A")  # same as from_source_id
     with pytest.raises(CrossSourceConstraintViolation):
         sub.add_cross_doc_relation(rel)
+
+
+# --- T2.3: list_cross_doc_relations with composable filters ----------
+
+
+def test_list_cross_doc_relations_filters_by_kind(
+    tmp_workspace: Path, role_attribution: RoleAttribution
+) -> None:
+    sub = _new(tmp_workspace)
+    supports = _rel(role_attribution, kind="supports")
+    attacks = _rel(role_attribution, kind="attacks")
+    sub.add_cross_doc_relation(supports)
+    sub.add_cross_doc_relation(attacks)
+    result = list(sub.list_cross_doc_relations(kind="supports"))
+    assert len(result) == 1
+    assert result[0].id == supports.id
+
+
+def test_list_cross_doc_relations_filters_by_source(
+    tmp_workspace: Path, role_attribution: RoleAttribution
+) -> None:
+    sub = _new(tmp_workspace)
+    # Edge 1: src-A → src-B
+    rel_ab = _rel(role_attribution, from_source_id="src-A", to_source_id="src-B")
+    # Edge 2: src-C → src-A (so src-A appears as a target on edge 2)
+    rel_ca = _rel(
+        role_attribution,
+        from_source_id="src-C",
+        to_source_id="src-A",
+        # different shared_entities so this isn't a duplicate hash
+        shared_entities=["e-other"],
+    )
+    sub.add_cross_doc_relation(rel_ab)
+    sub.add_cross_doc_relation(rel_ca)
+
+    # touching_source="src-A" should return BOTH (either endpoint matches).
+    touching = list(sub.list_cross_doc_relations(touching_source="src-A"))
+    assert {r.id for r in touching} == {rel_ab.id, rel_ca.id}
+
+    # to_source="src-B" should return only rel_ab.
+    to_b = list(sub.list_cross_doc_relations(to_source="src-B"))
+    assert len(to_b) == 1
+    assert to_b[0].id == rel_ab.id
+
+
+def test_list_cross_doc_relations_filters_by_shared_entity(
+    tmp_workspace: Path, role_attribution: RoleAttribution
+) -> None:
+    sub = _new(tmp_workspace)
+    rel_smith = _rel(role_attribution, shared_entities=["e-smith"])
+    rel_jones = _rel(role_attribution, shared_entities=["e-jones"])
+    rel_both = _rel(role_attribution, shared_entities=["e-smith", "e-jones"])
+    sub.add_cross_doc_relation(rel_smith)
+    sub.add_cross_doc_relation(rel_jones)
+    sub.add_cross_doc_relation(rel_both)
+
+    result = list(sub.list_cross_doc_relations(shared_entity="e-smith"))
+    assert {r.id for r in result} == {rel_smith.id, rel_both.id}

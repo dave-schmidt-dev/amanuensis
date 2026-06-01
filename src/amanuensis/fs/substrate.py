@@ -91,6 +91,7 @@ from ._errors import (
 )
 from ._serialize import (
     parse_atom_md,
+    parse_cross_doc_relation_yaml,
     parse_entity_md,
     parse_entity_supersede_yaml,
     parse_provenance_yaml,
@@ -1121,3 +1122,77 @@ class Substrate:
                 f"content; refusing to overwrite (INV-13)"
             )
         atomic_write_text(path, serialized)
+
+    def _load_cross_doc_relation(self, path: Path) -> CrossDocRelation:
+        """Read and parse a CrossDocRelation from a single ``x-*.yaml`` path."""
+        return parse_cross_doc_relation_yaml(path.read_text(encoding="utf-8"))
+
+    def list_cross_doc_relations(
+        self,
+        *,
+        kind: Literal["supports", "attacks", "undercuts"] | None = None,
+        from_source: str | None = None,
+        to_source: str | None = None,
+        touching_source: str | None = None,
+        shared_entity: str | None = None,
+    ) -> Iterable[CrossDocRelation]:
+        """Yield CrossDocRelation records, optionally filtered.
+
+        Walks ``mappings/relations/`` and parses every ``x-*.yaml``.
+        Skips ``.tmp.*`` writer leftovers (defense against torn writes
+        per Phase 1 convention). Order is lexicographic by id
+        (deterministic across runs / platforms).
+
+        All filter kwargs compose with **AND** semantics; ``None`` means
+        "do not filter on this dimension". Filter semantics:
+
+        - ``kind``: exact match against ``rel.kind``.
+        - ``from_source``: exact match against ``rel.from_source_id``.
+        - ``to_source``: exact match against ``rel.to_source_id``.
+        - ``touching_source``: matches if EITHER endpoint matches
+          (``from_source_id`` OR ``to_source_id``). Use this when the
+          caller cares about every edge incident to a source.
+        - ``shared_entity``: matches if the given entity id appears in
+          ``rel.shared_entities``.
+
+        Args:
+            kind: One of ``"supports" | "attacks" | "undercuts"``, or
+                ``None`` for any kind.
+            from_source: If set, only yield edges originating from this
+                source id.
+            to_source: If set, only yield edges terminating at this
+                source id.
+            touching_source: If set, yield edges where this source id
+                appears at EITHER endpoint.
+            shared_entity: If set, yield edges whose ``shared_entities``
+                list contains this entity id.
+        """
+        relations_dir = self.mappings_root / "relations"
+        if not relations_dir.is_dir():
+            return
+        for path in sorted(relations_dir.iterdir()):
+            if not path.is_file():
+                continue
+            if not path.name.endswith(".yaml"):
+                continue
+            if ".tmp." in path.name:
+                continue
+            # Only x-*.yaml files are cross-doc relations; sibling
+            # README.md or other files don't belong here, but be
+            # defensive against future co-tenants.
+            if not path.name.startswith("x-"):
+                continue
+            rel = self._load_cross_doc_relation(path)
+            if kind is not None and rel.kind != kind:
+                continue
+            if from_source is not None and rel.from_source_id != from_source:
+                continue
+            if to_source is not None and rel.to_source_id != to_source:
+                continue
+            if touching_source is not None and (
+                rel.from_source_id != touching_source and rel.to_source_id != touching_source
+            ):
+                continue
+            if shared_entity is not None and shared_entity not in rel.shared_entities:
+                continue
+            yield rel
