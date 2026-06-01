@@ -54,6 +54,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 if TYPE_CHECKING:
     from amanuensis.vocabulary.entity_registry import EntityVocabulary
+    from amanuensis.vocabulary.walton_schemes import WaltonSchemeRegistry
 
 import yaml
 
@@ -197,6 +198,11 @@ class Substrate:
             )
         self.root: Path = root
 
+        # Phase 2c M3 — lazily-populated cache for the Walton-scheme
+        # snapshot. Invalidated by snapshot / extend; consulted by the
+        # INV-18 write-time gate on ``add_probandum``.
+        self._walton_snapshot_cache: WaltonSchemeRegistry | None = None
+
         # Auto-migrate v1 Clarification records to v2 (PM-3). The scan is
         # bytes-cheap: glob for c-*.md and substring-check for
         # 'schema_version: 1'. Only if any match do we invoke the full
@@ -287,6 +293,15 @@ class Substrate:
         """Return the path to an archived entity-vocabulary snapshot, keyed by its hash id."""
         _validate_id_component(archived_id, label="archived_id")
         return self.root / "mappings" / "entity-vocabulary-archive" / f"{archived_id}.yaml"
+
+    def walton_scheme_snapshot_path(self) -> Path:
+        """Return the path to the active Walton-scheme snapshot (Phase 2c M3)."""
+        return self.root / "mappings" / "walton-scheme-snapshot.yaml"
+
+    def archived_walton_scheme_path(self, archived_id: str) -> Path:
+        """Return the path to an archived Walton-scheme snapshot, keyed by its hash id."""
+        _validate_id_component(archived_id, label="archived_id")
+        return self.root / "mappings" / "walton-scheme-archive" / f"{archived_id}.yaml"
 
     # --- Identity check ----------------------------------------------
 
@@ -528,6 +543,91 @@ class Substrate:
         )
         atomic_write_text(path, serialized)
         return archived_id
+
+    # --- Walton-scheme snapshot (Phase 2c M3) -------------------------
+
+    def snapshot_walton_schemes(self, *, extend: bool = False) -> Path:
+        """Pin the generic Walton-scheme catalogue into the workspace.
+
+        Reads ``<repo-root>/vocabularies/generic/walton-schemes.yaml`` and
+        writes it (via canonical YAML dump) to
+        ``<workspace>/mappings/walton-scheme-snapshot.yaml``.
+
+        Behavior:
+        - **Idempotent**: if the on-disk snapshot already byte-equals
+          the canonical dump, this is a no-op.
+        - **Conflict**: if the on-disk content differs and ``extend`` is
+          False, raises ``MappingVocabularyAlreadyPinned`` (mirrors the
+          entity-vocabulary policy).
+        - **Extend**: if ``extend=True`` and the on-disk content
+          differs, the existing snapshot is archived (hash-keyed) at
+          ``mappings/walton-scheme-archive/<sha16>.yaml`` before the
+          new snapshot is written atomically.
+
+        The Walton-scheme cache on this Substrate instance is
+        invalidated on any write (the next INV-18 gate check reloads
+        from disk).
+
+        Returns the path to the active snapshot.
+        """
+        import hashlib
+
+        # Lazy import to avoid circular dependency at module load.
+        from amanuensis.vocabulary.walton_schemes import load_walton_schemes
+
+        # Resolve the bundled generic catalogue:
+        # __file__ = src/amanuensis/fs/substrate.py → parents[3] = repo root.
+        bundled = (
+            Path(__file__).resolve().parents[3] / "vocabularies" / "generic" / "walton-schemes.yaml"
+        )
+        if not bundled.is_file():
+            raise SubstrateNotFound(
+                f"generic Walton-scheme catalogue not found at {bundled}; "
+                "expected a bundled copy alongside the package source"
+            )
+        # Validate the source before serializing — refuses to pin a
+        # broken catalogue.
+        registry = load_walton_schemes(bundled)
+        serialized = yaml.safe_dump(
+            registry.model_dump(), sort_keys=False, default_flow_style=False
+        )
+
+        path = self.walton_scheme_snapshot_path()
+        if path.is_file():
+            existing_bytes = path.read_bytes()
+            if existing_bytes == serialized.encode("utf-8"):
+                return path  # idempotent
+            if not extend:
+                raise MappingVocabularyAlreadyPinned(
+                    f"Walton-scheme snapshot at {path} already exists with "
+                    "different content; pass extend=True to archive the prior "
+                    "snapshot and write the new one"
+                )
+            archived_id = hashlib.sha256(existing_bytes).hexdigest()[:16]
+            archive_path = self.archived_walton_scheme_path(archived_id)
+            atomic_write_text(archive_path, existing_bytes.decode("utf-8"))
+
+        atomic_write_text(path, serialized)
+        # Invalidate the in-memory cache so the next gate check reads
+        # the just-written bytes.
+        self._walton_snapshot_cache = None
+        return path
+
+    def load_walton_scheme_snapshot(self) -> WaltonSchemeRegistry | None:
+        """Read the active Walton-scheme snapshot, returning None if absent.
+
+        Unlike ``get_entity_vocabulary_snapshot`` (which raises on
+        missing), this method's absent-snapshot signal is None — the
+        INV-18 gate translates that into ``SubstrateNotFound`` with a
+        user-actionable hint.
+        """
+        path = self.walton_scheme_snapshot_path()
+        if not path.is_file():
+            return None
+        # Lazy import to avoid circular dependency at module load.
+        from amanuensis.vocabulary.walton_schemes import load_walton_schemes
+
+        return load_walton_schemes(path)
 
     # --- Read methods -------------------------------------------------
 
