@@ -91,6 +91,20 @@ _FACTORIES: list[ArgvFactory] = [
     ],
     lambda ws: ["map", "vocabulary", "show", "--workspace", str(ws)],
     lambda ws: ["map", "vocabulary", "snapshot", "--workspace", str(ws)],
+    # Phase 2b M7: map relation sub-app verbs (T7.4).
+    lambda ws: ["map", "relation", "list", "--workspace", str(ws)],
+    lambda ws: ["map", "relation", "show", "x-anything", "--workspace", str(ws)],
+    lambda ws: [
+        "map",
+        "relation",
+        "supersede",
+        "x-old",
+        "x-new",
+        "--reason",
+        "r",
+        "--workspace",
+        str(ws),
+    ],
 ]
 
 
