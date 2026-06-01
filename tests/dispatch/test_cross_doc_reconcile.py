@@ -10,6 +10,8 @@ distillation rather than propagating the gate exception.
 Coverage map:
 
 - T4.1 — happy path (bilateral resolutions present → record committed).
+- T4.2 — INV-15 failure auto-raises a ``resolution-ambiguous``
+  clarification under the from-endpoint distillation.
 """
 
 # pyright: reportPrivateUsage=false
@@ -74,3 +76,51 @@ def test_valid_candidate_builds_record(
     assert written[0].id == rel.id
     # No clarification raised on the happy path.
     assert list_open_clarifications_for_source(sub, FROM_SOURCE_ID) == []
+
+
+# --- T4.2: INV-15 failure auto-raises a clarification -----------------
+
+
+def test_inv15_failure_writes_resolution_ambiguous_clarification(
+    tmp_workspace_with_partial_resolutions: Path,
+    role_attribution: RoleAttribution,
+    fake_provenance: ProvenanceRecord,
+) -> None:
+    """Missing from-endpoint Resolution → reconciler raises ``resolution-ambiguous``.
+
+    Asserts:
+
+    1. ``_build_cross_doc_relation`` returns ``None`` (NOT an exception).
+    2. No CrossDocRelation lands in the substrate.
+    3. Exactly one open ``resolution-ambiguous`` Clarification is filed
+       under the from-endpoint distillation.
+    4. The clarification's ``question`` text and / or ``context_refs``
+       carries both atom ids and the shared entity id so a human
+       navigator can pivot to any of them from the resolved-clarification
+       view (M8 / web UI).
+    """
+    sub = Substrate(tmp_workspace_with_partial_resolutions)
+
+    result = _build_cross_doc_relation(
+        _base_candidate(),
+        sub,
+        fake_provenance,
+        role_attributions=[role_attribution],
+    )
+    assert result is None
+    # No CrossDocRelation was written.
+    assert list(sub.list_cross_doc_relations()) == []
+    # A Clarification of kind resolution-ambiguous was written under from-source.
+    open_clarifications = list_open_clarifications_for_source(
+        sub, FROM_SOURCE_ID, kind="resolution-ambiguous"
+    )
+    assert len(open_clarifications) == 1
+    c = open_clarifications[0]
+    assert c.kind == "resolution-ambiguous"
+    # Both atom ids and the shared entity id are referenced (in question
+    # text or in context_refs) so a human resolving the clarification
+    # can navigate.
+    haystack_text = c.question + " " + " ".join(c.context_refs)
+    assert FROM_ATOM_ID in haystack_text
+    assert TO_ATOM_ID in haystack_text
+    assert SHARED_ENTITY_ID in haystack_text
