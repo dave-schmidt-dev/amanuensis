@@ -1832,28 +1832,22 @@ def relation_show_command(
 
     # Supersede chain section.
     #
-    # ``Substrate.list_supersedes`` only yields ``s-`` (resolution) and
-    # ``t-`` (entity) records; cross-doc relation supersedes (``v-``)
-    # live in the same shared directory but require a direct walk. The
-    # logic mirrors ``latest_cross_doc_relation_for`` but renders both
-    # forward (``this -> X``) and backward (``Y -> this``) edges.
+    # Phase 2b cleanup-1 consolidated the cross-doc-relation supersede
+    # walk into ``Substrate.list_supersedes(kind="cross-doc-relation")``.
+    # The CLI renders both forward (``this -> X``) and backward
+    # (``Y -> this``) edges to mirror ``latest_cross_doc_relation_for``.
     typer.echo("\n## Supersede chain")
     chain_entries: list[str] = []
-    supersedes_dir = substrate.mappings_root / "supersedes"
-    if supersedes_dir.is_dir():
-        from amanuensis.fs._serialize import parse_cross_doc_relation_supersede_yaml
-
-        for sup_path in sorted(supersedes_dir.glob("v-*.yaml")):
-            if not sup_path.is_file() or ".tmp." in sup_path.name:
-                continue
-            record = parse_cross_doc_relation_supersede_yaml(sup_path.read_text(encoding="utf-8"))
-            if record.supersedes_id == relation_id:
-                chain_entries.append(
-                    f"superseded by {record.id} -> relation {record.superseded_by_id}"
-                    f" (reason: {record.reason})"
-                )
-            if record.superseded_by_id == relation_id:
-                chain_entries.append(f"supersedes {record.supersedes_id} (reason: {record.reason})")
+    for record in substrate.list_supersedes(kind="cross-doc-relation"):
+        if not isinstance(record, CrossDocRelationSupersede):
+            continue  # type-narrowing for Pyright; runtime is already filtered
+        if record.supersedes_id == relation_id:
+            chain_entries.append(
+                f"superseded by {record.id} -> relation {record.superseded_by_id}"
+                f" (reason: {record.reason})"
+            )
+        if record.superseded_by_id == relation_id:
+            chain_entries.append(f"supersedes {record.supersedes_id} (reason: {record.reason})")
     if chain_entries:
         for entry in chain_entries:
             typer.echo(entry)

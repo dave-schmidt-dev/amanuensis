@@ -28,8 +28,8 @@ from typing import Annotated, Literal
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import HTMLResponse
 
-from amanuensis.fs import Substrate
-from amanuensis.fs._serialize import parse_cross_doc_relation_supersede_yaml
+from amanuensis.fs import Substrate, SubstrateNotFound
+from amanuensis.schemas import CrossDocRelationSupersede
 
 from ..dependencies import get_substrate
 
@@ -61,16 +61,14 @@ def _walk_supersede_chain(
     Mirrors the CLI ``map relation show`` logic (see
     ``amanuensis/cli/map.py``). The supersedes directory is shared with
     Phase 2a's ``s-*`` and ``t-*`` records; cross-doc relation
-    supersedes are namespaced ``v-*.yaml``.
+    supersedes are namespaced ``v-*.yaml``. Phase 2b cleanup-1 swapped
+    the bespoke directory walk for the unified
+    ``Substrate.list_supersedes(kind="cross-doc-relation")`` dispatch.
     """
-    supersedes_dir = substrate.mappings_root / "supersedes"
     entries: list[_SupersedeChainEntry] = []
-    if not supersedes_dir.is_dir():
-        return entries
-    for path in sorted(supersedes_dir.glob("v-*.yaml")):
-        if not path.is_file() or ".tmp." in path.name:
-            continue
-        record = parse_cross_doc_relation_supersede_yaml(path.read_text(encoding="utf-8"))
+    for record in substrate.list_supersedes(kind="cross-doc-relation"):
+        if not isinstance(record, CrossDocRelationSupersede):
+            continue  # type-narrowing for Pyright; runtime is already filtered
         if record.supersedes_id == relation_id:
             entries.append(
                 _SupersedeChainEntry(
@@ -175,17 +173,15 @@ async def cross_doc_relation_detail(
     entities (linked list), provenance id, and a supersede-chain
     placeholder (T8.3 fills it in).
     """
-    # ``Substrate`` does not currently expose ``get_cross_doc_relation``
-    # — mirror the CLI's access pattern (see
-    # ``amanuensis/cli/map.py::relation_show_command``) by going through
-    # the public path helper + the private loader.
-    path = substrate.cross_doc_relation_path(relation_id)
-    if not path.is_file():
+    # Public accessor landed in Phase 2b cleanup-1 — no more reaching
+    # into the private loader from the route layer.
+    try:
+        relation = substrate.get_cross_doc_relation(relation_id)
+    except SubstrateNotFound as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"cross-doc relation {relation_id!r} not found",
-        )
-    relation = substrate._load_cross_doc_relation(path)  # pyright: ignore[reportPrivateUsage]
+        ) from exc
 
     chain_entries = _walk_supersede_chain(substrate, relation_id)
 

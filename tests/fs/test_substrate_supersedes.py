@@ -7,23 +7,53 @@ Covers:
 - list_supersedes unfiltered yields both kinds
 - list_supersedes kind="resolution" yields only ResolutionSupersede
 - list_supersedes kind="entity" yields only EntitySupersede
+- list_supersedes kind="cross-doc-relation" yields only CrossDocRelationSupersede
+  (Phase 2b cleanup-1)
 - get_resolution_supersede / get_entity_supersede raise on missing
 """
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 import pytest
 
 from amanuensis.fs import Substrate, SubstrateNotFound
-from amanuensis.schemas import EntitySupersede, ResolutionSupersede, RoleAttribution
+from amanuensis.schemas import (
+    CrossDocRelationSupersede,
+    EntitySupersede,
+    ResolutionSupersede,
+    RoleAttribution,
+    compute_id,
+)
 from tests.fs.conftest import (
     make_entity,
     make_entity_supersede,
     make_resolution,
     make_resolution_supersede,
 )
+
+
+def _make_cross_doc_relation_supersede(
+    role_attribution: RoleAttribution,
+) -> CrossDocRelationSupersede:
+    """Build a CrossDocRelationSupersede whose id matches ``compute_id``."""
+    payload: dict[str, Any] = {
+        "id": "v-" + "0" * 16,
+        "supersedes_id": "x-aaaaaaaaaaaaaaaa",
+        "superseded_by_id": "x-bbbbbbbbbbbbbbbb",
+        "kind": "cross-doc-relation",
+        "reason": "Connector revised warrant after clarification",
+        "provenance_id": "p-fixture00000099",
+        "role_attributions": [role_attribution],
+        "at": datetime(2026, 5, 31, 22, 0, 0, tzinfo=UTC),
+        "schema_version": 1,
+    }
+    draft = CrossDocRelationSupersede(**payload)
+    payload["id"] = compute_id(draft)
+    return CrossDocRelationSupersede(**payload)
 
 
 def _new(workspace: Path) -> Substrate:
@@ -199,6 +229,78 @@ def test_list_supersedes_entity_only(
 def test_list_supersedes_empty_when_no_dir(tmp_workspace: Path) -> None:
     sub = _new(tmp_workspace)
     assert list(sub.list_supersedes()) == []
+
+
+# --- Phase 2b cleanup-1: list_supersedes is v-* (cross-doc-relation) aware ----
+
+
+def _setup_three_kinds(
+    sub: Substrate, role_attribution: RoleAttribution
+) -> tuple[ResolutionSupersede, EntitySupersede, CrossDocRelationSupersede]:
+    """Plant one of each supersede kind (s-, t-, v-) into the mixed dir."""
+    ent_old = make_entity(role_attribution, canonical_name="Old Corp.")
+    ent_new = make_entity(role_attribution, canonical_name="New Corp.", aliases=["New"])
+    sub.add_entity(ent_old)
+    sub.add_entity(ent_new)
+
+    res_old = make_resolution(role_attribution, ent_old, operand_index=0)
+    sub.add_resolution(res_old)
+    res_new = make_resolution(role_attribution, ent_new, operand_index=1)
+    sub.add_resolution(res_new)
+
+    rs = make_resolution_supersede(role_attribution, res_old, res_new)
+    es = make_entity_supersede(role_attribution, ent_old, ent_new)
+    cdrs = _make_cross_doc_relation_supersede(role_attribution)
+    sub.add_resolution_supersede(rs)
+    sub.add_entity_supersede(es)
+    sub.add_cross_doc_relation_supersede(cdrs)
+    return rs, es, cdrs
+
+
+def test_list_supersedes_unfiltered_yields_all_three_kinds(
+    tmp_workspace: Path, role_attribution: RoleAttribution
+) -> None:
+    sub = _new(tmp_workspace)
+    rs, es, cdrs = _setup_three_kinds(sub, role_attribution)
+    listed = list(sub.list_supersedes())
+    assert len(listed) == 3
+    ids = {r.id for r in listed}
+    assert ids == {rs.id, es.id, cdrs.id}
+
+
+def test_list_supersedes_cross_doc_relation_only(
+    tmp_workspace: Path, role_attribution: RoleAttribution
+) -> None:
+    sub = _new(tmp_workspace)
+    _rs, _es, cdrs = _setup_three_kinds(sub, role_attribution)
+    listed = list(sub.list_supersedes(kind="cross-doc-relation"))
+    assert len(listed) == 1
+    assert listed[0].id == cdrs.id
+    assert isinstance(listed[0], CrossDocRelationSupersede)
+
+
+def test_list_supersedes_entity_only_with_cdrs_present(
+    tmp_workspace: Path, role_attribution: RoleAttribution
+) -> None:
+    """Adding v-* records must not leak into kind='entity' filter."""
+    sub = _new(tmp_workspace)
+    _rs, es, _cdrs = _setup_three_kinds(sub, role_attribution)
+    listed = list(sub.list_supersedes(kind="entity"))
+    assert len(listed) == 1
+    assert listed[0].id == es.id
+    assert isinstance(listed[0], EntitySupersede)
+
+
+def test_list_supersedes_resolution_only_with_cdrs_present(
+    tmp_workspace: Path, role_attribution: RoleAttribution
+) -> None:
+    """Adding v-* records must not leak into kind='resolution' filter."""
+    sub = _new(tmp_workspace)
+    rs, _es, _cdrs = _setup_three_kinds(sub, role_attribution)
+    listed = list(sub.list_supersedes(kind="resolution"))
+    assert len(listed) == 1
+    assert listed[0].id == rs.id
+    assert isinstance(listed[0], ResolutionSupersede)
 
 
 # --- missing-record errors -------------------------------------------

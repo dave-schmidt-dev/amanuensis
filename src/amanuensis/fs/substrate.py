@@ -754,17 +754,20 @@ class Substrate:
     def list_supersedes(
         self,
         *,
-        kind: Literal["resolution", "entity"] | None = None,
-    ) -> Iterable[ResolutionSupersede | EntitySupersede]:
+        kind: Literal["resolution", "entity", "cross-doc-relation"] | None = None,
+    ) -> Iterable[ResolutionSupersede | EntitySupersede | CrossDocRelationSupersede]:
         """Yield supersede records from the mixed ``supersedes/`` directory.
 
         Distinguishes record type by id prefix:
         - ``s-`` prefix → ``ResolutionSupersede``
         - ``t-`` prefix → ``EntitySupersede``
+        - ``v-`` prefix → ``CrossDocRelationSupersede`` (Phase 2b)
 
         Args:
             kind: If ``"resolution"``, yield only ResolutionSupersede.
                 If ``"entity"``, yield only EntitySupersede.
+                If ``"cross-doc-relation"``, yield only
+                CrossDocRelationSupersede (Phase 2b cleanup-1).
                 If ``None``, yield all.
         """
         supersedes_dir = self.mappings_root / "supersedes"
@@ -779,13 +782,17 @@ class Substrate:
                 continue
             stem = path.stem  # filename without .yaml
             if stem.startswith("s-"):
-                if kind == "entity":
+                if kind is not None and kind != "resolution":
                     continue
                 yield parse_resolution_supersede_yaml(path.read_text(encoding="utf-8"))
             elif stem.startswith("t-"):
-                if kind == "resolution":
+                if kind is not None and kind != "entity":
                     continue
                 yield parse_entity_supersede_yaml(path.read_text(encoding="utf-8"))
+            elif stem.startswith("v-"):
+                if kind is not None and kind != "cross-doc-relation":
+                    continue
+                yield parse_cross_doc_relation_supersede_yaml(path.read_text(encoding="utf-8"))
             # Unknown prefix: skip silently (forward-compat)
 
     # --- T3.6: supersede-chain walkers with cycle guard ------------------
@@ -1184,6 +1191,25 @@ class Substrate:
         """Read and parse a CrossDocRelation from a single ``x-*.yaml`` path."""
         return parse_cross_doc_relation_yaml(path.read_text(encoding="utf-8"))
 
+    def get_cross_doc_relation(self, relation_id: str) -> CrossDocRelation:
+        """Load a single CrossDocRelation by id.
+
+        Public counterpart to ``_load_cross_doc_relation``, exposed so
+        callers (web routes, CLI) can fetch a single record by id
+        without reaching into the private path helper. Mirrors the
+        Phase 2a accessor pattern (``get_entity``, ``get_resolution``).
+
+        Args:
+            relation_id: CrossDocRelation id (``x-`` prefix).
+
+        Raises:
+            SubstrateNotFound: if no ``x-<id>.yaml`` exists.
+        """
+        path = self.cross_doc_relation_path(relation_id)
+        if not path.is_file():
+            raise SubstrateNotFound(f"cross-doc relation not found at {path}")
+        return self._load_cross_doc_relation(path)
+
     def list_cross_doc_relations(
         self,
         *,
@@ -1325,18 +1351,15 @@ class Substrate:
             SupersedeCycleDetected: if the chain contains a cycle.
             SupersedeChainTooDeep: if the chain exceeds ``max_depth``.
         """
-        supersedes_dir = self.mappings_root / "supersedes"
         # Build supersede map: supersedes_id → superseded_by_id, restricted
-        # to v-*.yaml records (cross-doc relation kind).
+        # to ``v-`` records (cross-doc relation kind). The list_supersedes
+        # dispatch handles directory existence + kind filtering — Phase 2b
+        # cleanup-1 consolidated this from a direct ``glob("v-*.yaml")``.
         supersede_map: dict[str, str] = {}
-        if supersedes_dir.is_dir():
-            for path in sorted(supersedes_dir.glob("v-*.yaml")):
-                if not path.is_file():
-                    continue
-                if ".tmp." in path.name:
-                    continue
-                record = parse_cross_doc_relation_supersede_yaml(path.read_text(encoding="utf-8"))
-                supersede_map[record.supersedes_id] = record.superseded_by_id
+        for record in self.list_supersedes(kind="cross-doc-relation"):
+            if not isinstance(record, CrossDocRelationSupersede):
+                continue  # type-narrowing for Pyright; runtime is already filtered
+            supersede_map[record.supersedes_id] = record.superseded_by_id
 
         # Walk the chain from relation_id.
         visited: set[str] = set()
