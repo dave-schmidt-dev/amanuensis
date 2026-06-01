@@ -344,20 +344,21 @@ amanuensis export --workspace-appendix --out-dir DIR
 
 ## amanuensis map
 
-Phase 2a entity resolution commands. `amanuensis map` runs the map
-warp-plan cycle (enqueues the map-resolve role); its sub-apps `entity`,
-`resolution`, and `vocabulary` provide read-only inspection and
-supervisor-correction verbs. All commands require the INV-1 marker.
-Mutating commands acquire the workspace flock
+Phase 2 mapping commands. `amanuensis map` runs the full map
+warp-plan cycle in three phases (Resolve / Audit, Connect, Hierarchize);
+its sub-apps `entity`, `resolution`, `vocabulary`, `relation`,
+`probandum`, `probandum-edge`, and `walton-scheme` provide read-only
+inspection and supervisor-correction verbs. All commands require the
+INV-1 marker. Mutating commands acquire the workspace flock
 ([INV-4](../INVARIANTS.md#inv-4--determinism-boundary-is-named-gated-and-audited)).
-Entities and resolutions live under
-`mappings/`
+Entities, resolutions, cross-doc relations, probanda, and
+probandum-edges all live under `mappings/`
 ([INV-12](../INVARIANTS.md#inv-12--mappings-is-the-home-for-all-cross-document-artifacts)).
 
 ### `map` (orchestrator)
 
 ```
-amanuensis map [--role-set ROLES] [--non-interactive] [--connect-only]
+amanuensis map [--role-set ROLES] [--non-interactive] [--connect-only] [--hierarchize-only]
 ```
 
 - **Classification:** mutating.
@@ -365,7 +366,7 @@ amanuensis map [--role-set ROLES] [--non-interactive] [--connect-only]
   new dispatch queue entry with its own inputs hash). Running the command
   twice with the same substrate state writes two entries but downstream
   dispatch deduplicates on inputs hash.
-- **Behavior:** Runs the full map cycle in two phases:
+- **Behavior:** Runs the full map cycle in three phases:
   1. **Resolve / Audit (Phase 2a).** Pins the entity-vocabulary snapshot
      at `mappings/entity-vocabulary-snapshot.yaml` if not present,
      enqueues `map-resolve` (and on a second invocation, after the
@@ -378,23 +379,43 @@ amanuensis map [--role-set ROLES] [--non-interactive] [--connect-only]
      event per cluster, and reconciles any already-completed connect
      outputs through `_process_connect_output`. The connect-phase
      summary line names the per-cluster enqueue / reconciled counts.
+  3. **Hierarchize (Phase 2c).** Enumerates clusters keyed by
+     penultimate parent probanda, enqueues one `hierarchize` dispatch
+     event per cluster, and reconciles any already-completed
+     hierarchize outputs through `_process_hierarchize_output`. Skipped
+     silently when the Walton-scheme snapshot is missing — pin it via
+     `amanuensis map walton-scheme snapshot` first. The hierarchize
+     phase summary line names the per-cluster enqueue / reconciled
+     counts.
 
-  Acquires the workspace flock for the duration of both phases. Fails
-  with exit 1 if no distillations exist.
+  Acquires the workspace flock for the duration of phases 1 + 2; phase
+  3 re-acquires the flock independently. Fails with exit 1 if no
+  distillations exist.
 - **Notable flags:**
   - `--role-set ROLES` (default: `map-resolve,map-audit`) — comma-separated
     list of roles to enqueue. Changing this is an advanced operation.
   - `--non-interactive` — accepted for forward compatibility with a future
     interactive mode; currently a no-op.
   - `--connect-only` (Phase 2b) — skip the Resolve / Audit phase entirely
-    and run only the Connect phase against an already-resolved substrate.
-    Useful when the resolve+audit substrate is settled and the operator
-    just wants to refresh cross-doc edges. The orchestrator does NOT
-    re-check `map_resolve.md` / `map_audit.md` presence in this mode (it
+    and run the Connect + Hierarchize phases against an already-resolved
+    substrate. Useful when the resolve+audit substrate is settled and
+    the operator just wants to refresh cross-doc edges (and the
+    downstream probandum tree). The orchestrator does NOT re-check
+    `map_resolve.md` / `map_audit.md` presence in this mode (it
     assumes a prior `amanuensis map` run validated them).
+  - `--hierarchize-only` (Phase 2c) — skip Resolve / Audit and Connect
+    entirely; run only the Hierarchize phase. Useful when the
+    resolve + connect substrate is settled and the operator just wants
+    to refresh the probandum tree. Requires a pinned Walton-scheme
+    snapshot (`amanuensis map walton-scheme snapshot`); fails with
+    exit 2 if missing. Assumes a prior full `map` run validated skill
+    presence.
 - **Example:** `amanuensis map` then `amanuensis dispatch --once`
 - **Example (Phase 2b):** `amanuensis map --connect-only` after the
   substrate is fully resolved.
+- **Example (Phase 2c):** `amanuensis map --hierarchize-only` after the
+  connect substrate is settled and the supervisor has authored an
+  ultimate + penultimates.
 
 ### `map status`
 
@@ -637,6 +658,248 @@ amanuensis map relation supersede OLD_ID NEW_ID --reason TEXT [--actor ID] [--dr
   - `--dry-run` — print what would be written without making any changes.
 - **Example:** `amanuensis map relation supersede x-3a9b... x-4b9d... --reason "warrant tightened"`
 
+### `map probandum add`
+
+```
+amanuensis map probandum add STATEMENT --kind KIND --scheme SCHEME \
+        [--alternative TEXT ...] [--confidence LEVEL] [--actor ID]
+```
+
+- **Classification:** mutating.
+- **Idempotency:** content-addressable. Re-running with byte-identical
+  arguments produces the same probandum id and is a no-op against the
+  substrate. Different content produces a new id and a new on-disk
+  record.
+- **Behavior:** Writes a Phase 2c `Probandum` record (prefix `p-`) at
+  `mappings/probanda/p-<hash>.md` plus a paired `ProvenanceRecord`
+  under `mappings/provenance/`. Substrate's `add_probandum` enforces
+  INV-18 (closed Walton-scheme vocabulary), the ACH-alternatives gate
+  (non-empty `alternatives_considered` for `kind in {penultimate,
+  interim}`), id discipline, and INV-13 immutability. Acquires the
+  workspace flock for the duration of the write.
+- **Notable flags:**
+  - `--kind {ultimate, penultimate, interim}` (required) — tree
+    position. `ultimate` is the root of the argument tree;
+    `penultimate` anchors a sub-tree immediately above the evidence
+    layer; `interim` is anywhere in between. `ultimate` and
+    `penultimate` are supervisor-only — the Hierarchize role only
+    proposes `interim`.
+  - `--scheme SCHEME` (required) — Walton-scheme id. MUST appear in the
+    pinned `mappings/walton-scheme-snapshot.yaml`; otherwise the
+    command fails with exit 1 (INV-18 gate).
+  - `--alternative TEXT` — competing hypothesis (repeatable). Required
+    (at least once) for `--kind penultimate` and `--kind interim`
+    (ACH-alternatives gate); rejected for `--kind ultimate` is
+    acceptable (no gate triggers).
+  - `--confidence {high, medium, low}` (default: `medium`).
+  - `--actor ID` (default: `cli`) — identifier recorded in the PROV
+    attribution.
+- **Example (ultimate):**
+  `amanuensis map probandum add "ACME prevails on its breach claim against Smith." --kind ultimate --scheme argument-from-evidence-to-hypothesis`
+- **Example (penultimate):**
+  `amanuensis map probandum add "Smith breached the 2018 contract." --kind penultimate --scheme argument-from-evidence-to-hypothesis --alternative "Smith and ACME mutually deferred the April 2024 delivery."`
+
+### `map probandum list`
+
+```
+amanuensis map probandum list [--kind KIND] [--scheme SCHEME]
+```
+
+- **Classification:** read-only.
+- **Idempotency:** re-running on the same substrate state produces
+  identical output and no state changes.
+- **Behavior:** Lists every probandum in `mappings/probanda/`, sorted
+  lexicographically by id (the substrate's natural directory walk).
+  Each line shows the probandum id, kind, scheme, and a truncated
+  statement excerpt (first line of the statement, capped at 80 chars).
+  Filters compose with AND semantics.
+- **Notable flags:**
+  - `--kind {ultimate, penultimate, interim}` — filter to probanda of
+    the given kind. Other values rejected with exit 2.
+  - `--scheme SCHEME` — filter to probanda using the given
+    Walton-scheme id. No closed-vocab check on the filter itself —
+    unknown scheme yields an empty list, not an error.
+- **Example:** `amanuensis map probandum list --kind interim`
+
+### `map probandum show`
+
+```
+amanuensis map probandum show PROBANDUM_ID
+```
+
+- **Classification:** read-only.
+- **Idempotency:** re-running on the same substrate state produces
+  identical output and no state changes.
+- **Behavior:** Prints one probandum's on-disk content (YAML
+  frontmatter + statement body), then appends sections for
+  alternatives considered (one per line), confidence, lineage
+  (incoming probandum-edges and outgoing edges), provenance id, and
+  the supersede chain (forward + back). A "Latest in chain" line
+  closes the output. Fails with exit 1 if the id is not found in
+  `mappings/probanda/`.
+- **Notable flags:** none.
+- **Example:** `amanuensis map probandum show p-3a9b12ff4c6d8e10`
+
+### `map probandum lineage`
+
+```
+amanuensis map probandum lineage PROBANDUM_ID
+```
+
+- **Classification:** read-only.
+- **Idempotency:** re-running on the same substrate state produces
+  identical output and no state changes.
+- **Behavior:** Renders the lineage tree for a focal probandum. The
+  output has two sections:
+
+  1. **Lineage (upward to ultimate)** — walks INCOMING probandum-edges
+     from the focal node up to the ultimate, root-first (root at the
+     top, focal node at the bottom marked with `* `). Depth-capped at
+     100 (defensive; matches the substrate's INV-17 walk cap).
+  2. **Lineage (downward to leaves)** — DFS over outgoing edges from
+     the focal node, indented to show parent / child relationships,
+     terminating at atoms / cross-doc relations or at probanda with no
+     outgoing edges. Cycles (which INV-16 should make impossible) are
+     fenced by a visited-set guard that prints `(<id> already
+     visited)`.
+
+  Fails with exit 1 if the id is not found in `mappings/probanda/`.
+- **Notable flags:** none.
+- **Example:** `amanuensis map probandum lineage p-pen-smith-breach`
+
+### `map probandum link`
+
+```
+amanuensis map probandum link PARENT_ID CHILD_ID --kind KIND \
+        --warrant TEXT --warrant-basis TEXT \
+        [--warrant-defensibility LEVEL] [--confidence LEVEL] \
+        [--child-source-id ID] [--actor ID]
+```
+
+- **Classification:** mutating.
+- **Idempotency:** content-addressable. Re-running with byte-identical
+  arguments produces the same edge id and is a no-op against the
+  substrate.
+- **Behavior:** Writes a Phase 2c `ProbandumEdge` record (prefix `q-`)
+  at `mappings/probandum-edges/q-<hash>.yaml` plus a paired
+  `ProvenanceRecord`. The child kind is dispatched from the
+  `CHILD_ID` prefix: `p-` → probandum child, `a-` → atom child
+  (requires `--child-source-id`), `x-` → cross-doc-relation child.
+  Substrate's `add_probandum_edge` enforces parent / child existence,
+  INV-16 (tree-shape + acyclic), INV-17 (lineage reaches an
+  ultimate), id discipline, and INV-13 immutability. Acquires the
+  workspace flock for the duration of the write.
+- **Notable flags:**
+  - `--kind {supports, attacks, undercuts}` (required) — edge kind.
+  - `--warrant TEXT` (required) — the warrant that licenses the
+    inference (one paragraph conventional).
+  - `--warrant-basis TEXT` (required) — basis grounding the warrant
+    (citation, methodology, etc.).
+  - `--warrant-defensibility {literature-backed, methodology-derived, conventional, contested}`
+    (default: `conventional`).
+  - `--confidence {high, medium, low}` (default: `medium`).
+  - `--child-source-id ID` — required when `CHILD_ID` starts with `a-`
+    (atom children carry a source id); rejected for `p-` or `x-`
+    children. Mismatches fail at the schema layer with exit 1.
+  - `--actor ID` (default: `cli`) — identifier recorded in the PROV
+    attribution.
+- **Example (probandum-to-atom):**
+  `amanuensis map probandum link p-pen-smith-breach a-acme-001 --kind supports --warrant "..." --warrant-basis "Direct attestation" --child-source-id src-acme-brief`
+- **Example (probandum-to-probandum):**
+  `amanuensis map probandum link p-ult-acme-prevails p-pen-smith-breach --kind supports --warrant "..." --warrant-basis "Contract law mapping"`
+
+### `map probandum supersede`
+
+```
+amanuensis map probandum supersede OLD_ID NEW_ID --reason TEXT [--actor ID]
+```
+
+- **Classification:** mutating.
+- **Idempotency:** one-shot on the active-chain constraint. Validates
+  that `OLD_ID` is the latest in its chain; if it is already
+  superseded the command fails cleanly. A successful run writes one
+  new `ProbandumSupersede` (`u-` prefix) plus its paired
+  `ProvenanceRecord` to `mappings/supersedes/` and
+  `mappings/provenance/`.
+- **Behavior:** Writes a `ProbandumSupersede` linking
+  `OLD_ID -> NEW_ID`, plus a paired PROV record. Acquires the
+  workspace flock for the duration of the write. Both `OLD_ID` and
+  `NEW_ID` must already exist in `mappings/probanda/`; the command
+  never mutates the superseded record (INV-13).
+- **Notable flags:**
+  - `--reason TEXT` (required) — reason recorded in the supersede
+    record.
+  - `--actor ID` (default: `cli`) — identifier recorded in the PROV
+    attribution.
+- **Example:** `amanuensis map probandum supersede p-3a9b... p-4b9d... --reason "rescoped to fact-finding only"`
+
+### `map probandum-edge supersede`
+
+```
+amanuensis map probandum-edge supersede OLD_ID NEW_ID --reason TEXT [--actor ID]
+```
+
+- **Classification:** mutating.
+- **Idempotency:** one-shot on the active-chain constraint. Mirrors
+  `map probandum supersede` for edge-level supersedes.
+- **Behavior:** Writes a `ProbandumEdgeSupersede` (`o-` prefix)
+  linking `OLD_ID -> NEW_ID` in `mappings/supersedes/`, plus a paired
+  PROV record. Acquires the workspace flock for the duration of the
+  write. Both `OLD_ID` and `NEW_ID` must already exist in
+  `mappings/probandum-edges/`. Superseded edges are excluded from
+  INV-16 (tree) and INV-17 (lineage) walks (they represent retracted
+  state).
+- **Notable flags:**
+  - `--reason TEXT` (required) — reason recorded in the supersede.
+  - `--actor ID` (default: `cli`) — identifier recorded in the PROV
+    attribution.
+- **Example:** `amanuensis map probandum-edge supersede q-aabb... q-ccdd... --reason "warrant tightened, defensibility upgraded"`
+
+### `map walton-scheme show`
+
+```
+amanuensis map walton-scheme show
+```
+
+- **Classification:** read-only.
+- **Idempotency:** re-running on the same substrate state produces
+  identical output and no state changes.
+- **Behavior:** Prints the active Walton-scheme snapshot at
+  `mappings/walton-scheme-snapshot.yaml` to stdout. Fails with exit 1
+  if no snapshot has been pinned yet (run
+  `amanuensis map walton-scheme snapshot` first). No flock acquired.
+- **Notable flags:** none.
+- **Example:** `amanuensis map walton-scheme show`
+
+### `map walton-scheme snapshot`
+
+```
+amanuensis map walton-scheme snapshot [--extend]
+```
+
+- **Classification:** mutating.
+- **Idempotency:** without `--extend`, idempotent for byte-identical
+  content. Fails with exit 1 if a snapshot with different content
+  already exists (protecting INV-18 pinning stability). With
+  `--extend`, archives the current snapshot under
+  `mappings/walton-scheme-archive/<sha16>.yaml` and writes the bundled
+  catalogue as the new active snapshot; each `--extend` call advances
+  the snapshot lineage.
+- **Behavior:** Pins the Walton-scheme registry into the workspace.
+  Without `--extend`, copies the bundled generic catalogue at
+  `vocabularies/generic/walton-schemes.yaml` to
+  `mappings/walton-scheme-snapshot.yaml`. With `--extend`, archives
+  the current snapshot first, then writes the bundled catalogue as
+  the new active snapshot. Acquires the workspace flock for the
+  duration of the write. The substrate caches the loaded registry
+  per-instance; the cache is invalidated on every snapshot call.
+- **Notable flags:**
+  - `--extend` — archive the current snapshot and write the bundled
+    catalogue as the new active snapshot (evolves the Walton-scheme
+    lineage).
+- **Example:** `amanuensis map walton-scheme snapshot`
+- **Example (extend):** `amanuensis map walton-scheme snapshot --extend`
+
 ## Exit codes
 
 | Code | Meaning |
@@ -673,4 +936,4 @@ amanuensis map relation supersede OLD_ID NEW_ID --reason TEXT [--actor ID] [--dr
   commands compose into a supervised end-to-end run.
 - [`../INVARIANTS.md`](../INVARIANTS.md) — the invariants charter
   (INV-1 marker, INV-4 determinism boundary, INV-10 vocabulary
-  pinning).
+  pinning, INV-16/17/18 Phase 2c probandum-tree gates).
