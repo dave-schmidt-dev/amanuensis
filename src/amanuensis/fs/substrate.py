@@ -1493,3 +1493,52 @@ class Substrate:
         if not path.is_file():
             raise SubstrateNotFound(f"probandum not found at {path}")
         return parse_probandum_md(path.read_text(encoding="utf-8"))
+
+    def list_probanda(
+        self,
+        *,
+        kind: Literal["ultimate", "penultimate", "interim"] | None = None,
+        scheme: str | None = None,
+        limit: int | None = None,
+    ) -> Iterable[Probandum]:
+        """Yield Probandum records, optionally filtered.
+
+        Walks ``mappings/probanda/`` and parses every ``p-*.md`` file.
+        Skips ``.tmp.*`` writer leftovers. Order is lexicographic by id
+        (deterministic across runs / platforms).
+
+        All filter kwargs compose with **AND** semantics; ``None`` means
+        "do not filter on this dimension".
+
+        Args:
+            kind: One of ``"ultimate" | "penultimate" | "interim"``, or
+                ``None`` for any kind.
+            scheme: Exact match against ``probandum.scheme``, or ``None``
+                for any scheme.
+            limit: Maximum number of records to yield (cap), or ``None``
+                for no cap.
+        """
+        probanda_dir = self.mappings_root / "probanda"
+        if not probanda_dir.is_dir():
+            return
+        emitted = 0
+        for path in sorted(probanda_dir.iterdir()):
+            if not path.is_file():
+                continue
+            if not path.name.endswith(".md"):
+                continue
+            if ".tmp." in path.name:
+                continue
+            # Only p-*.md files are probanda; defensive against future
+            # co-tenants (README.md etc.) in the directory.
+            if not path.name.startswith("p-"):
+                continue
+            p = parse_probandum_md(path.read_text(encoding="utf-8"))
+            if kind is not None and p.kind != kind:
+                continue
+            if scheme is not None and p.scheme != scheme:
+                continue
+            yield p
+            emitted += 1
+            if limit is not None and emitted >= limit:
+                return
