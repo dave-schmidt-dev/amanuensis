@@ -299,6 +299,49 @@ amanuensis install-skills [--harness HARNESS]
   - `--harness {claude, codex, cursor, gemini, all}` (default: `all`).
 - **Example:** `amanuensis install-skills --harness claude`
 
+### `export`
+
+```
+amanuensis export <source-id> --output FILE.html [--no-include-mappings]
+amanuensis export --workspace-appendix --out-dir DIR
+```
+
+- **Classification:** read-only.
+- **Idempotency:** re-running on the same substrate state produces
+  byte-identical output ([INV-8](../INVARIANTS.md#inv-8--substrate-is-the-source-of-truth)
+  render-purity).
+- **Behavior:** Two operating modes:
+
+  1. **Per-source single-file (Phase 1, M9.1):** writes one
+     self-contained HTML file at `--output` containing the source-mirror
+     summary, every paragraph body, every atom, every relation, and the
+     Phase 2a entity sidebar / resolution annotations (toggleable). Fails
+     with exit 1 if the source has not been ingested.
+  2. **Workspace appendix bundle (Phase 2b, M9 + T10.0):** writes a
+     directory at `--out-dir` containing `cross-doc-relations.html` (an
+     appendix grouped by `kind`) plus `entities/<id>.html` per canonical
+     entity, each page listing the cross-doc edges touching that entity.
+     Useful for share-or-archive of the cross-doc reasoning. Mutually
+     exclusive with the positional `<source-id>` argument and with
+     `--output`.
+
+  Both modes are read-only — no flock acquired.
+- **Notable flags:**
+  - `--output, -o PATH` (Phase 1 mode) — destination HTML file.
+  - `--format, -f {static-html}` (default: `static-html`) — only value
+    in Phase 1.
+  - `--include-mappings / --no-include-mappings` (default: include) —
+    Phase 1 mode only; toggles the Phase 2a entity sidebar.
+  - `--workspace-appendix` (Phase 2b mode) — switches to the bundle
+    exporter. Requires `--out-dir`.
+  - `--out-dir PATH` (Phase 2b mode) — destination directory for the
+    bundle. Created (with parents) if missing; existing files at the same
+    paths are overwritten.
+- **Example (Phase 1):**
+  `amanuensis export case-2024-001 --output report.html`
+- **Example (Phase 2b):**
+  `amanuensis export --workspace-appendix --out-dir cross-doc-bundle/`
+
 ## amanuensis map
 
 Phase 2a entity resolution commands. `amanuensis map` runs the map
@@ -314,7 +357,7 @@ Entities and resolutions live under
 ### `map` (orchestrator)
 
 ```
-amanuensis map [--role-set ROLES] [--non-interactive]
+amanuensis map [--role-set ROLES] [--non-interactive] [--connect-only]
 ```
 
 - **Classification:** mutating.
@@ -322,21 +365,36 @@ amanuensis map [--role-set ROLES] [--non-interactive]
   new dispatch queue entry with its own inputs hash). Running the command
   twice with the same substrate state writes two entries but downstream
   dispatch deduplicates on inputs hash.
-- **Behavior:** (1) Pins the entity-vocabulary snapshot at
-  `mappings/entity-vocabulary-snapshot.yaml` if not already present.
-  (2) Computes an `inputs_hash` covering distillation atoms/relations,
-  the snapshot, and the role set. (3) Builds and enqueues a
-  `DispatchQueueEntry` for the `map-resolve` role. (4) Appends a
-  mappings replay-log entry. Acquires the workspace flock for steps 1–4.
-  Requires `map_resolve.md` and `map_audit.md` to be installed in the
-  active harness skills directory; fails with exit 2 if either is
-  missing. Fails with exit 1 if no distillations exist.
+- **Behavior:** Runs the full map cycle in two phases:
+  1. **Resolve / Audit (Phase 2a).** Pins the entity-vocabulary snapshot
+     at `mappings/entity-vocabulary-snapshot.yaml` if not present,
+     enqueues `map-resolve` (and on a second invocation, after the
+     supervisor runs `amanuensis dispatch --once`, the `map-audit`
+     role), and appends a mappings replay-log entry. Requires
+     `map_resolve.md` and `map_audit.md` to be installed in the active
+     harness skills directory; fails with exit 2 if either is missing.
+  2. **Connect (Phase 2b).** Enumerates canonical-entity clusters that
+     span at least two distillations, enqueues one `connect` dispatch
+     event per cluster, and reconciles any already-completed connect
+     outputs through `_process_connect_output`. The connect-phase
+     summary line names the per-cluster enqueue / reconciled counts.
+
+  Acquires the workspace flock for the duration of both phases. Fails
+  with exit 1 if no distillations exist.
 - **Notable flags:**
   - `--role-set ROLES` (default: `map-resolve,map-audit`) — comma-separated
     list of roles to enqueue. Changing this is an advanced operation.
   - `--non-interactive` — accepted for forward compatibility with a future
     interactive mode; currently a no-op.
+  - `--connect-only` (Phase 2b) — skip the Resolve / Audit phase entirely
+    and run only the Connect phase against an already-resolved substrate.
+    Useful when the resolve+audit substrate is settled and the operator
+    just wants to refresh cross-doc edges. The orchestrator does NOT
+    re-check `map_resolve.md` / `map_audit.md` presence in this mode (it
+    assumes a prior `amanuensis map` run validated them).
 - **Example:** `amanuensis map` then `amanuensis dispatch --once`
+- **Example (Phase 2b):** `amanuensis map --connect-only` after the
+  substrate is fully resolved.
 
 ### `map status`
 
@@ -508,6 +566,76 @@ amanuensis map vocabulary snapshot [--extend] [--template PATH] [--dry-run]
     to the bundled `vocabularies/generic/entity-kinds.yaml`.
   - `--dry-run` — print what would happen without writing anything.
 - **Example:** `amanuensis map vocabulary snapshot --extend --template my-entity-kinds.yaml`
+
+### `map relation list`
+
+```
+amanuensis map relation list [--kind KIND] [--from-source ID] [--to-source ID] \
+                             [--touching-source ID] [--shared-entity ID] [--limit N]
+```
+
+- **Classification:** read-only.
+- **Idempotency:** re-running on the same substrate state produces
+  identical output and no state changes.
+- **Behavior:** Lists every Phase 2b `CrossDocRelation` in
+  `mappings/relations/`, sorted lexicographically by id. Each line shows
+  the relation id, kind, the directed endpoint pair (rendered in arrow
+  form), the `from_source_id` / `to_source_id` pair, and the
+  `shared_entities` count. Filters compose with AND semantics.
+- **Notable flags:**
+  - `--kind KIND` — filter to one of `supports` / `attacks` / `undercuts`;
+    any other value is rejected with exit 2.
+  - `--from-source ID` — filter to relations originating from this source.
+  - `--to-source ID` — filter to relations terminating at this source.
+  - `--touching-source ID` — filter to relations where the given source
+    appears at either endpoint (union of `--from-source` and `--to-source`).
+  - `--shared-entity ID` — filter to relations whose `shared_entities`
+    list includes this entity id.
+  - `--limit N` — render at most N relations (after filtering).
+- **Example:** `amanuensis map relation list --kind supports --shared-entity e-1122...`
+
+### `map relation show`
+
+```
+amanuensis map relation show RELATION_ID
+```
+
+- **Classification:** read-only.
+- **Idempotency:** re-running on the same substrate state produces
+  identical output and no state changes.
+- **Behavior:** Prints one cross-doc relation's raw on-disk YAML (id,
+  endpoints, kind, warrant, warrant_basis, warrant_defensibility,
+  confidence, shared_entities, provenance_id), then appends a
+  "Supersede chain" section walking the `CrossDocRelationSupersede`
+  (`v-`) records both forward (`this -> X`) and backward (`Y -> this`),
+  and a "Latest in chain" line. Fails with exit 1 if the id is not
+  found in `mappings/relations/`.
+- **Notable flags:** none.
+- **Example:** `amanuensis map relation show x-3a9b12ff4c6d8e10`
+
+### `map relation supersede`
+
+```
+amanuensis map relation supersede OLD_ID NEW_ID --reason TEXT [--actor ID] [--dry-run]
+```
+
+- **Classification:** mutating.
+- **Idempotency:** one-shot on the active-relation constraint. Validates
+  that `OLD_ID` is the latest in its chain; if it is already superseded
+  the command fails cleanly. A successful run writes one new
+  `CrossDocRelationSupersede` (`v-` prefix) plus its paired
+  `ProvenanceRecord` to `mappings/supersedes/` and `mappings/provenance/`.
+- **Behavior:** Writes a `CrossDocRelationSupersede` linking
+  `OLD_ID -> NEW_ID`, plus a paired PROV record. Acquires the workspace
+  flock for the duration of the write. Both `OLD_ID` and `NEW_ID` must
+  already exist in `mappings/relations/`; the command never mutates the
+  superseded record (INV-13).
+- **Notable flags:**
+  - `--reason TEXT` (required) — reason recorded in the supersede record.
+  - `--actor ID` (default: `cli`) — identifier recorded in the PROV
+    attribution.
+  - `--dry-run` — print what would be written without making any changes.
+- **Example:** `amanuensis map relation supersede x-3a9b... x-4b9d... --reason "warrant tightened"`
 
 ## Exit codes
 
