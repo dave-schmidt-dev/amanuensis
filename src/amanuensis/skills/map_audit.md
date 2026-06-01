@@ -100,3 +100,73 @@ clarifications:
 - Proposals targeting "concept" or other supervisor-only kinds: never
   auto-accept; emit `resolution-ambiguous` with a note that the kind
   requires supervisor sign-off.
+
+## Auditing CrossDocRelation candidates
+
+Phase 2b extension. The Connector role (`amanuensis:map:connect`)
+emits candidate `CrossDocRelation` records at
+`dispatch/outputs/connect-<inputs_hash>/output.yaml`. The auditor
+re-reads those candidates from the parallel path
+`dispatch/outputs/map-audit-<inputs_hash>/inputs/connect-candidates.yaml`
+(or directly, depending on the orchestrator wiring; the reconciler
+treats both the Connector's and the auditor's emitted lists
+identically).
+
+For each candidate, verify:
+
+1. **Shape compliance.** All required fields present; types match the
+   `CrossDocRelation` schema
+   (`src/amanuensis/schemas/cross_doc_relation.py`). Missing required
+   field, wrong literal value for `kind` / `warrant_defensibility` /
+   `confidence`, malformed atom or entity id → silent reject (shape
+   slop).
+2. **Cross-source.** `from_source_id != to_source_id`. The Connector
+   is cross-document only; an intra-source candidate is a shape
+   violation the auditor must NOT escalate. Silent reject.
+3. **INV-15 precondition.** Every entity in `shared_entities` must
+   (a) exist as an `Entity` record in `mappings/entities/`, (b) be
+   resolved by at least one non-superseded `Resolution` whose
+   `(source_id, atom_id, *)` matches the `from` endpoint, and (c)
+   likewise be resolved on the `to` endpoint. The reconciler will
+   catch this through the substrate's INV-15 gate; the auditor's job
+   is to flag it ahead of time so the supervisor sees the issue
+   before the auto-raised `resolution-ambiguous` clarification
+   fires. The auditor takes NO direct action on an INV-15 failure
+   (do not flip `warrant_defensibility`, do not reject) — pass the
+   candidate through unchanged and let the reconciler raise the
+   clarification.
+4. **Warrant-defensibility consistency.** The `warrant_basis`
+   sentence must match the asserted `warrant_defensibility`
+   category. A candidate that claims `literature-backed` but cites
+   no literature in the basis is downgraded.
+5. **Kind-direction consistency.** The `kind`
+   (`supports` / `attacks` / `undercuts`) must match the warrant's
+   stated direction. An `attacks` warrant whose text reads as
+   corroboration, or a `supports` warrant whose text reads as
+   refutation, is a kind/direction mismatch.
+6. **Confidence floor.** `confidence=high` paired with
+   `warrant_defensibility=contested` is contradictory and must be
+   downgraded.
+
+Treatment per check:
+
+- **Checks 1, 2 → silent reject.** These are shape slop. Drop the
+  candidate from the auditor's `accepted_relations` output without
+  emitting a clarification or supervisor note. The Connector role
+  prompt is the canonical place to fix these classes; an auditor
+  clarification cannot.
+- **Check 3 → pass through.** The reconciler's INV-15 gate raises a
+  `resolution-ambiguous` clarification on substrate write. Do not
+  pre-empt it.
+- **Checks 4, 5, 6 → flip to contested and emit for supervisor
+  review.** Set `warrant_defensibility = "contested"` on the
+  candidate's copy and route it through the
+  `warrant-defensibility-contested` clarification path (CR-7) at the
+  reconciler. This matches the Phase 1 pattern for contested
+  warrants on intra-source relations.
+
+Output the audited candidate list at
+`dispatch/outputs/map-audit-<inputs_hash>/output.yaml` under a
+top-level key `accepted_relations`. Candidates downgraded by checks
+4–6 stay in the list with their `warrant_defensibility` flipped;
+candidates rejected by checks 1–2 are dropped entirely.

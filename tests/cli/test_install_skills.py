@@ -321,6 +321,25 @@ def test_map_connect_skill_installs_to_harness_skill_dir(
     assert connect_skill.read_bytes() == expected
 
 
+def test_map_audit_skill_covers_cross_doc_relation() -> None:
+    """The Phase 2b auditor-skill extension references CrossDocRelation + INV-15.
+
+    Phase 2b M5/T5.2 extends the existing ``map_audit.md`` skill with
+    a section that walks the auditor through the new
+    ``CrossDocRelation`` candidate checks (shape, cross-source,
+    INV-15 precondition, warrant defensibility / kind / confidence).
+    """
+    skill_text = (Path(__file__).parents[2] / "src/amanuensis/skills/map_audit.md").read_text(
+        encoding="utf-8"
+    )
+    assert "CrossDocRelation" in skill_text
+    assert "INV-15" in skill_text
+    # The contested-downgrade path is explicit (CR-7 alignment).
+    assert "contested" in skill_text
+    # The shape-vs-state policy split is documented.
+    assert "Cross-source" in skill_text or "cross-source" in skill_text
+
+
 def test_map_connect_skill_frontmatter_declares_connect_role() -> None:
     """The bundled ``map_connect.md`` skill declares ``role: connect``.
 
