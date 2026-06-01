@@ -11,6 +11,7 @@ workspace fixture ``tmp_workspace_with_probandum_tree`` via the
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
@@ -416,3 +417,48 @@ def test_entity_detail_empty_probanda_section(
     assert response.status_code == 200
     assert "Probanda referencing this entity" in response.text
     assert "no probanda mention this entity by name" in response.text
+
+
+# ---------------------------------------------------------------------------
+# T10.6 — Probandum tree navigation round-trip
+# ---------------------------------------------------------------------------
+
+
+def test_probandum_navigation_round_trip(
+    tmp_workspace_with_probandum_tree: dict[str, str],
+    web_app: FastAPI,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """End-to-end round-trip: /probanda → /probanda/<id> → /tree → /tree.json.
+
+    Mirrors the spec's contract test exactly: each hop is discovered
+    via regex on the prior response, so a broken link anywhere in the
+    chain fails the test.
+    """
+    monkeypatch.setenv("AMANUENSIS_WORKSPACE", tmp_workspace_with_probandum_tree["workspace"])
+    client = TestClient(web_app)
+
+    # Start at the list.
+    r1 = client.get("/probanda")
+    assert r1.status_code == 200
+    # Find a probandum link.
+    m = re.search(r'href="(/probanda/p-[^"]+)"', r1.text)
+    assert m, "list page should link to at least one probandum"
+    detail_url = m.group(1)
+
+    r2 = client.get(detail_url)
+    assert r2.status_code == 200
+    # Detail has link to tree view.
+    m_tree = re.search(r'href="(/probanda/p-[^/"]+/tree)"', r2.text)
+    assert m_tree, "detail page should link to the tree view"
+    tree_url = m_tree.group(1)
+
+    r3 = client.get(tree_url)
+    assert r3.status_code == 200
+    # Tree JSON endpoint reachable (constructed by appending ``.json``).
+    json_url = tree_url + ".json"
+    r4 = client.get(json_url)
+    assert r4.status_code == 200
+    data = r4.json()
+    assert "nodes" in data
+    assert "edges" in data
