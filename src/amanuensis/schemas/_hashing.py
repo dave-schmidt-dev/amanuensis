@@ -1,7 +1,6 @@
 """Content-addressable ID computation for substrate artifacts.
 
-Every content-addressable model (``Atom``, ``Relation``,
-``ProvenanceRecord``, ``Clarification``, ``IterationDirective``) has a
+Every content-addressable model registered in ``_KIND_PREFIX`` has a
 deterministic id = hash of its canonical-form content. The canonical
 form:
 
@@ -61,6 +60,12 @@ Per-model volatile-field sets (rationale in ``docs/schema-reference.md``):
   "applied_outcome", "issued_provenance_id",
   "applied_provenance_id"}``
 - ``SourceMirrorManifest``: ``set()``
+- ``Entity``: ``{"provenance_id"}``
+- ``Resolution``: ``{"provenance_id"}``
+- ``ResolutionSupersede``: ``{"provenance_id"}``
+- ``EntitySupersede``: ``{"provenance_id"}``
+- ``CrossDocRelation``: ``{"provenance_id"}``
+- ``CrossDocRelationSupersede``: ``{"provenance_id", "at"}``
 
 The "lifecycle-completion" volatile fields on ``Clarification`` /
 ``IterationDirective`` (``status``, ``resolved_*``, ``applied_*``)
@@ -111,11 +116,9 @@ def compute_id(model: BaseModel) -> str:
     """Compute the content-addressable id of a substrate artifact.
 
     Args:
-        model: A Pydantic ``BaseModel`` instance of one of the six
-            content-addressable types (``Atom``, ``Relation``,
-            ``ProvenanceRecord``, ``Clarification``,
-            ``IterationDirective``, ``SourceMirrorManifest``). Each
-            declares a class attribute
+        model: A Pydantic ``BaseModel`` instance of one of the
+            content-addressable types registered in ``_KIND_PREFIX``.
+            Each declares a class attribute
             ``_VOLATILE_FIELDS: ClassVar[frozenset[str]]`` enumerating
             the fields to drop from its canonical form. The ``id``
             field itself is always dropped (chicken-and-egg).

@@ -30,10 +30,10 @@ Phase 2b types (Connect):
 
 Public helpers:
 
-- ``compute_id`` — content-addressable id computation for the five
-  content-addressable types (see ``docs/schema-reference.md``).
+- ``compute_id`` — content-addressable id computation for all
+  registered content-addressable types (see ``docs/schema-reference.md``).
 
-Filesystem (M1.6) and replay-log writer (M1.7) build on these schemas.
+Filesystem and replay-log writer build on these schemas.
 """
 
 from ._hashing import compute_id
