@@ -11,8 +11,12 @@ Covers:
     - ``cross-doc-relation`` → ``mappings/relations/<id>.yaml``
   Raises ``EdgeChildMissing``.
 
-INV-16 (no-cycle) and INV-17 (lineage) are deferred to M4 — this file
-does NOT exercise them.
+T4.1 — INV-16 cycle + tree-shape gate (added):
+- Self-loop, two-cycle, and three-cycle parent→child chains rejected
+  with ``ProbandumTreeViolation``.
+- Long linear chain (10 deep) accepted.
+- Multi-parent (probandum already has an incoming edge) rejected with
+  ``ProbandumTreeViolation`` (Wigmore trees are trees, not DAGs).
 """
 
 from __future__ import annotations
@@ -25,6 +29,7 @@ import pytest
 from amanuensis.fs import (
     EdgeChildMissing,
     ParentProbandumMissing,
+    ProbandumTreeViolation,
     Substrate,
 )
 from amanuensis.fs._atomic import atomic_write_text
@@ -201,16 +206,26 @@ def test_list_probandum_edges_filters_by_parent(
 ) -> None:
     workspace, ult, pen = tmp_workspace_with_probanda
     sub = _new(workspace)
-    # Plant a second penultimate so we have two children of `ult`.
-    from tests.fs.conftest import _probandum_basic_payload
+    # Plant a second penultimate and an interim so we have a small tree:
+    #   ult -> pen      (e1)
+    #   ult -> pen2     (e2)
+    #   pen -> interim  (e3, distinct parent — exercises the filter)
+    from tests.fs.conftest import make_probandum
 
-    pen2 = _probandum_basic_payload(
+    pen2 = make_probandum(
         role_attribution,
         kind="penultimate",
         statement="A second penultimate proposition.",
         alternatives_considered=["alt"],
     )
+    interim = make_probandum(
+        role_attribution,
+        kind="interim",
+        statement="An interim probandum under pen.",
+        alternatives_considered=["alt"],
+    )
     sub.add_probandum(pen2)
+    sub.add_probandum(interim)
 
     e1 = _edge(
         parent_probandum_id=ult.id,
@@ -228,7 +243,7 @@ def test_list_probandum_edges_filters_by_parent(
     )
     e3 = _edge(
         parent_probandum_id=pen.id,
-        child_id=pen2.id,
+        child_id=interim.id,
         child_kind="probandum",
         role_attribution=role_attribution,
         warrant="Edge 3 (different parent)",
@@ -529,3 +544,200 @@ def test_probandum_edge_with_cross_doc_relation_child_round_trip(
     # Round-trip read returns the same model.
     got = sub.get_probandum_edge(edge.id)
     assert got == edge
+
+
+# --- T4.1: INV-16 cycle + tree-shape gate ----------------------------
+#
+# Acyclic AND tree-shaped (no multi-parent). Spec §INV-16 says
+# "acyclic"; spec §Risks #1 says "tree" — we implement the stronger
+# discipline. Both violations raise ``ProbandumTreeViolation`` with a
+# reason that names which discipline was breached.
+
+
+def _plant_probandum(
+    workspace: Path, role_attribution: RoleAttribution, **overrides: Any
+) -> Probandum:
+    """Plant a probandum via the substrate so its id is content-addressable.
+
+    The fixture's Walton-scheme snapshot is already pinned so the INV-18
+    gate clears.
+    """
+    from tests.fs.conftest import make_probandum
+
+    p = make_probandum(role_attribution, **overrides)
+    Substrate(workspace).add_probandum(p)
+    return p
+
+
+def test_self_loop_rejected(
+    tmp_workspace_with_probanda: tuple[Path, Probandum, Probandum],
+    role_attribution: RoleAttribution,
+) -> None:
+    """An edge from a probandum to itself is rejected as a self-cycle."""
+    workspace, ult, _pen = tmp_workspace_with_probanda
+    sub = _new(workspace)
+    edge = _edge(
+        parent_probandum_id=ult.id,
+        child_id=ult.id,
+        child_kind="probandum",
+        role_attribution=role_attribution,
+    )
+    with pytest.raises(ProbandumTreeViolation, match=r"self-loop|cycle"):
+        sub.add_probandum_edge(edge)
+
+
+def test_two_cycle_rejected(
+    tmp_workspace_with_probanda: tuple[Path, Probandum, Probandum],
+    role_attribution: RoleAttribution,
+) -> None:
+    """Edges ``ult → pen`` then ``pen → ult`` are rejected (back-edge).
+
+    The first edge is a normal parent-to-child link. The second would
+    close a two-cycle by making the original parent a child of its own
+    child.
+    """
+    workspace, ult, pen = tmp_workspace_with_probanda
+    sub = _new(workspace)
+    e_fwd = _edge(
+        parent_probandum_id=ult.id,
+        child_id=pen.id,
+        child_kind="probandum",
+        role_attribution=role_attribution,
+    )
+    sub.add_probandum_edge(e_fwd)
+    # Now try the back-edge.
+    e_back = _edge(
+        parent_probandum_id=pen.id,
+        child_id=ult.id,
+        child_kind="probandum",
+        role_attribution=role_attribution,
+        warrant="Back-edge attempting to close two-cycle.",
+    )
+    with pytest.raises(ProbandumTreeViolation, match="cycle"):
+        sub.add_probandum_edge(e_back)
+
+
+def test_three_cycle_rejected(
+    tmp_workspace_with_probanda: tuple[Path, Probandum, Probandum],
+    role_attribution: RoleAttribution,
+) -> None:
+    """Edges ``a → b → c`` followed by ``c → a`` form a three-cycle."""
+    workspace, ult, pen = tmp_workspace_with_probanda
+    sub = _new(workspace)
+    # Plant a third probandum (interim).
+    p3 = _plant_probandum(
+        workspace,
+        role_attribution,
+        kind="interim",
+        statement="Third probandum in the cycle.",
+        alternatives_considered=["alt"],
+    )
+    e_ab = _edge(
+        parent_probandum_id=ult.id,
+        child_id=pen.id,
+        child_kind="probandum",
+        role_attribution=role_attribution,
+        warrant="a → b",
+    )
+    e_bc = _edge(
+        parent_probandum_id=pen.id,
+        child_id=p3.id,
+        child_kind="probandum",
+        role_attribution=role_attribution,
+        warrant="b → c",
+    )
+    sub.add_probandum_edge(e_ab)
+    sub.add_probandum_edge(e_bc)
+    e_ca = _edge(
+        parent_probandum_id=p3.id,
+        child_id=ult.id,
+        child_kind="probandum",
+        role_attribution=role_attribution,
+        warrant="c → a (closes three-cycle).",
+    )
+    with pytest.raises(ProbandumTreeViolation, match="cycle"):
+        sub.add_probandum_edge(e_ca)
+
+
+def test_long_chain_accepted(
+    tmp_workspace_with_probanda: tuple[Path, Probandum, Probandum],
+    role_attribution: RoleAttribution,
+) -> None:
+    """A 10-deep linear chain p0 → p1 → ... → p9 passes the cycle gate."""
+    from tests.fs.conftest import make_probandum
+
+    workspace, ult, pen = tmp_workspace_with_probanda
+    sub = _new(workspace)
+    # We already have ``ult`` (level 0) and ``pen`` (level 1); plant
+    # 8 more interim probanda to reach a 10-deep chain.
+    chain = [ult, pen]
+    for i in range(8):
+        p = make_probandum(
+            role_attribution,
+            kind="interim",
+            statement=f"Chain level {i + 2} probandum.",
+            alternatives_considered=["alt"],
+        )
+        sub.add_probandum(p)
+        chain.append(p)
+
+    # Link ult -> pen first (so pen has lineage to ultimate); then chain
+    # each subsequent level off its predecessor.
+    from itertools import pairwise
+
+    for parent, child in pairwise(chain):
+        edge = _edge(
+            parent_probandum_id=parent.id,
+            child_id=child.id,
+            child_kind="probandum",
+            role_attribution=role_attribution,
+            warrant=f"Link {parent.id[:6]} → {child.id[:6]}.",
+        )
+        sub.add_probandum_edge(edge)
+
+    # All 9 edges land on disk.
+    edges_dir = workspace / "mappings" / "probandum-edges"
+    files = [f for f in edges_dir.iterdir() if f.is_file() and f.suffix == ".yaml"]
+    assert len(files) == 9
+
+
+def test_multi_parent_rejected(
+    tmp_workspace_with_probanda: tuple[Path, Probandum, Probandum],
+    role_attribution: RoleAttribution,
+) -> None:
+    """A probandum that already has a parent edge cannot acquire a second one.
+
+    Wigmore trees are trees (per spec §Risks #1): every non-root
+    probandum has at most one incoming probandum-edge. INV-16 enforces
+    tree-shape, not just acyclicity.
+    """
+    from tests.fs.conftest import make_probandum
+
+    workspace, ult, pen = tmp_workspace_with_probanda
+    sub = _new(workspace)
+    # Plant a second penultimate as a co-parent candidate.
+    ult2 = make_probandum(
+        role_attribution,
+        kind="ultimate",
+        statement="A different ultimate probandum.",
+        alternatives_considered=[],
+    )
+    sub.add_probandum(ult2)
+    e_first = _edge(
+        parent_probandum_id=ult.id,
+        child_id=pen.id,
+        child_kind="probandum",
+        role_attribution=role_attribution,
+        warrant="First parent.",
+    )
+    sub.add_probandum_edge(e_first)
+    # The second edge tries to make ult2 a second parent of pen.
+    e_second = _edge(
+        parent_probandum_id=ult2.id,
+        child_id=pen.id,
+        child_kind="probandum",
+        role_attribution=role_attribution,
+        warrant="Second parent (tree-shape violation).",
+    )
+    with pytest.raises(ProbandumTreeViolation, match=r"multi-parent|multiple parents"):
+        sub.add_probandum_edge(e_second)

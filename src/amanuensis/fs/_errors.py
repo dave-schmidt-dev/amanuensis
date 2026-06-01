@@ -205,3 +205,26 @@ class SharedEntityGateViolation(SubstrateError, ValueError):
     base class handle it uniformly) and ``ValueError`` (so it survives the
     natural "this is malformed input" idiom).
     """
+
+
+class ProbandumTreeViolation(SubstrateError, ValueError):
+    """Raised when a ``ProbandumEdge`` write would break tree-shape (INV-16).
+
+    Two failure modes carry the same exception, distinguished by message:
+
+    - **cycle**: walking parent-to-child via probandum-only edges from
+      the proposed child reaches the proposed parent (or the edge is a
+      self-loop, ``parent_id == child_id``). Closing a cycle would make
+      lineage walks non-terminating.
+    - **multi-parent**: the proposed child already has an incoming
+      probandum-edge from a different parent. Wigmore charts are trees:
+      each non-root probandum has exactly one parent.
+
+    Spec §INV-16 says "acyclic"; spec §Risks #1 says "tree". The
+    practical choice is the stronger discipline (tree) because Wigmore
+    semantics rely on a single canonical lineage per probandum.
+
+    Inherits from both ``SubstrateError`` (so callers catching the
+    substrate base class handle it uniformly) and ``ValueError`` (so it
+    survives the natural "this is malformed input" idiom).
+    """

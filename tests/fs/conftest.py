@@ -504,6 +504,9 @@ PHASE2B_FROM_SOURCE = _PHASE2B_FROM_SOURCE
 PHASE2B_FROM_ATOM = _PHASE2B_FROM_ATOM
 PHASE2B_TO_SOURCE = _PHASE2B_TO_SOURCE
 PHASE2B_TO_ATOM = _PHASE2B_TO_ATOM
+# Phase 2c builder alias — keeps pyright happy when other test modules
+# under ``tests/fs/`` need to spin up probanda directly.
+make_probandum = _probandum_basic_payload
 
 
 @pytest.fixture

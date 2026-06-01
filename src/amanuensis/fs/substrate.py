@@ -48,6 +48,7 @@ workspace flock. M1.6 has no concurrency guard beyond atomic writes.
 from __future__ import annotations
 
 import re
+from collections import deque
 from collections.abc import Iterable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, Literal
@@ -87,6 +88,7 @@ from ._errors import (
     MappingVocabularyAlreadyPinned,
     MutationOfImmutableRecord,
     ParentProbandumMissing,
+    ProbandumTreeViolation,
     ResolutionDuplicateTriple,
     SharedEntityGateViolation,
     SubstrateIdMismatch,
@@ -1722,6 +1724,95 @@ class Substrate:
         _validate_id_component(edge_id, label="edge_id")
         return self.mappings_root / "probandum-edges" / f"{edge_id}.yaml"
 
+    def _probandum_edge_would_create_cycle(
+        self,
+        parent_id: str,
+        child_id: str,
+        child_kind: Literal["probandum", "atom", "cross-doc-relation"],
+    ) -> bool:
+        """Return True if adding a parent→child edge would close a cycle.
+
+        Only probandum-to-probandum edges can participate in cycles —
+        atoms and cross-doc relations are leaves in the probandum graph.
+        ``child_kind != "probandum"`` short-circuits to ``False``.
+
+        For probandum children: BFS from ``child_id`` following outgoing
+        probandum-edges. If the walk reaches ``parent_id``, the new edge
+        would close a cycle. Walks are depth-capped at 100 (defensive;
+        Wigmore trees in practice are shallow).
+
+        Superseded edges are excluded — they represent prior states the
+        supervisor has explicitly retracted, so they cannot participate
+        in the active graph that the cycle gate protects.
+        """
+        if child_kind != "probandum":
+            return False
+        if parent_id == child_id:
+            return True
+        superseded = self._superseded_probandum_edge_ids()
+        visited: set[str] = {child_id}
+        queue: deque[str] = deque([child_id])
+        depth = 0
+        while queue and depth < 100:
+            depth += 1
+            next_layer: deque[str] = deque()
+            while queue:
+                node = queue.popleft()
+                for edge in self.list_probandum_edges(parent_probandum_id=node):
+                    if edge.id in superseded:
+                        continue
+                    if edge.child_kind != "probandum":
+                        continue
+                    if edge.child_id == parent_id:
+                        return True
+                    if edge.child_id not in visited:
+                        visited.add(edge.child_id)
+                        next_layer.append(edge.child_id)
+            queue = next_layer
+        return False
+
+    def _superseded_probandum_edge_ids(self) -> set[str]:
+        """Return the set of probandum-edge ids that have been superseded.
+
+        An edge is "superseded" when at least one ``ProbandumEdgeSupersede``
+        record names it as ``supersedes_id`` (i.e., the edge is the old
+        side of a supersede pair). The replacement (``superseded_by_id``)
+        remains active until it too is superseded.
+
+        Used by the INV-16 multi-parent gate so that superseded edges do
+        NOT count as a child's "active" incoming edges — otherwise a
+        supersede pair (two on-disk edges, one replaces the other) would
+        falsely trip the gate.
+        """
+        out: set[str] = set()
+        for record in self.list_supersedes(kind="probandum-edge"):
+            if not isinstance(record, ProbandumEdgeSupersede):
+                continue
+            out.add(record.supersedes_id)
+        return out
+
+    def _probandum_has_other_parent(self, child_id: str, parent_id: str) -> bool:
+        """Return True if ``child_id`` has an active incoming edge from a different parent.
+
+        Used by the INV-16 tree-shape (multi-parent) gate: Wigmore charts
+        are trees, so every non-root probandum has exactly one PARENT.
+        Multiple parallel edges from the SAME parent (e.g. a ``supports``
+        edge and a parallel ``attacks`` edge with a different warrant)
+        do not break tree-shape — the parent set remains a singleton —
+        so they pass this gate. Edges that have been superseded (appear
+        as ``supersedes_id`` in a ``ProbandumEdgeSupersede``) are treated
+        as effectively-deleted and do not count.
+        """
+        superseded = self._superseded_probandum_edge_ids()
+        for edge in self.list_probandum_edges(child_kind="probandum"):
+            if edge.id in superseded:
+                continue
+            if edge.child_id != child_id:
+                continue
+            if edge.parent_probandum_id != parent_id:
+                return True
+        return False
+
     def add_probandum_edge(self, edge: ProbandumEdge) -> Path:
         """Write a ProbandumEdge atomically.
 
@@ -1738,12 +1829,16 @@ class Substrate:
            - ``"cross-doc-relation"`` → must exist in
              ``mappings/relations/<child_id>.yaml``.
            Raises ``EdgeChildMissing``.
-        3. **Id discipline** — ``edge.id == compute_id(edge)``.
-        4. **INV-13 immutability** — byte-identical → no-op; divergent →
+        3. **INV-16 tree-shape gate (T4.1)** — the proposed edge must
+           not create a cycle (self-loop, two-cycle, deeper cycle) AND
+           the proposed child must not already have an incoming
+           probandum-edge from a different parent (Wigmore charts are
+           trees, not DAGs). Raises ``ProbandumTreeViolation``.
+        4. **Id discipline** — ``edge.id == compute_id(edge)``.
+        5. **INV-13 immutability** — byte-identical → no-op; divergent →
            ``MutationOfImmutableRecord``.
 
-        INV-16 (no-cycle) and INV-17 (lineage-reaches-ultimate) are
-        deferred to Phase 2c M4 — this method does NOT enforce them.
+        INV-17 (lineage-completeness) is added by T4.2.
         """
         # Gate 1: parent existence (chain-walked via latest_probandum_for,
         # M2.5). Returns None if the chain terminus has no on-disk record.
@@ -1783,9 +1878,40 @@ class Substrate:
                     f"ProbandumEdge {edge.id}: child_kind=cross-doc-relation "
                     f"child_id={edge.child_id!r} not found at {cdr_path}"
                 )
-        # Gate 3: id discipline
+        # Gate 3a: INV-16 cycle detection. Self-loops and back-edges
+        # that would close a cycle in the probandum subgraph are
+        # rejected. We check this BEFORE the multi-parent check so that
+        # a self-loop is reported as a cycle (not as a multi-parent
+        # violation, which would be misleading).
+        if edge.parent_probandum_id == edge.child_id and edge.child_kind == "probandum":
+            raise ProbandumTreeViolation(
+                f"ProbandumEdge {edge.id}: self-loop ({edge.parent_probandum_id} → "
+                f"{edge.child_id}) is a cycle (INV-16)"
+            )
+        if self._probandum_edge_would_create_cycle(
+            edge.parent_probandum_id, edge.child_id, edge.child_kind
+        ):
+            raise ProbandumTreeViolation(
+                f"ProbandumEdge {edge.id}: adding parent_probandum_id="
+                f"{edge.parent_probandum_id!r} → child_id={edge.child_id!r} "
+                "would close a cycle in the probandum graph (INV-16)"
+            )
+        # Gate 3b: INV-16 tree-shape (no multi-parent). Wigmore charts
+        # are trees, so a probandum child may have exactly one PARENT.
+        # Parallel edges from the SAME parent (different kind / warrant)
+        # remain legal — the parent set is still a singleton.
+        if edge.child_kind == "probandum" and self._probandum_has_other_parent(
+            edge.child_id, edge.parent_probandum_id
+        ):
+            raise ProbandumTreeViolation(
+                f"ProbandumEdge {edge.id}: child_id={edge.child_id!r} "
+                "already has an incoming probandum-edge from a different parent; "
+                "Wigmore charts are trees, multi-parent (multiple parents) is "
+                "not allowed (INV-16)"
+            )
+        # Gate 4: id discipline
         self._require_id_matches(edge)
-        # Gate 4: INV-13 immutability via byte-identical compare.
+        # Gate 5: INV-13 immutability via byte-identical compare.
         path = self.probandum_edge_path(edge.id)
         serialized = serialize_probandum_edge_yaml(edge)
         if path.is_file():
