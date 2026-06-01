@@ -200,3 +200,48 @@ def test_mappings_resolution_unknown_source_caught(tmp_path: Path) -> None:
         "but the gate walk found none."
     )
     assert orphan_resolutions[0].source_id == orphan_source_id
+
+
+# ---------------------------------------------------------------------------
+# Phase 2b — INV-12 extended to CrossDocRelation atom references
+# ---------------------------------------------------------------------------
+
+
+def _walk_mappings_namespace(workspace: Path) -> None:
+    """Re-run the INV-12 gate against a workspace.
+
+    Phase 2b extension: for every CrossDocRelation under ``mappings/
+    relations/``, asserts that the from/to atom files exist on disk
+    (``distillations/<src>/atoms/<atom_id>.md``). Catches edges whose
+    endpoints reference atom ids that were never written.
+    """
+    s = Substrate(workspace)
+    for rel in s.list_cross_doc_relations():
+        from_atom_path = s.atom_path(rel.from_source_id, rel.from_atom_id)
+        if not from_atom_path.is_file():
+            raise AssertionError(
+                f"INV-12 violation: CrossDocRelation {rel.id!r} references "
+                f"missing atom at {from_atom_path} (from endpoint)"
+            )
+        to_atom_path = s.atom_path(rel.to_source_id, rel.to_atom_id)
+        if not to_atom_path.is_file():
+            raise AssertionError(
+                f"INV-12 violation: CrossDocRelation {rel.id!r} references "
+                f"missing atom at {to_atom_path} (to endpoint)"
+            )
+
+
+def test_cross_doc_relation_with_missing_from_atom(
+    tmp_workspace_with_dangling_from_atom_ref: Path,
+) -> None:
+    """A CrossDocRelation whose from_atom has no on-disk record is flagged."""
+    with pytest.raises(AssertionError, match="references missing atom"):
+        _walk_mappings_namespace(tmp_workspace_with_dangling_from_atom_ref)
+
+
+def test_cross_doc_relation_with_missing_to_atom(
+    tmp_workspace_with_dangling_to_atom_ref: Path,
+) -> None:
+    """A CrossDocRelation whose to_atom has no on-disk record is flagged."""
+    with pytest.raises(AssertionError, match="references missing atom"):
+        _walk_mappings_namespace(tmp_workspace_with_dangling_to_atom_ref)

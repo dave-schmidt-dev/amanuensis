@@ -1004,3 +1004,94 @@ def tmp_workspace_with_cross_doc_in_wrong_place(tmp_path: Path) -> Path:
     stray.parent.mkdir(parents=True, exist_ok=True)
     stray.write_text("# placeholder — content irrelevant to INV-9\n", encoding="utf-8")
     return workspace
+
+
+# ---------------------------------------------------------------------------
+# Phase 2b INV-12 extension — cross-doc relations referencing missing atoms
+# ---------------------------------------------------------------------------
+
+
+def _inv12_plant_atom_file(workspace: Path, source_id: str, atom_id: str) -> None:
+    """Plant a placeholder ``<atom_id>.md`` under distillations/<src>/atoms/.
+
+    The content is irrelevant — the INV-12 atom-reference walker only
+    checks for file existence, not body parseability.
+    """
+    atom_path = workspace / "distillations" / source_id / "atoms" / f"{atom_id}.md"
+    atom_path.parent.mkdir(parents=True, exist_ok=True)
+    atom_path.write_text("# placeholder atom\n", encoding="utf-8")
+
+
+@pytest.fixture
+def tmp_workspace_with_dangling_from_atom_ref(
+    tmp_path: Path, role_attribution: RoleAttribution
+) -> Path:
+    """Workspace with a CrossDocRelation whose from_atom has no on-disk record.
+
+    Bilateral resolutions exist and the to_atom file is present, so the
+    only missing piece is the from_atom file at
+    ``distillations/<from_source_id>/atoms/<from_atom_id>.md``.
+    """
+    workspace = _inv15_workspace_with_marker(tmp_path, "inv12-dangling-from")
+    entity = _inv15_forged_entity(_INV15_ENTITY_ID, role_attribution)
+    _inv15_plant_entity(workspace, entity)
+    _inv15_plant_resolution(
+        workspace,
+        _inv15_forged_resolution(
+            resolution_id="j-inv12-from",
+            source_id=_INV15_FROM_SOURCE,
+            atom_id=_INV15_FROM_ATOM,
+            entity_id=_INV15_ENTITY_ID,
+            role_attribution=role_attribution,
+        ),
+    )
+    _inv15_plant_resolution(
+        workspace,
+        _inv15_forged_resolution(
+            resolution_id="j-inv12-to",
+            source_id=_INV15_TO_SOURCE,
+            atom_id=_INV15_TO_ATOM,
+            entity_id=_INV15_ENTITY_ID,
+            role_attribution=role_attribution,
+        ),
+    )
+    # Plant only the to_atom file; from_atom is intentionally missing.
+    _inv12_plant_atom_file(workspace, _INV15_TO_SOURCE, _INV15_TO_ATOM)
+    rel = _inv15_build_relation(role_attribution, shared_entities=[_INV15_ENTITY_ID])
+    _inv15_plant_cross_doc_relation(workspace, rel)
+    return workspace
+
+
+@pytest.fixture
+def tmp_workspace_with_dangling_to_atom_ref(
+    tmp_path: Path, role_attribution: RoleAttribution
+) -> Path:
+    """Mirror of the from-dangling fixture: only the from_atom file is present."""
+    workspace = _inv15_workspace_with_marker(tmp_path, "inv12-dangling-to")
+    entity = _inv15_forged_entity(_INV15_ENTITY_ID, role_attribution)
+    _inv15_plant_entity(workspace, entity)
+    _inv15_plant_resolution(
+        workspace,
+        _inv15_forged_resolution(
+            resolution_id="j-inv12-from",
+            source_id=_INV15_FROM_SOURCE,
+            atom_id=_INV15_FROM_ATOM,
+            entity_id=_INV15_ENTITY_ID,
+            role_attribution=role_attribution,
+        ),
+    )
+    _inv15_plant_resolution(
+        workspace,
+        _inv15_forged_resolution(
+            resolution_id="j-inv12-to",
+            source_id=_INV15_TO_SOURCE,
+            atom_id=_INV15_TO_ATOM,
+            entity_id=_INV15_ENTITY_ID,
+            role_attribution=role_attribution,
+        ),
+    )
+    # Plant only the from_atom file; to_atom is intentionally missing.
+    _inv12_plant_atom_file(workspace, _INV15_FROM_SOURCE, _INV15_FROM_ATOM)
+    rel = _inv15_build_relation(role_attribution, shared_entities=[_INV15_ENTITY_ID])
+    _inv15_plant_cross_doc_relation(workspace, rel)
+    return workspace
