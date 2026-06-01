@@ -403,6 +403,24 @@ def test_map_audit_skill_covers_cross_doc_relation() -> None:
     assert "Cross-source" in skill_text or "cross-source" in skill_text
 
 
+def test_map_audit_skill_covers_probandum() -> None:
+    """The Phase 2c auditor-skill extension references Probandum + ProbandumEdge.
+
+    Phase 2c M7/T7.2 extends the existing ``map_audit.md`` skill with
+    a section that walks the auditor through the Hierarchize role's
+    Probandum + ProbandumEdge candidate checks (shape, INV-16
+    tree/cycle, INV-17 lineage, INV-18 Walton-scheme, INV-19 ACH
+    alternatives, warrant/kind/confidence consistency).
+    """
+    skill_text = (Path(__file__).parents[2] / "src/amanuensis/skills/map_audit.md").read_text(
+        encoding="utf-8"
+    )
+    assert "Probandum" in skill_text
+    assert "INV-16" in skill_text or "tree" in skill_text.lower()
+    assert "INV-17" in skill_text or "lineage" in skill_text.lower()
+    assert "INV-18" in skill_text or "Walton" in skill_text
+
+
 def test_map_connect_skill_frontmatter_declares_connect_role() -> None:
     """The bundled ``map_connect.md`` skill declares ``role: connect``.
 

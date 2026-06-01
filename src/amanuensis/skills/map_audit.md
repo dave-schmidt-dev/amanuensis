@@ -170,3 +170,111 @@ Output the audited candidate list at
 top-level key `accepted_relations`. Candidates downgraded by checks
 4–6 stay in the list with their `warrant_defensibility` flipped;
 candidates rejected by checks 1–2 are dropped entirely.
+
+## Auditing Probandum + ProbandumEdge candidates
+
+Phase 2c extension. The Hierarchize role
+(`amanuensis:map:hierarchize`) emits candidate `Probandum` and
+`ProbandumEdge` records at
+`dispatch/outputs/hierarchize-<inputs_hash>/output.yaml` (top-level
+keys `interim_probanda` and `probandum_edges`). The auditor re-reads
+those candidates and applies the gate stack the M3/M4 substrate
+enforces at write-time (INV-16 tree-shape, INV-17 lineage, INV-18
+closed Walton-scheme vocab, INV-19 ACH alternatives non-empty for
+non-ultimate).
+
+For each `Probandum` candidate, verify:
+
+1. **Shape compliance.** All required fields present per the
+   `Probandum` schema (`src/amanuensis/schemas/probandum.py`).
+   Missing required field, wrong literal value for `kind` /
+   `confidence`, non-string `scheme`, non-list `alternatives_considered`
+   → silent reject (shape slop).
+2. **Closed Walton scheme (INV-18).** The candidate's `scheme` MUST
+   appear in `mappings/walton-scheme-snapshot.yaml`. If absent, do
+   NOTHING — the reconciler will auto-raise a `scheme-missing`
+   clarification under the first available distillation, and only a
+   supervisor extending the snapshot can recover. The auditor takes
+   NO direct action on an INV-18 failure (do not flip
+   `warrant_defensibility`, do not silently drop).
+3. **ACH alternatives non-empty (INV-19).** `alternatives_considered`
+   MUST contain ≥1 entry when `kind` is `"interim"` or
+   `"penultimate"`. An empty list on a non-ultimate node is a
+   shape-class invariant violation; reject silently — the reconciler
+   propagates this as a typed error with no clarification recovery
+   path. The Hierarchize role is the canonical place to fix it.
+4. **Kind restriction.** The Hierarchize role MAY ONLY propose
+   `kind: "interim"`. Any candidate with `kind` `"ultimate"` or
+   `"penultimate"` is a role-boundary violation; silent reject. Top-
+   of-tree probanda are supervisor-only artifacts.
+5. **Warrant-defensibility consistency.** Not applicable to
+   Probandum records directly — only to ProbandumEdge (see below).
+
+For each `ProbandumEdge` candidate, verify:
+
+1. **Shape compliance.** All required fields present per the
+   `ProbandumEdge` schema
+   (`src/amanuensis/schemas/probandum_edge.py`). Missing required
+   field, wrong literal value for `child_kind` / `kind` /
+   `warrant_defensibility` / `confidence`, malformed id → silent
+   reject (shape slop). Also enforce: `child_source_id` is required
+   iff `child_kind == "atom"`, must be null otherwise.
+2. **Tree precondition (INV-16).** The new edge must not close a
+   cycle. Walk from `child_id` via outgoing probandum-edges; reject
+   if you reach `parent_probandum_id`. Additionally, if
+   `child_kind == "probandum"`, the child MUST NOT already have a
+   different parent (tree-not-DAG). Silent reject on either condition
+   — INV-16 is a shape-class invariant the reconciler propagates
+   without clarification recovery.
+3. **Lineage precondition (INV-17).** The `parent_probandum_id` MUST
+   already trace upward to an `ultimate` via existing probandum-
+   edges. If not, do NOTHING — the reconciler raises a
+   `lineage-incomplete` clarification, and only a supervisor landing
+   the missing parent linkage can recover. The auditor takes NO
+   direct action on INV-17.
+4. **Warrant-defensibility consistency.** The `warrant_basis`
+   sentence must match the asserted `warrant_defensibility`
+   category. A candidate that claims `literature-backed` but cites
+   no literature in the basis is downgraded to `contested`.
+5. **Kind-direction consistency.** The `kind`
+   (`supports` / `attacks` / `undercuts`) must match the warrant's
+   stated direction. An `attacks` warrant whose text reads as
+   corroboration, or a `supports` warrant whose text reads as
+   refutation, is a kind/direction mismatch; downgrade
+   `warrant_defensibility` to `contested`.
+6. **Confidence floor.** `confidence=high` paired with
+   `warrant_defensibility=contested` is contradictory and must be
+   downgraded (set confidence to `medium`).
+
+Treatment per check:
+
+- **Probandum shape failures (check 1) and role-boundary failures
+  (check 4) → silent reject.** Drop from `accepted_probanda` without
+  emitting a clarification. The Hierarchize role prompt is the
+  canonical place to fix these classes.
+- **Probandum INV-19 (check 3) → silent reject.** Shape-class
+  invariant the reconciler does not recover from; surfacing a
+  clarification would be noise.
+- **Probandum INV-18 (check 2) → pass through.** The reconciler's
+  INV-18 gate raises a `scheme-missing` clarification on substrate
+  write. Do not pre-empt it.
+- **ProbandumEdge shape failures (check 1) and INV-16 failures
+  (check 2) → silent reject.** Shape and tree-shape violations have
+  no clarification recovery; the auditor's job is to filter them
+  out before the reconciler sees them.
+- **ProbandumEdge INV-17 (check 3) → pass through.** The reconciler
+  auto-raises a `lineage-incomplete` clarification on substrate
+  write. Do not pre-empt it.
+- **Edge warrant/kind/confidence inconsistencies (checks 4, 5, 6) →
+  flip to contested and emit for supervisor review.** Set
+  `warrant_defensibility = "contested"` on the candidate's copy and
+  route through the `warrant-defensibility-contested` clarification
+  path (CR-7) at the reconciler. Matches the Phase 1 / Phase 2b
+  pattern for contested warrants.
+
+Output the audited candidate lists at
+`dispatch/outputs/map-audit-<inputs_hash>/output.yaml` under
+top-level keys `accepted_probanda` and `accepted_probandum_edges`.
+Candidates downgraded by edge-checks 4–6 stay in the list with
+`warrant_defensibility` flipped; candidates rejected by shape /
+INV-16 / INV-19 / role-boundary checks are dropped entirely.
