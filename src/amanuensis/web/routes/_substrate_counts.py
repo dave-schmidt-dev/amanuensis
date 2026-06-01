@@ -24,17 +24,32 @@ Determinism
 All listing helpers sort their output lexicographically so the dashboard
 table is stable across runs. ``.tmp.*`` writer leftovers are skipped to
 mirror ``Substrate.list_atoms``.
+
+Defensive filtering (Phase 2b cleanup-5)
+----------------------------------------
+``list_distillation_source_ids`` filters out subdirectory names that
+fail :func:`amanuensis.fs.substrate._validate_id_component`. iCloud
+and Dropbox sync daemons create duplicate dirs with embedded spaces
+(``phase1-smoke 2``) that would otherwise feed the offending name into
+``Substrate.manifest_path`` etc. and 500 the dashboard route. Skipped
+names emit a single ``logging.WARNING`` via the ``amanuensis.web``
+logger so a supervisor can spot the orphan.
 """
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 
 import yaml
 
 from amanuensis.fs import Substrate
+from amanuensis.fs._errors import SubstrateInvalidId
+from amanuensis.fs.substrate import _validate_id_component
 from amanuensis.schemas import SourceMirrorManifest
+
+_log = logging.getLogger("amanuensis.web")
 
 
 @dataclass(frozen=True)
@@ -53,14 +68,36 @@ class DistillationCounts:
 def list_distillation_source_ids(substrate: Substrate) -> list[str]:
     """Return every ``source_id`` that has a ``distillations/<source-id>/`` dir.
 
-    Lex-sorted for deterministic dashboard ordering. Non-directories are
-    skipped (a stray file under ``distillations/`` would otherwise crash
-    later count walkers).
+    Lex-sorted for deterministic dashboard ordering. Non-directories
+    are skipped (a stray file under ``distillations/`` would otherwise
+    crash later count walkers).
+
+    Phase 2b cleanup-5: subdirectories whose name is not a valid
+    path-safe id (per Substrate's ``_validate_id_component``) are also
+    skipped + each one is logged at WARNING level so a supervisor sees
+    the diagnostic. The trigger is iCloud / Dropbox sync daemons that
+    clone subdirectories with embedded spaces (``phase1-smoke 2``);
+    without the filter the dashboard 500s on the first count walker
+    that pipes the name into a Substrate path helper.
     """
     distillations_root = substrate.root / "distillations"
     if not distillations_root.is_dir():
         return []
-    return sorted(entry.name for entry in distillations_root.iterdir() if entry.is_dir())
+    valid: list[str] = []
+    for entry in distillations_root.iterdir():
+        if not entry.is_dir():
+            continue
+        try:
+            _validate_id_component(entry.name, label="source_id")
+        except SubstrateInvalidId as exc:
+            _log.warning(
+                "ignored non-path-safe distillation directory: %r (%s)",
+                entry.name,
+                exc,
+            )
+            continue
+        valid.append(entry.name)
+    return sorted(valid)
 
 
 def _count_files(directory: Path, *, suffix: str) -> int:
