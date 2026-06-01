@@ -3193,3 +3193,119 @@ def probandum_edge_supersede_command(
     typer.echo(
         f"Superseded probandum-edge '{old_id}' -> '{new_id}'. ProbandumEdgeSupersede id: {sup.id}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Phase 2c M9 / T9.8: walton-scheme sub-commands (show + snapshot).
+# ---------------------------------------------------------------------------
+
+
+@walton_scheme_app.command("show")
+@require_marker
+def walton_scheme_show_command(
+    workspace: Annotated[
+        Path | None,
+        typer.Option(
+            "--workspace",
+            "-w",
+            help="Workspace root (must contain amanuensis.yaml). Defaults to CWD.",
+        ),
+    ] = None,
+) -> None:
+    """Print the active Walton-scheme snapshot (read-only; T9.8).
+
+    No flock — this is a pure read off ``mappings/walton-scheme-snapshot.yaml``.
+    """
+    workspace_path = workspace_from_kwargs({"workspace": workspace})
+    substrate = Substrate(workspace_path)
+
+    snapshot_path = substrate.walton_scheme_snapshot_path()
+    if not snapshot_path.is_file():
+        typer.secho(
+            f"Walton-scheme snapshot not found at {snapshot_path}; "
+            "run `amanuensis map walton-scheme snapshot` to pin one",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+    typer.echo(snapshot_path.read_text(encoding="utf-8"), nl=False)
+
+
+@walton_scheme_app.command("snapshot")
+@require_marker
+def walton_scheme_snapshot_command(
+    extend: Annotated[
+        bool,
+        typer.Option(
+            "--extend",
+            help="Archive the current snapshot and write a new one from the bundled catalogue.",
+        ),
+    ] = False,
+    workspace: Annotated[
+        Path | None,
+        typer.Option(
+            "--workspace",
+            "-w",
+            help="Workspace root (must contain amanuensis.yaml). Defaults to CWD.",
+        ),
+    ] = None,
+) -> None:
+    """Pin the Walton-scheme registry into the workspace (T9.8).
+
+    Without ``--extend``: writes the bundled generic catalogue as the
+    active snapshot. Idempotent if a byte-identical snapshot already
+    exists; fails if a divergent snapshot exists (use ``--extend`` to
+    evolve it).
+
+    With ``--extend``: archives the current snapshot under
+    ``mappings/walton-scheme-archive/<sha16>.yaml`` and writes the
+    bundled catalogue as the new active snapshot.
+    """
+    from amanuensis.fs._errors import MappingVocabularyAlreadyPinned
+
+    workspace_path = workspace_from_kwargs({"workspace": workspace})
+    substrate = Substrate(workspace_path)
+
+    try:
+        with acquire_workspace_lock(workspace_path, timeout=5.0):
+            try:
+                snapshot_path = substrate.snapshot_walton_schemes(extend=extend)
+            except MappingVocabularyAlreadyPinned as exc:
+                typer.secho(
+                    "Walton-scheme snapshot already pinned with different content; "
+                    "use --extend to archive the prior snapshot and write the new one",
+                    err=True,
+                )
+                raise typer.Exit(code=1) from exc
+
+            # Inputs hash is the on-disk snapshot bytes (canonical).
+            inputs_hash = hashlib.sha256(snapshot_path.read_bytes()).hexdigest()
+            substrate_changes: list[str] = [
+                str(snapshot_path.relative_to(workspace_path)),
+            ]
+            actor = AgentAttribution(kind="human", identifier="cli", role="human_supervisor")
+            activity = (
+                "walton-scheme-snapshot-extended" if extend else "walton-scheme-snapshot-pinned"
+            )
+            ReplayLog.for_mappings(workspace_path).append(
+                actor=actor,
+                activity=activity,
+                inputs_hash=inputs_hash,
+                outputs_hash=inputs_hash,
+                cache_hit=False,
+                substrate_changes=substrate_changes,
+                duration_seconds=0.0,
+                _lock_held=True,
+            )
+
+    except WorkspaceLockTimeout as exc:
+        typer.secho(
+            "workspace flock held by another process — wait or release .amanuensis-lock",
+            err=True,
+        )
+        raise typer.Exit(code=2) from exc
+
+    rel = snapshot_path.relative_to(workspace_path)
+    if extend:
+        typer.echo(f"Extended Walton-scheme snapshot at {rel}")
+    else:
+        typer.echo(f"Pinned Walton-scheme snapshot at {rel}")
