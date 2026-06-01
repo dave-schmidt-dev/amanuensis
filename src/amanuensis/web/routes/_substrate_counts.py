@@ -46,7 +46,9 @@ import yaml
 
 from amanuensis.fs import Substrate
 from amanuensis.fs._errors import SubstrateInvalidId
-from amanuensis.fs.substrate import _validate_id_component
+from amanuensis.fs.substrate import (  # pyright: ignore[reportPrivateUsage]
+    _validate_id_component,
+)
 from amanuensis.schemas import SourceMirrorManifest
 
 _log = logging.getLogger("amanuensis.web")

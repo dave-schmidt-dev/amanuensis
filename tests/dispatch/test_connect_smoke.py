@@ -1,3 +1,4 @@
+# pyright: reportPrivateUsage=false
 """Smoke test: Connector dispatch reconcile cycle with a mocked harness.
 
 Phase 2b M5/T5.4. The Connector role's full dispatch pipeline is:
