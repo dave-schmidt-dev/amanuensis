@@ -36,6 +36,7 @@ import pytest
 from amanuensis.fs import Substrate
 from amanuensis.fs._atomic import atomic_write_text
 from amanuensis.fs._serialize import (
+    serialize_atom_md,
     serialize_entity_md,
     serialize_resolution_yaml,
     serialize_yaml,
@@ -43,7 +44,9 @@ from amanuensis.fs._serialize import (
 from amanuensis.llm import DispatchQueueEntry
 from amanuensis.schemas import (
     AgentAttribution,
+    Atom,
     Entity,
+    OperandRef,
     ProvenanceRecord,
     Resolution,
     RoleAttribution,
@@ -304,6 +307,316 @@ def list_open_clarifications_for_source(
             continue
         out.append(clar)
     return out
+
+
+# --- Phase 2b M6: cluster-enumeration fixtures -------------------------
+#
+# These fixtures plant a multi-distillation workspace with Atoms +
+# Resolutions pointing into shared canonical entities, so the Connector
+# orchestrator's cluster-enumeration logic has realistic input to walk.
+#
+# We intentionally bypass id-discipline (compute_id) on planted records:
+# the Connector orchestrator filters by entity_id + source_id + counts;
+# it does not re-hash content. Stable literal ids keep tests readable.
+
+
+def _plant_atom(workspace: Path, atom: Atom) -> None:
+    """Write an Atom directly under ``distillations/<src>/atoms/`` (bypasses gates)."""
+    path = workspace / "distillations" / atom.source_id / "atoms" / f"{atom.id}.md"
+    atomic_write_text(path, serialize_atom_md(atom))
+
+
+def _build_atom(
+    *,
+    atom_id: str,
+    source_id: str,
+    narrative: str,
+    predicate: str,
+    role_attribution: RoleAttribution,
+    char_offset: int = 0,
+) -> Atom:
+    """Build a minimal valid Atom for fixture planting.
+
+    The atom carries a single entity-kind operand whose ``value`` is the
+    intended Resolution target; the planted Resolution provides the
+    triple-to-entity join. ``char_offset`` lets multiple atoms in the same
+    distillation differ in their char_span so their ids do not collide.
+    """
+    return Atom(
+        id=atom_id,
+        source_id=source_id,
+        section_path=["body"],
+        paragraph_index=0,
+        sentence_index=None,
+        char_span=(char_offset, char_offset + 20),
+        scale_anchor="paragraph",
+        kind="claim",
+        predicate=predicate,
+        operands=[
+            OperandRef(role="subject", kind="entity", value="placeholder", type_hint=None),
+        ],
+        narrative=narrative,
+        qualifier_level=None,
+        qualifier_basis=None,
+        provenance_id="p-fixture00000010",
+        role_attributions=[role_attribution],
+        schema_version=1,
+    )
+
+
+def _plant_named_entity(workspace: Path, *, entity_id: str, kind: str, name: str) -> None:
+    """Plant a named Entity with literal id (bypassing content-hash)."""
+    role_attr = RoleAttribution(
+        agent=AgentAttribution(kind="llm", identifier="map-resolve", role="map-resolve"),
+        activity="proposed",
+        at=_STABLE_AT,
+    )
+    entity = Entity(
+        id=entity_id,
+        kind=kind,
+        canonical_name=name,
+        aliases=[],
+        notes=None,
+        provenance_id="p-fixture00000020",
+        role_attributions=[role_attr],
+        schema_version=1,
+    )
+    _plant_entity(workspace, entity)
+
+
+def _plant_named_resolution(
+    workspace: Path,
+    *,
+    resolution_id: str,
+    source_id: str,
+    atom_id: str,
+    entity_id: str,
+) -> None:
+    """Plant a Resolution with literal id (bypassing content-hash)."""
+    role_attr = RoleAttribution(
+        agent=AgentAttribution(kind="llm", identifier="map-resolve", role="map-resolve"),
+        activity="proposed",
+        at=_STABLE_AT,
+    )
+    res = Resolution(
+        id=resolution_id,
+        source_id=source_id,
+        atom_id=atom_id,
+        operand_index=0,
+        entity_id=entity_id,
+        confidence="high",
+        basis="fixture",
+        provenance_id="p-fixture00000030",
+        role_attributions=[role_attr],
+        schema_version=1,
+    )
+    _plant_resolution(workspace, res)
+
+
+@pytest.fixture
+def tmp_workspace_with_3_distillations_and_resolutions(
+    tmp_path: Path,
+    role_attribution: RoleAttribution,
+) -> Path:
+    """3 distillations with 3 atoms each; resolutions cluster on e-smith and e-jones.
+
+    Cluster shape:
+      e-smith: 3 atoms across all 3 sources (multi-source).
+      e-jones: 2 atoms across 2 sources (multi-source).
+      e-loner: 1 atom in src-1 only (single-source — must be filtered out).
+    """
+    marker = tmp_path / "amanuensis.yaml"
+    marker.write_text(
+        "schema_version: 1\nproject_name: m6-3-distillations\n",
+        encoding="utf-8",
+    )
+    # Plant 3 distillation directories with atoms.
+    sources = ["src-1", "src-2", "src-3"]
+    for src in sources:
+        _plant_distillation_dir(tmp_path, src)
+
+    # Atoms (literal ids; spans differ so file paths are unique).
+    # src-1 atoms: smith, jones, loner
+    _plant_atom(
+        tmp_path,
+        _build_atom(
+            atom_id="a-s1-smith0000000",
+            source_id="src-1",
+            narrative="Smith filed a brief in March 2024.",
+            predicate="filed_by",
+            role_attribution=role_attribution,
+            char_offset=0,
+        ),
+    )
+    _plant_atom(
+        tmp_path,
+        _build_atom(
+            atom_id="a-s1-jones0000000",
+            source_id="src-1",
+            narrative="Jones is a co-counsel in this matter.",
+            predicate="is_co_counsel",
+            role_attribution=role_attribution,
+            char_offset=100,
+        ),
+    )
+    _plant_atom(
+        tmp_path,
+        _build_atom(
+            atom_id="a-s1-loner0000000",
+            source_id="src-1",
+            narrative="Loner is mentioned only here.",
+            predicate="mentioned_in",
+            role_attribution=role_attribution,
+            char_offset=200,
+        ),
+    )
+    # src-2 atoms: smith, jones
+    _plant_atom(
+        tmp_path,
+        _build_atom(
+            atom_id="a-s2-smith0000000",
+            source_id="src-2",
+            narrative="Smith was deposed in April 2024.",
+            predicate="was_deposed",
+            role_attribution=role_attribution,
+            char_offset=0,
+        ),
+    )
+    _plant_atom(
+        tmp_path,
+        _build_atom(
+            atom_id="a-s2-jones0000000",
+            source_id="src-2",
+            narrative="Jones appeared at the hearing.",
+            predicate="appeared_at",
+            role_attribution=role_attribution,
+            char_offset=100,
+        ),
+    )
+    # src-3 atom: smith only
+    _plant_atom(
+        tmp_path,
+        _build_atom(
+            atom_id="a-s3-smith0000000",
+            source_id="src-3",
+            narrative="Smith authored an amicus brief.",
+            predicate="authored",
+            role_attribution=role_attribution,
+            char_offset=0,
+        ),
+    )
+
+    # Entities. ``e-jones`` is lexicographically AFTER ``e-smith`` so we
+    # also get to confirm sort order in tests.
+    _plant_named_entity(tmp_path, entity_id="e-jones", kind="party", name="Jones")
+    _plant_named_entity(tmp_path, entity_id="e-loner", kind="party", name="Loner")
+    _plant_named_entity(tmp_path, entity_id="e-smith", kind="party", name="Smith")
+
+    # Resolutions:
+    #   e-smith: 3 resolutions across all 3 sources.
+    _plant_named_resolution(
+        tmp_path,
+        resolution_id="j-fixture-smith01",
+        source_id="src-1",
+        atom_id="a-s1-smith0000000",
+        entity_id="e-smith",
+    )
+    _plant_named_resolution(
+        tmp_path,
+        resolution_id="j-fixture-smith02",
+        source_id="src-2",
+        atom_id="a-s2-smith0000000",
+        entity_id="e-smith",
+    )
+    _plant_named_resolution(
+        tmp_path,
+        resolution_id="j-fixture-smith03",
+        source_id="src-3",
+        atom_id="a-s3-smith0000000",
+        entity_id="e-smith",
+    )
+    #   e-jones: 2 resolutions across 2 sources.
+    _plant_named_resolution(
+        tmp_path,
+        resolution_id="j-fixture-jones01",
+        source_id="src-1",
+        atom_id="a-s1-jones0000000",
+        entity_id="e-jones",
+    )
+    _plant_named_resolution(
+        tmp_path,
+        resolution_id="j-fixture-jones02",
+        source_id="src-2",
+        atom_id="a-s2-jones0000000",
+        entity_id="e-jones",
+    )
+    #   e-loner: single-source only.
+    _plant_named_resolution(
+        tmp_path,
+        resolution_id="j-fixture-loner01",
+        source_id="src-1",
+        atom_id="a-s1-loner0000000",
+        entity_id="e-loner",
+    )
+
+    return tmp_path
+
+
+@pytest.fixture
+def tmp_workspace_with_single_source_cluster(
+    tmp_path: Path,
+    role_attribution: RoleAttribution,
+) -> Path:
+    """One canonical entity with two atoms — but both atoms are in the same source.
+
+    Connector cluster enumeration must filter this out: a single-source
+    cluster has no cross-doc edges to propose.
+    """
+    marker = tmp_path / "amanuensis.yaml"
+    marker.write_text(
+        "schema_version: 1\nproject_name: m6-single-source\n",
+        encoding="utf-8",
+    )
+    _plant_distillation_dir(tmp_path, "src-only")
+
+    _plant_atom(
+        tmp_path,
+        _build_atom(
+            atom_id="a-only-1000000000",
+            source_id="src-only",
+            narrative="First mention of Smith.",
+            predicate="mentions",
+            role_attribution=role_attribution,
+            char_offset=0,
+        ),
+    )
+    _plant_atom(
+        tmp_path,
+        _build_atom(
+            atom_id="a-only-2000000000",
+            source_id="src-only",
+            narrative="Second mention of Smith.",
+            predicate="mentions",
+            role_attribution=role_attribution,
+            char_offset=100,
+        ),
+    )
+    _plant_named_entity(tmp_path, entity_id="e-smith", kind="party", name="Smith")
+    _plant_named_resolution(
+        tmp_path,
+        resolution_id="j-fixture-only001",
+        source_id="src-only",
+        atom_id="a-only-1000000000",
+        entity_id="e-smith",
+    )
+    _plant_named_resolution(
+        tmp_path,
+        resolution_id="j-fixture-only002",
+        source_id="src-only",
+        atom_id="a-only-2000000000",
+        entity_id="e-smith",
+    )
+    return tmp_path
 
 
 def make_entry(
