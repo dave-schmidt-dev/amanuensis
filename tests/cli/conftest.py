@@ -16,13 +16,21 @@ from typing import Any
 import pytest
 
 from amanuensis.fs import Substrate
+from amanuensis.fs._atomic import atomic_write_text
+from amanuensis.fs._serialize import (
+    serialize_entity_md,
+    serialize_resolution_yaml,
+)
 from amanuensis.schemas import (
     AgentAttribution,
     Atom,
     Clarification,
+    CrossDocRelation,
+    Entity,
     OperandRef,
     OperandTypeSchema,
     ProvenanceRecord,
+    Resolution,
     RoleAttribution,
     Vocabulary,
     VocabularyEntry,
@@ -175,3 +183,148 @@ def planted_clarification(
     clar = Clarification(**payload)
     cli_substrate.add_clarification(SOURCE_ID, clar)
     return clar
+
+
+# ---------------------------------------------------------------------------
+# Phase 2b M7 — cross-doc relation CLI fixtures
+# ---------------------------------------------------------------------------
+#
+# The M7 verbs operate against a workspace that already contains
+# committed CrossDocRelation records. The fixture below mirrors the
+# dispatch-test ``tmp_workspace_with_bilateral_resolutions`` pattern: it
+# plants a shared canonical Entity + bilateral Resolutions so the INV-15
+# gate inside ``Substrate.add_cross_doc_relation`` passes, then writes
+# two distinct CrossDocRelations (one ``supports``, one ``attacks``) via
+# the substrate gate.
+
+_M7_FROM_SOURCE = "src-A"
+_M7_FROM_ATOM = "a-fixture0001"
+_M7_TO_SOURCE = "src-B"
+_M7_TO_ATOM = "a-fixture0002"
+_M7_SHARED_ENTITY = "e-smith"
+_M7_STABLE_AT = datetime(2026, 5, 31, 12, 0, 0, tzinfo=UTC)
+
+
+def _m7_plant_distillation_dir(workspace: Path, source_id: str) -> None:
+    (workspace / "distillations" / source_id).mkdir(parents=True, exist_ok=True)
+
+
+def _m7_plant_entity(workspace: Path, entity: Entity) -> None:
+    path = workspace / "mappings" / "entities" / f"{entity.id}.md"
+    atomic_write_text(path, serialize_entity_md(entity))
+
+
+def _m7_plant_resolution(workspace: Path, resolution: Resolution) -> None:
+    path = workspace / "mappings" / "resolutions" / f"{resolution.id}.yaml"
+    atomic_write_text(path, serialize_resolution_yaml(resolution))
+
+
+def _m7_role_attribution() -> RoleAttribution:
+    return RoleAttribution(
+        agent=AgentAttribution(kind="llm", identifier="claude-opus-4-7", role="connect"),
+        activity="proposed",
+        at=_M7_STABLE_AT,
+    )
+
+
+def _m7_build_cross_doc_relation(
+    *,
+    kind: str,
+    warrant: str,
+    role_attribution: RoleAttribution,
+) -> CrossDocRelation:
+    """Build a CrossDocRelation whose id matches ``compute_id`` for its content."""
+    payload: dict[str, Any] = {
+        "id": "x-" + "0" * 16,
+        "from_atom_id": _M7_FROM_ATOM,
+        "from_source_id": _M7_FROM_SOURCE,
+        "to_atom_id": _M7_TO_ATOM,
+        "to_source_id": _M7_TO_SOURCE,
+        "kind": kind,
+        "warrant": warrant,
+        "warrant_defensibility": "conventional",
+        "warrant_basis": "Both atoms reference the same canonical Smith entity.",
+        "confidence": "medium",
+        "shared_entities": [_M7_SHARED_ENTITY],
+        "provenance_id": "p-m7-cdr00000001",
+        "role_attributions": [role_attribution],
+        "schema_version": 1,
+    }
+    draft = CrossDocRelation(**payload)
+    payload["id"] = compute_id(draft)
+    return CrossDocRelation(**payload)
+
+
+@pytest.fixture
+def tmp_workspace_with_two_cross_doc_relations(tmp_path: Path) -> Path:
+    """Workspace with two committed CrossDocRelation records.
+
+    Plants:
+      * The INV-1 marker.
+      * Two empty distillation directories (``src-A`` / ``src-B``).
+      * A shared canonical Entity (``e-smith``) + bilateral Resolutions
+        so the INV-15 shared-entity gate accepts the relations.
+      * Two CrossDocRelation records — one ``supports`` and one
+        ``attacks`` — committed via ``Substrate.add_cross_doc_relation``
+        so the INV-13 / INV-15 / id-discipline gates have all run.
+
+    The two relations differ only in ``kind`` + ``warrant`` so their
+    content-addressable ids diverge.
+    """
+    marker = tmp_path / "amanuensis.yaml"
+    marker.write_text(
+        "schema_version: 1\nproject_name: m7-cross-doc-fixture\n",
+        encoding="utf-8",
+    )
+    _m7_plant_distillation_dir(tmp_path, _M7_FROM_SOURCE)
+    _m7_plant_distillation_dir(tmp_path, _M7_TO_SOURCE)
+
+    role_attr = _m7_role_attribution()
+
+    # Shared Entity (literal id; INV-15 walks via latest_entity_for).
+    entity = Entity(
+        id=_M7_SHARED_ENTITY,
+        kind="party",
+        canonical_name="Smith",
+        aliases=[],
+        notes=None,
+        provenance_id="p-m7-ent00000001",
+        role_attributions=[role_attr],
+        schema_version=1,
+    )
+    _m7_plant_entity(tmp_path, entity)
+
+    # Bilateral Resolutions.
+    for slug, source_id, atom_id in (
+        ("from", _M7_FROM_SOURCE, _M7_FROM_ATOM),
+        ("to", _M7_TO_SOURCE, _M7_TO_ATOM),
+    ):
+        res = Resolution(
+            id=f"j-m7-fixture-{slug}",
+            source_id=source_id,
+            atom_id=atom_id,
+            operand_index=0,
+            entity_id=_M7_SHARED_ENTITY,
+            confidence="high",
+            basis="fixture-planted for M7 CLI tests",
+            provenance_id="p-m7-res00000001",
+            role_attributions=[role_attr],
+            schema_version=1,
+        )
+        _m7_plant_resolution(tmp_path, res)
+
+    # Two CrossDocRelations through the gate.
+    substrate = Substrate(tmp_path)
+    rel_supports = _m7_build_cross_doc_relation(
+        kind="supports",
+        warrant="Both endpoints attest Smith's role in matching positions.",
+        role_attribution=role_attr,
+    )
+    rel_attacks = _m7_build_cross_doc_relation(
+        kind="attacks",
+        warrant="The two endpoints describe Smith's role in contradictory ways.",
+        role_attribution=role_attr,
+    )
+    substrate.add_cross_doc_relation(rel_supports)
+    substrate.add_cross_doc_relation(rel_attacks)
+    return tmp_path

@@ -1,4 +1,4 @@
-"""``amanuensis map`` — entity resolution registry (Phase 2a).
+"""``amanuensis map`` — entity resolution registry (Phase 2a) + cross-doc relations (Phase 2b).
 
 Commands
 --------
@@ -8,6 +8,8 @@ Commands
 - ``amanuensis map entity {list,show,merge}`` — entity CRUD; T7.5-T7.6.
 - ``amanuensis map resolution {show,supersede}`` — resolution inspection; T7.8-T7.9 stubs.
 - ``amanuensis map vocabulary {show,snapshot}`` — vocabulary registry; T7.10 stubs.
+- ``amanuensis map relation {list,show,supersede}`` — cross-doc relation
+  inspection + correction (Phase 2b M7 / T7.1-T7.3).
 
 Hard rules upheld here
 -----------------------
@@ -74,6 +76,13 @@ app = typer.Typer(
     add_completion=False,
 )
 
+# Module-level alias used by callers that import the map sub-app
+# directly (notably ``tests/cli/test_map_relation.py``). The CLI is
+# wired through ``amanuensis.cli.app.add_typer(map_cli.app, ...)``; this
+# alias gives external consumers a name that does not collide with
+# their own ``app`` symbol.
+map_app = app
+
 # ---------------------------------------------------------------------------
 # Nested sub-apps
 # ---------------------------------------------------------------------------
@@ -108,6 +117,19 @@ app.add_typer(
     vocabulary_app,
     name="vocabulary",
     help="Show and snapshot the entity-kind vocabulary.",
+)
+
+# Phase 2b M7: cross-doc relation sub-app (list / show / supersede).
+relation_app = typer.Typer(
+    name="relation",
+    help="Inspect and supersede cross-doc relation records.",
+    no_args_is_help=True,
+    add_completion=False,
+)
+app.add_typer(
+    relation_app,
+    name="relation",
+    help="Inspect and supersede cross-doc relation records.",
 )
 
 
@@ -1645,3 +1667,123 @@ def vocabulary_snapshot_command(
             err=True,
         )
         raise typer.Exit(code=2) from exc
+
+
+# ---------------------------------------------------------------------------
+# Phase 2b M7: cross-doc relation sub-commands (T7.1, T7.2, T7.3)
+# ---------------------------------------------------------------------------
+
+
+def _format_cross_doc_relation_line(rel: Any) -> str:
+    """Render a single ``map relation list`` line.
+
+    Mirrors the conventions of ``entity_list_command``: id-prefixed,
+    space-separated key=value pairs for grep-ability, with the directed
+    endpoint pair rendered in arrow form for human readability.
+    """
+    shared = ",".join(rel.shared_entities)
+    return (
+        f"{rel.id}  kind={rel.kind}  "
+        f"{rel.from_source_id}/{rel.from_atom_id} -> "
+        f"{rel.to_source_id}/{rel.to_atom_id}  "
+        f"[shared: {shared}]"
+    )
+
+
+@relation_app.command("list")
+@require_marker
+def relation_list_command(
+    kind: Annotated[
+        str | None,
+        typer.Option(
+            "--kind",
+            help="Filter to relations of the given kind (supports/attacks/undercuts).",
+        ),
+    ] = None,
+    from_source: Annotated[
+        str | None,
+        typer.Option(
+            "--from-source",
+            help="Filter to relations originating from this source id.",
+        ),
+    ] = None,
+    to_source: Annotated[
+        str | None,
+        typer.Option(
+            "--to-source",
+            help="Filter to relations terminating at this source id.",
+        ),
+    ] = None,
+    touching_source: Annotated[
+        str | None,
+        typer.Option(
+            "--touching-source",
+            help="Filter to relations where the given source appears at either endpoint.",
+        ),
+    ] = None,
+    shared_entity: Annotated[
+        str | None,
+        typer.Option(
+            "--shared-entity",
+            help="Filter to relations whose shared_entities list includes this entity id.",
+        ),
+    ] = None,
+    limit: Annotated[
+        int | None,
+        typer.Option(
+            "--limit",
+            help="Maximum number of relations to render (after filtering).",
+        ),
+    ] = None,
+    workspace: Annotated[
+        Path | None,
+        typer.Option(
+            "--workspace",
+            "-w",
+            help="Workspace root (must contain amanuensis.yaml). Defaults to CWD.",
+        ),
+    ] = None,
+) -> None:
+    """List cross-doc relations in the workspace (read-only; T7.1).
+
+    Filters compose with AND semantics. The render line mirrors
+    ``entity list`` — id-prefixed plus space-separated key=value pairs
+    and the directed endpoint pair rendered in arrow form.
+    """
+    workspace_path = workspace_from_kwargs({"workspace": workspace})
+    substrate = Substrate(workspace_path)
+
+    # Validate ``--kind`` against the known cross-doc relation kinds.
+    if kind is not None and kind not in {"supports", "attacks", "undercuts"}:
+        typer.secho(
+            f"--kind must be one of supports/attacks/undercuts, got '{kind}'",
+            err=True,
+        )
+        raise typer.Exit(code=2)
+
+    # Validate ``--limit`` (Typer accepts negatives at parse time).
+    if limit is not None and limit < 0:
+        typer.secho(
+            f"--limit must be a non-negative integer, got {limit}",
+            err=True,
+        )
+        raise typer.Exit(code=2)
+
+    relations = list(
+        substrate.list_cross_doc_relations(
+            kind=kind,  # type: ignore[arg-type]
+            from_source=from_source,
+            to_source=to_source,
+            touching_source=touching_source,
+            shared_entity=shared_entity,
+        )
+    )
+
+    # ``list_cross_doc_relations`` already iterates ``sorted(...)`` by
+    # filesystem path (lexicographic by id), giving us a deterministic
+    # output order without an extra sort.
+    if limit is not None:
+        relations = relations[:limit]
+
+    for rel in relations:
+        typer.echo(_format_cross_doc_relation_line(rel))

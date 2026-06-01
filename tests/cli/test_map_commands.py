@@ -19,7 +19,7 @@ runner = CliRunner()
 def test_map_help_lists_all_verbs() -> None:
     res = runner.invoke(app, ["map", "--help"])
     assert res.exit_code == 0
-    for verb in ("status", "entity", "resolution", "vocabulary"):
+    for verb in ("status", "entity", "resolution", "vocabulary", "relation"):
         assert verb in res.stdout
 
 
