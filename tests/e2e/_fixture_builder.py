@@ -44,11 +44,14 @@ from amanuensis.schemas import (
     AgentAttribution,
     Atom,
     Clarification,
+    CrossDocRelation,
+    Entity,
     OperandRef,
     OperandTypeSchema,
     ParagraphEntry,
     ProvenanceRecord,
     Relation,
+    Resolution,
     RoleAttribution,
     SourceMirrorManifest,
     Vocabulary,
@@ -59,6 +62,10 @@ from amanuensis.schemas import (
 # Fixture sizing — see module docstring for the 250/750 downgrade rationale.
 SMOKE_SOURCE_ID = "phase1-smoke"
 STRESS_SOURCE_ID = "phase1-stress"
+# Phase 2b cross-doc fixture source. One atom + bilateral resolution joining
+# back to the canonical entity shared with phase1-smoke, so the planted
+# CrossDocRelation can satisfy INV-15.
+CROSS_DOC_SOURCE_ID = "phase2b-cross-doc"
 N_STRESS_ATOMS = 250
 N_STRESS_RELATIONS = 750
 DETERMINISTIC_SHA256 = "0" * 64
@@ -66,6 +73,8 @@ SMOKE_PARAGRAPH_BODY = "ACME shall pay within 30 days under section 3 of the con
 # Char-span covers "ACME shall pay within 30 days" — the highlighted slice
 # the smoke spec asserts is rendered inside the <mark>.
 SMOKE_CHAR_SPAN: tuple[int, int] = (0, 30)
+CROSS_DOC_PARAGRAPH_BODY = "ACME's payment obligation continues under the settlement letter."
+CROSS_DOC_CHAR_SPAN: tuple[int, int] = (0, 30)
 
 
 def _now() -> datetime:
@@ -426,6 +435,204 @@ def _plant_resolution_ambiguous_clarification(substrate: Substrate, source_id: s
     substrate.add_clarification(source_id, clar)
 
 
+def _plant_cross_doc_artifacts(substrate: Substrate) -> None:
+    """Plant a CrossDocRelation between phase1-smoke and phase2b-cross-doc (Phase 2b M11 T11.2).
+
+    The smoke distillation already has one atom. To exercise the Phase 2b
+    cross-doc overlay flow in Playwright we need:
+
+    1. A second source (``phase2b-cross-doc``) with at least one atom.
+    2. A shared canonical ``Entity`` in ``mappings/entities/``.
+    3. Bilateral ``Resolution`` records pointing each atom's first operand
+       at the canonical entity (INV-15 precondition).
+    4. A ``CrossDocRelation`` referencing both endpoints and the shared
+       entity. This is what the overlay JS renders and what the
+       ``/cross-doc-relations/<id>`` detail page displays.
+
+    The atom in the smoke source uses surface form "ent-acme"; we mint a
+    canonical "ACME" entity, plant a resolution for the smoke atom under
+    that entity, plant a paired atom + resolution under the cross-doc
+    source, then write the cross-doc edge.
+    """
+    agent = _make_agent()
+    role_attribution = _make_role_attribution(agent)
+
+    # --- Locate the smoke atom (already on disk from _plant_smoke) ---
+    smoke_atoms = sorted(
+        substrate.list_atoms(SMOKE_SOURCE_ID),
+        key=lambda a: a.id,
+    )
+    assert smoke_atoms, "phase1-smoke must already have its atom planted"
+    smoke_atom = smoke_atoms[0]
+
+    # --- Plant the second source: 1 atom + 1 paragraph + 1 manifest ---
+    substrate.snapshot_vocabulary(CROSS_DOC_SOURCE_ID, _build_vocabulary())
+
+    stub_prov = ProvenanceRecord(
+        id="p-" + "0" * 16,
+        entity_type="atom",
+        entity_id="a-" + "0" * 16,
+        activity="extract_v1-cross-doc",
+        activity_started_at=_now(),
+        activity_ended_at=_now(),
+        used_entity_ids=[CROSS_DOC_SOURCE_ID],
+        was_attributed_to=agent,
+        was_influenced_by=[],
+        schema_version=1,
+    )
+    stub_prov = stub_prov.model_copy(update={"id": compute_id(stub_prov)})
+
+    operand = OperandRef(role="subject", kind="entity", value="ent-acme", type_hint=None)
+    cross_atom_draft = Atom(
+        id="a-" + "0" * 16,
+        source_id=CROSS_DOC_SOURCE_ID,
+        section_path=["Part I", "§1"],
+        paragraph_index=0,
+        sentence_index=None,
+        char_span=CROSS_DOC_CHAR_SPAN,
+        scale_anchor="paragraph",
+        kind="claim",
+        predicate="asserts_obligation",
+        operands=[operand],
+        narrative=CROSS_DOC_PARAGRAPH_BODY,
+        qualifier_level=None,
+        qualifier_basis=None,
+        provenance_id=stub_prov.id,
+        role_attributions=[role_attribution],
+        schema_version=1,
+    )
+    cross_atom = cross_atom_draft.model_copy(update={"id": compute_id(cross_atom_draft)})
+
+    # Rebuild prov against the real atom id.
+    final_prov = ProvenanceRecord(
+        id="p-" + "0" * 16,
+        entity_type="atom",
+        entity_id=cross_atom.id,
+        activity="extract_v1-cross-doc",
+        activity_started_at=_now(),
+        activity_ended_at=_now(),
+        used_entity_ids=[CROSS_DOC_SOURCE_ID],
+        was_attributed_to=agent,
+        was_influenced_by=[],
+        schema_version=1,
+    )
+    final_prov = final_prov.model_copy(update={"id": compute_id(final_prov)})
+    cross_atom = cross_atom.model_copy(update={"provenance_id": final_prov.id})
+    # Re-hash after pointing at the real prov id (atom id is volatile w.r.t.
+    # provenance_id? No — atom's provenance_id is identity, so recompute).
+    cross_atom = cross_atom.model_copy(update={"id": compute_id(cross_atom)})
+
+    substrate.add_provenance(CROSS_DOC_SOURCE_ID, final_prov)
+    substrate.add_atom(CROSS_DOC_SOURCE_ID, cross_atom)
+
+    # Paragraph + manifest so the source-overview surface renders.
+    paragraph_dir = substrate.source_mirror_root(CROSS_DOC_SOURCE_ID) / "paragraphs"
+    paragraph_dir.mkdir(parents=True, exist_ok=True)
+    paragraph_entry = ParagraphEntry(
+        paragraph_id="p-0000",
+        paragraph_index=0,
+        section_path=["Part I", "§1"],
+        label="text",
+        page_no=1,
+        char_count=len(CROSS_DOC_PARAGRAPH_BODY),
+        content_sha256=DETERMINISTIC_SHA256,
+    )
+    paragraph_path = substrate.paragraph_path(CROSS_DOC_SOURCE_ID, "p-0000")
+    atomic_write_text(
+        paragraph_path, serialize_paragraph_md(paragraph_entry, CROSS_DOC_PARAGRAPH_BODY)
+    )
+
+    manifest_payload: dict[str, Any] = {
+        "source_id": CROSS_DOC_SOURCE_ID,
+        "source_filename": "cross-doc.pdf",
+        "source_sha256": DETERMINISTIC_SHA256,
+        "source_bytes_len": 1024,
+        "ingest_engine": "docling",
+        "ingest_engine_version": "9.9.9",
+        "vocabulary_snapshot_sha256": DETERMINISTIC_SHA256,
+        "provenance_id": "p-" + "2" * 16,
+        "paragraphs": [paragraph_entry],
+        "schema_version": 1,
+    }
+    draft_manifest = SourceMirrorManifest(id="m-" + "0" * 16, **manifest_payload)
+    manifest = SourceMirrorManifest(id=compute_id(draft_manifest), **manifest_payload)
+    substrate.add_source_mirror_manifest(CROSS_DOC_SOURCE_ID, manifest)
+
+    # --- Plant the canonical entity ---
+    entity_payload: dict[str, Any] = {
+        "id": "e-" + "0" * 16,
+        "kind": "organization",
+        "canonical_name": "ACME",
+        "aliases": ["ACME Corp"],
+        "notes": "cross-doc fixture entity",
+        "provenance_id": final_prov.id,
+        "role_attributions": [role_attribution],
+        "schema_version": 1,
+    }
+    entity_draft = Entity(**entity_payload)
+    entity_payload["id"] = compute_id(entity_draft)
+    entity = Entity(**entity_payload)
+    substrate.add_entity(entity)
+
+    # --- Bilateral resolutions ---
+    res_smoke_payload: dict[str, Any] = {
+        "id": "j-" + "0" * 16,
+        "source_id": SMOKE_SOURCE_ID,
+        "atom_id": smoke_atom.id,
+        "operand_index": 0,
+        "entity_id": entity.id,
+        "confidence": "high",
+        "basis": "cross-doc fixture: smoke endpoint resolution",
+        "provenance_id": final_prov.id,
+        "role_attributions": [role_attribution],
+        "schema_version": 1,
+    }
+    res_smoke_draft = Resolution(**res_smoke_payload)
+    res_smoke_payload["id"] = compute_id(res_smoke_draft)
+    substrate.add_resolution(Resolution(**res_smoke_payload))
+
+    res_cross_payload: dict[str, Any] = {
+        "id": "j-" + "1" * 16,
+        "source_id": CROSS_DOC_SOURCE_ID,
+        "atom_id": cross_atom.id,
+        "operand_index": 0,
+        "entity_id": entity.id,
+        "confidence": "high",
+        "basis": "cross-doc fixture: phase2b endpoint resolution",
+        "provenance_id": final_prov.id,
+        "role_attributions": [role_attribution],
+        "schema_version": 1,
+    }
+    res_cross_draft = Resolution(**res_cross_payload)
+    res_cross_payload["id"] = compute_id(res_cross_draft)
+    substrate.add_resolution(Resolution(**res_cross_payload))
+
+    # --- The CrossDocRelation itself ---
+    rel_payload: dict[str, Any] = {
+        "id": "x-" + "0" * 16,
+        "from_atom_id": smoke_atom.id,
+        "from_source_id": SMOKE_SOURCE_ID,
+        "to_atom_id": cross_atom.id,
+        "to_source_id": CROSS_DOC_SOURCE_ID,
+        "kind": "supports",
+        "warrant": (
+            "Both atoms describe ACME's payment obligation; the cross-doc "
+            "edge captures continuity of the obligation across the contract "
+            "and the settlement letter."
+        ),
+        "warrant_defensibility": "conventional",
+        "warrant_basis": "Two independent attestations of ACME's payment obligation.",
+        "confidence": "medium",
+        "shared_entities": [entity.id],
+        "provenance_id": final_prov.id,
+        "role_attributions": [role_attribution],
+        "schema_version": 1,
+    }
+    rel_draft = CrossDocRelation(**rel_payload)
+    rel_payload["id"] = compute_id(rel_draft)
+    substrate.add_cross_doc_relation(CrossDocRelation(**rel_payload))
+
+
 def build(workspace: Path) -> None:
     """Plant both fixture distillations under ``workspace`` (idempotent-ish).
 
@@ -442,6 +649,8 @@ def build(workspace: Path) -> None:
     # Plant one open resolution-ambiguous clarification so the T11.3
     # Playwright spec has exactly one such clarification to navigate.
     _plant_resolution_ambiguous_clarification(substrate, SMOKE_SOURCE_ID)
+    # Plant Phase 2b cross-doc fixture (T11.2 — overlay flow spec).
+    _plant_cross_doc_artifacts(substrate)
 
 
 def main() -> None:
