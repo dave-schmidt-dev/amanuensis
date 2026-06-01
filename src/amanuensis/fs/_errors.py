@@ -120,3 +120,19 @@ class SupersedeChainTooDeep(SubstrateError):
 
 class MappingVocabularyAlreadyPinned(Exception):
     """Overwrite of an existing entity-vocabulary snapshot with different content."""
+
+
+class CrossSourceConstraintViolation(SubstrateError, ValueError):
+    """Raised when a ``CrossDocRelation`` has ``from_source_id == to_source_id``.
+
+    Phase 2b cross-doc relations express warrants connecting atoms in
+    DIFFERENT distillations. An intra-source edge belongs in the Phase 1
+    ``Relation`` table (``distillations/<src>/relations/r-*.yaml``), not
+    in the workspace-level ``mappings/relations/`` directory. The
+    substrate refuses the write rather than silently corrupting the
+    cross-source partition that downstream graph queries depend on.
+
+    Inherits from both ``SubstrateError`` (so callers catching the
+    substrate base class handle it uniformly) and ``ValueError`` (so it
+    survives the natural "this is malformed input" idiom).
+    """

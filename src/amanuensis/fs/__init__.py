@@ -19,6 +19,7 @@ addressable-path checks in ``Substrate.add_*``.
 """
 
 from ._errors import (
+    CrossSourceConstraintViolation,
     MutationOfImmutableRecord,
     ResolutionDuplicateTriple,
     SourceMirrorExists,
@@ -40,6 +41,7 @@ from .substrate import Substrate
 __all__ = [
     "DEFAULT_TIMEOUT_SECONDS",
     "LOCK_FILENAME",
+    "CrossSourceConstraintViolation",
     "MutationOfImmutableRecord",
     "ReplayLog",
     "ResolutionDuplicateTriple",

@@ -31,6 +31,8 @@ from pydantic import BaseModel
 from amanuensis.schemas import (
     Atom,
     Clarification,
+    CrossDocRelation,
+    CrossDocRelationSupersede,
     Entity,
     EntitySupersede,
     IterationDirective,
@@ -284,3 +286,26 @@ def serialize_entity_supersede_yaml(es: EntitySupersede) -> str:
 def parse_entity_supersede_yaml(text: str) -> EntitySupersede:
     """Parse a plain-YAML entity-supersede file."""
     return EntitySupersede(**_safe_load(text))
+
+
+# --- Phase 2b mappings serializers ------------------------------------
+
+
+def serialize_cross_doc_relation_yaml(rel: CrossDocRelation) -> str:
+    """Serialize a CrossDocRelation to plain YAML (no body)."""
+    return _safe_dump(rel.model_dump(mode="python"))
+
+
+def parse_cross_doc_relation_yaml(text: str) -> CrossDocRelation:
+    """Parse a plain-YAML cross-doc relation file into a CrossDocRelation."""
+    return CrossDocRelation(**_safe_load(text))
+
+
+def serialize_cross_doc_relation_supersede_yaml(sup: CrossDocRelationSupersede) -> str:
+    """Serialize a CrossDocRelationSupersede to plain YAML."""
+    return _safe_dump(sup.model_dump(mode="python"))
+
+
+def parse_cross_doc_relation_supersede_yaml(text: str) -> CrossDocRelationSupersede:
+    """Parse a plain-YAML cross-doc relation supersede file."""
+    return CrossDocRelationSupersede(**_safe_load(text))

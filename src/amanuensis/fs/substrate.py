@@ -60,6 +60,8 @@ import yaml
 from amanuensis.schemas import (
     Atom,
     Clarification,
+    CrossDocRelation,
+    CrossDocRelationSupersede,
     Entity,
     EntitySupersede,
     IterationDirective,
@@ -74,6 +76,7 @@ from amanuensis.schemas import (
 
 from ._atomic import atomic_write_text
 from ._errors import (
+    CrossSourceConstraintViolation,
     MappingVocabularyAlreadyPinned,
     MutationOfImmutableRecord,
     ResolutionDuplicateTriple,
@@ -95,6 +98,7 @@ from ._serialize import (
     parse_resolution_yaml,
     serialize_atom_md,
     serialize_clarification_md,
+    serialize_cross_doc_relation_yaml,
     serialize_entity_md,
     serialize_entity_supersede_yaml,
     serialize_iteration_md,
@@ -278,7 +282,9 @@ class Substrate:
         | Entity
         | Resolution
         | ResolutionSupersede
-        | EntitySupersede,
+        | EntitySupersede
+        | CrossDocRelation
+        | CrossDocRelationSupersede,
     ) -> None:
         """Refuse to write a model whose declared id != its hash."""
         expected = compute_id(model)
@@ -581,6 +587,15 @@ class Substrate:
         """
         _validate_id_component(provenance_id, label="provenance_id")
         return self.mappings_root / "provenance" / f"{provenance_id}.yaml"
+
+    def cross_doc_relation_path(self, relation_id: str) -> Path:
+        """Canonical path for a single CrossDocRelation file (Phase 2b).
+
+        ``mappings/relations/x-<hash>.yaml``. Pure path computation; no
+        FS access.
+        """
+        _validate_id_component(relation_id, label="relation_id")
+        return self.mappings_root / "relations" / f"{relation_id}.yaml"
 
     # --- T3.3: Entity add / get / list -----------------------------------
 
@@ -1046,3 +1061,63 @@ class Substrate:
             content = f"{marker}\n\n# mappings/{subdir}/\n\n{desc}\n"
             subdir_path = self.mappings_root / subdir / "README.md"
             atomic_write_text(subdir_path, content)
+
+    # --- Phase 2b: cross-doc relation IO (M2) -----------------------------
+
+    def add_cross_doc_relation(self, rel: CrossDocRelation) -> None:
+        """Write a CrossDocRelation atomically.
+
+        Gates enforced (in order):
+
+        1. **Cross-source constraint** — refuses ``from_source_id ==
+           to_source_id``. Intra-source edges belong in Phase 1
+           ``Relation`` records under ``distillations/<src>/relations/``,
+           not the workspace-level ``mappings/relations/`` directory.
+        2. **Id discipline** — ``rel.id == compute_id(rel)`` (INV-8 path-
+           as-truth).
+        3. **INV-13 immutability** — if the canonical path exists, reads
+           and parses the on-disk record. If the canonical-form bytes are
+           byte-identical, this is a no-op (idempotent). If they differ,
+           raises ``MutationOfImmutableRecord``.
+
+        Lands the file at ``mappings/relations/<rel.id>.yaml`` via the
+        atomic-write helper (write-to-tmp-then-rename).
+
+        **INV-15 (shared-entity gate) is enforced in M3's gate test and a
+        follow-up addition to this method — M2 ships only the cross-source
+        + immutability gates.** Specifically, the requirement that every
+        id in ``shared_entities`` be resolved by BOTH endpoints (via
+        Phase 2a ``Resolution`` records) requires a Substrate cross-
+        reference that M3 wires in.
+        """
+        # Gate 1: cross-source constraint — checked BEFORE id verification
+        # so callers with malformed-but-id-matching records still get the
+        # semantic error rather than a content-hash mismatch.
+        if rel.from_source_id == rel.to_source_id:
+            raise CrossSourceConstraintViolation(
+                f"CrossDocRelation {rel.id}: from_source_id and to_source_id "
+                f"are both {rel.from_source_id!r}; cross-doc relations must "
+                f"span two distinct distillations"
+            )
+        # Gate 2: id discipline
+        self._require_id_matches(rel)
+        # Gate 3: INV-13 immutability via byte-identical compare of the
+        # canonical serialization. CrossDocRelation has volatile fields
+        # (``provenance_id``), but the canonical serializer dumps the
+        # whole model — divergent volatile content STILL counts as a
+        # mismatch here (idempotent re-write of an identical record is
+        # the only sanctioned path). Phase 2a's Entity allows volatile-
+        # only differences because its body is markdown with volatile
+        # frontmatter; CrossDocRelation is pure YAML so we treat any
+        # byte drift as a divergence.
+        path = self.cross_doc_relation_path(rel.id)
+        serialized = serialize_cross_doc_relation_yaml(rel)
+        if path.is_file():
+            existing_bytes = path.read_bytes()
+            if existing_bytes == serialized.encode("utf-8"):
+                return  # idempotent
+            raise MutationOfImmutableRecord(
+                f"CrossDocRelation at {path} already exists with different "
+                f"content; refusing to overwrite (INV-13)"
+            )
+        atomic_write_text(path, serialized)
