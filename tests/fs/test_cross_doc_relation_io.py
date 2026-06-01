@@ -232,3 +232,35 @@ def test_supersede_is_idempotent(tmp_workspace: Path, role_attribution: RoleAttr
     sup_dir = tmp_workspace / "mappings" / "supersedes"
     files = [p for p in sup_dir.iterdir() if p.is_file() and p.name.startswith("v-")]
     assert len(files) == 1
+
+
+# --- T2.5: latest_cross_doc_relation_for chain walking ---------------
+
+
+def test_latest_returns_terminal_of_chain(
+    tmp_workspace: Path, role_attribution: RoleAttribution
+) -> None:
+    sub = _new(tmp_workspace)
+    rel_old = _rel(role_attribution, warrant_basis="initial basis")
+    rel_new = _rel(role_attribution, warrant_basis="refined basis")
+    sub.add_cross_doc_relation(rel_old)
+    sub.add_cross_doc_relation(rel_new)
+    sup = _supersede(role_attribution, rel_old, rel_new)
+    sub.add_cross_doc_relation_supersede(sup)
+
+    # Walking from the superseded id returns the replacement.
+    got = sub.latest_cross_doc_relation_for(rel_old.id)
+    assert got is not None
+    assert got.id == rel_new.id
+
+    # Walking from the replacement (no further supersede) returns itself.
+    got2 = sub.latest_cross_doc_relation_for(rel_new.id)
+    assert got2 is not None
+    assert got2.id == rel_new.id
+
+
+def test_latest_returns_none_for_unknown_id(
+    tmp_workspace: Path, role_attribution: RoleAttribution
+) -> None:
+    sub = _new(tmp_workspace)
+    assert sub.latest_cross_doc_relation_for("x-notexistent00000") is None

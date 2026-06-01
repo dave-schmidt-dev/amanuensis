@@ -1236,3 +1236,75 @@ class Substrate:
         if not path.is_file():
             raise SubstrateNotFound(f"cross-doc relation supersede not found at {path}")
         return parse_cross_doc_relation_supersede_yaml(path.read_text(encoding="utf-8"))
+
+    def latest_cross_doc_relation_for(
+        self,
+        relation_id: str,
+        max_depth: int = 256,
+    ) -> CrossDocRelation | None:
+        """Walk the CrossDocRelationSupersede chain and return the terminal record.
+
+        Starting from ``relation_id``, follows
+        ``CrossDocRelationSupersede`` records (``supersedes_id`` →
+        ``superseded_by_id``) until no further supersede exists. Returns
+        the terminal ``CrossDocRelation`` if it can be loaded, else
+        ``None``.
+
+        The supersede directory ``mappings/supersedes/`` is shared with
+        Phase 2a's ``s-*`` (ResolutionSupersede) and ``t-*``
+        (EntitySupersede) records. We glob ``v-*.yaml`` so neighbouring
+        kinds are filtered out at the filesystem layer rather than at
+        parse time.
+
+        Args:
+            relation_id: Starting cross-doc relation id (``x-`` prefix).
+            max_depth: Maximum chain depth before raising
+                ``SupersedeChainTooDeep``.
+
+        Returns:
+            The terminal ``CrossDocRelation``, or ``None`` if no
+            cross-doc relation exists at ``relation_id`` (and no
+            supersede record points away from it).
+
+        Raises:
+            SupersedeCycleDetected: if the chain contains a cycle.
+            SupersedeChainTooDeep: if the chain exceeds ``max_depth``.
+        """
+        supersedes_dir = self.mappings_root / "supersedes"
+        # Build supersede map: supersedes_id → superseded_by_id, restricted
+        # to v-*.yaml records (cross-doc relation kind).
+        supersede_map: dict[str, str] = {}
+        if supersedes_dir.is_dir():
+            for path in sorted(supersedes_dir.glob("v-*.yaml")):
+                if not path.is_file():
+                    continue
+                if ".tmp." in path.name:
+                    continue
+                record = parse_cross_doc_relation_supersede_yaml(path.read_text(encoding="utf-8"))
+                supersede_map[record.supersedes_id] = record.superseded_by_id
+
+        # Walk the chain from relation_id.
+        visited: set[str] = set()
+        current_id = relation_id
+        depth = 0
+        while True:
+            if current_id in visited:
+                raise SupersedeCycleDetected(
+                    f"Supersede cycle detected at cross-doc relation {current_id!r}"
+                )
+            visited.add(current_id)
+            if depth > max_depth:
+                raise SupersedeChainTooDeep(
+                    f"Supersede chain exceeded max_depth={max_depth} (started from {relation_id!r})"
+                )
+            next_id = supersede_map.get(current_id)
+            if next_id is None:
+                # Terminal — try to load the underlying relation. Absence
+                # means the id was never written; return None to mirror
+                # ``latest_resolution_for``.
+                path = self.cross_doc_relation_path(current_id)
+                if not path.is_file():
+                    return None
+                return self._load_cross_doc_relation(path)
+            current_id = next_id
+            depth += 1
