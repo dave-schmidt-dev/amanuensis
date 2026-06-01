@@ -63,9 +63,12 @@ from pathlib import Path
 from typing import Any, Literal, cast
 
 import yaml
+from pydantic import ValidationError
 
 from amanuensis.fs import (
+    CrossSourceConstraintViolation,
     ReplayLog,
+    SharedEntityGateViolation,
     Substrate,
     SubstrateNotFound,
     SubstrateSnapshotCorrupt,
@@ -75,6 +78,7 @@ from amanuensis.schemas import (
     AgentAttribution,
     Atom,
     Clarification,
+    CrossDocRelation,
     Entity,
     OperandRef,
     ProvenanceRecord,
@@ -114,6 +118,21 @@ _MAP_ROLE_RE = re.compile(r"^(map-(?:resolve|audit))-(\w+)$")
 # strings still drive filtering / question-text prefixing per CR-7.
 _KIND_WARRANT_CONTESTED: str = "warrant-defensibility-contested"
 _KIND_VALIDATION_FAILED: str = "atom-validation-failed"
+
+# Phase 2b M4 — Connector-role reconciliation. Activity tag the
+# auto-raised ``resolution-ambiguous`` Clarification carries so a human
+# resolving the open item can recognize who raised it.
+_KIND_CONNECT_RESOLUTION_AMBIGUOUS: str = "connect-resolution-ambiguous"
+
+
+class CandidateShapeError(ValueError):
+    """Raised when a Connector candidate fails pydantic / schema validation.
+
+    The reconciler propagates this to the caller (dispatch driver) rather
+    than auto-raising a clarification — a malformed candidate is a model
+    failure, not a substrate-state ambiguity. The driver records it in
+    ``ReconcileResult.errors``.
+    """
 
 
 # --- Result dataclass --------------------------------------------------
@@ -1182,6 +1201,216 @@ def _build_resolution(
     prov = prov_draft.model_copy(update={"id": prov_id})
     resolution = resolution_draft.model_copy(update={"id": resolution_id, "provenance_id": prov_id})
     return resolution, prov
+
+
+# --- Phase 2b M4: CrossDocRelation reconciliation ----------------------
+#
+# ``_build_cross_doc_relation`` is wired into the dispatch driver in M6
+# (Phase 2b). Until then it has no in-module caller; the M4 commit lands
+# it alongside its TDD test suite (which is its only consumer right now).
+# The ``# pyright: ignore[reportUnusedFunction]`` suppresses the noise
+# this transitional state generates.
+
+
+def _build_cross_doc_relation(  # pyright: ignore[reportUnusedFunction]
+    candidate: dict[str, Any],
+    substrate: Substrate,
+    prov: ProvenanceRecord,
+    role_attributions: list[RoleAttribution],
+) -> CrossDocRelation | None:
+    """Build a ``CrossDocRelation`` from a Connector-role candidate dict.
+
+    Mirrors :func:`_build_resolution` (Phase 2a) for the validation +
+    write pattern, with one Phase 2b twist: INV-15 failures at the
+    substrate layer are NOT propagated as exceptions. Instead, the gate's
+    ``SharedEntityGateViolation`` is converted into an open
+    ``resolution-ambiguous`` Clarification raised under the from-endpoint
+    distillation, and the function returns ``None``. The Connector role
+    cannot itself add Resolutions, so the only sanctioned recovery path
+    is for a supervisor to land the missing join (then a subsequent
+    reconcile retry commits the edge — see T4.4).
+
+    Args:
+        candidate: Raw Connector output payload. Expected keys are the
+            ``CrossDocRelation`` fields excluding ``id``,
+            ``provenance_id``, ``role_attributions``, and
+            ``schema_version`` (those are stamped by this function).
+        substrate: Bound substrate handle. Used both for the INV-15
+            gate (via ``add_cross_doc_relation``) and for the
+            clarification raise (via ``add_clarification``).
+        prov: A pre-built ``ProvenanceRecord`` whose ``id`` will be
+            stamped on the relation's ``provenance_id`` field and (on
+            INV-15 failure) on the clarification's
+            ``raised_provenance_id``. The caller persists this record;
+            this function does NOT call ``add_provenance``.
+        role_attributions: Attribution audit trail attached to the
+            relation. The same list is forwarded onto the clarification
+            on the rejection path so the auditor trail stays unified.
+
+    Returns:
+        The committed ``CrossDocRelation`` on success, or ``None`` if
+        INV-15 rejected the candidate and a clarification was raised.
+
+    Raises:
+        CandidateShapeError: The candidate dict cannot be coerced into
+            a valid ``CrossDocRelation`` (pydantic validation failure)
+            OR the candidate names ``from_source_id == to_source_id``
+            (Connector should not propose intra-source edges; this is
+            shape, not state).
+        MutationOfImmutableRecord: A divergent-content collision on the
+            relation id. Idempotent re-writes of byte-identical content
+            are absorbed by the substrate; only real corruption gets
+            here.
+    """
+    # Stage 1: pydantic shape check. The candidate is model-produced YAML
+    # and may legitimately be malformed — catch ValidationError and
+    # re-raise as CandidateShapeError so the dispatch driver can route
+    # it into ``ReconcileResult.errors`` without conflating it with the
+    # other typed-error paths.
+    try:
+        rel_draft = CrossDocRelation(
+            id="x-" + "0" * 16,
+            from_atom_id=str(candidate["from_atom_id"]),
+            from_source_id=str(candidate["from_source_id"]),
+            to_atom_id=str(candidate["to_atom_id"]),
+            to_source_id=str(candidate["to_source_id"]),
+            kind=candidate["kind"],
+            warrant=str(candidate["warrant"]),
+            warrant_defensibility=candidate["warrant_defensibility"],
+            warrant_basis=str(candidate["warrant_basis"]),
+            confidence=candidate["confidence"],
+            shared_entities=[str(e) for e in candidate.get("shared_entities", [])],
+            provenance_id=prov.id,
+            role_attributions=list(role_attributions),
+            schema_version=1,
+        )
+    except (ValidationError, KeyError, TypeError) as exc:
+        raise CandidateShapeError(f"Connector candidate failed shape validation: {exc}") from exc
+
+    # Stage 2: stamp the real content-addressable id.
+    rel_id = compute_id(rel_draft)
+    rel = rel_draft.model_copy(update={"id": rel_id})
+
+    # Stage 3: hand to the substrate. The substrate enforces the
+    # cross-source constraint, the INV-15 shared-entity gate, id
+    # discipline, and INV-13 immutability — handle each typed failure
+    # per its semantic class.
+    try:
+        substrate.add_cross_doc_relation(rel)
+    except SharedEntityGateViolation:
+        # INV-15: ambiguous substrate state. Surface as a clarification
+        # for human supervision; do NOT propagate.
+        _auto_raise_resolution_clarification(
+            rel,
+            substrate=substrate,
+            prov=prov,
+            role_attributions=role_attributions,
+        )
+        return None
+    except CrossSourceConstraintViolation as exc:
+        # The Connector should never propose intra-source edges — they
+        # belong to the Phase 1 extractor surface. Treat this as a shape
+        # violation rather than a clarification-worthy ambiguity.
+        raise CandidateShapeError(
+            f"Connector proposed intra-source edge (from_source_id == to_source_id "
+            f"== {rel.from_source_id!r}); cross-doc relations must span two "
+            "distinct distillations"
+        ) from exc
+    # MutationOfImmutableRecord propagates as-is: idempotent re-writes
+    # are absorbed by add_cross_doc_relation itself, so a raised
+    # immutability error indicates real corruption (divergent content on
+    # an existing id) which a clarification cannot fix.
+
+    return rel
+
+
+def _auto_raise_resolution_clarification(
+    rel: CrossDocRelation,
+    *,
+    substrate: Substrate,
+    prov: ProvenanceRecord,
+    role_attributions: list[RoleAttribution],
+) -> None:
+    """Auto-raise a ``resolution-ambiguous`` clarification for a rejected edge.
+
+    Called by :func:`_build_cross_doc_relation` when the INV-15 gate
+    rejects a candidate. The clarification is filed under the
+    from-endpoint's distillation (``rel.from_source_id``) so a
+    supervisor browsing one source's open queue sees the edge proposal
+    without having to cross-reference the to-endpoint.
+
+    Notes:
+        - The clarification's ``raised_provenance_id`` is the SAME
+          provenance record the caller already minted for the relation
+          attempt. We do NOT call ``substrate.add_provenance(prov)``
+          here — the caller is responsible for that. M4's reconciler
+          path lives entirely under the workspace flock so a partial
+          write cannot leak.
+        - ``context_refs`` carries every referenced atom AND every
+          shared entity so a human navigator can pivot to any of them
+          from the resolved-clarification view (M8 / web UI).
+        - ``raised_by_activity`` is a Phase-2b-specific string
+          (``"connect-resolution-ambiguous"``) so per-activity
+          dashboards can distinguish Connector-raised items from the
+          Phase 2a map-audit path that also uses the
+          ``resolution-ambiguous`` kind.
+    """
+    now = datetime.now(UTC)
+    # Use the first role-attribution's agent as the "raised_by" agent —
+    # if the Connector's attribution list is empty (it shouldn't be, but
+    # defensively) fall back to a synthetic LLM stamp.
+    if role_attributions:
+        raised_by = role_attributions[0].agent
+    else:
+        raised_by = AgentAttribution(kind="llm", identifier="connect", role="connect")
+
+    # Build the context_refs list: both atoms (formatted as
+    # ``a:<source>:<atom>`` for navigability) plus every shared entity.
+    context_refs: list[str] = [
+        f"a:{rel.from_source_id}:{rel.from_atom_id}",
+        f"a:{rel.to_source_id}:{rel.to_atom_id}",
+    ]
+    for entity_id in rel.shared_entities:
+        context_refs.append(f"e:{entity_id}")
+
+    # Question text doubles as the human-readable body (the Clarification
+    # schema collapses body+question into one ``question`` field).
+    shared_entities_listing = ", ".join(rel.shared_entities) if rel.shared_entities else "(none)"
+    question = (
+        f"The Connector role proposed a cross-doc edge between atoms "
+        f"`{rel.from_atom_id}` (in `{rel.from_source_id}`) and "
+        f"`{rel.to_atom_id}` (in `{rel.to_source_id}`), referencing "
+        f"shared entities: {shared_entities_listing}. However, one or "
+        "both endpoints do not have Resolution records pointing to "
+        "these entities.\n\n"
+        "Resolve by either:\n"
+        "- Adding the missing Resolution(s) via `amanuensis map resolve` "
+        "for the unresolved endpoint, OR\n"
+        "- Marking this edge as a false positive (no action; Connector "
+        "will not retry the same candidate due to content-addressable "
+        "caching unless inputs change)."
+    )
+
+    clar_draft = Clarification(
+        id="c-" + "0" * 16,
+        status="open",
+        kind="resolution-ambiguous",
+        raised_at=now,
+        raised_by=raised_by,
+        raised_by_activity=_KIND_CONNECT_RESOLUTION_AMBIGUOUS,
+        context_refs=context_refs,
+        question=question,
+        options=None,
+        resolved_at=None,
+        resolved_by=None,
+        resolution=None,
+        raised_provenance_id=prov.id,
+        resolved_provenance_id=None,
+        schema_version=2,
+    )
+    clar_id = compute_id(clar_draft)
+    clar = clar_draft.model_copy(update={"id": clar_id})
+    substrate.add_clarification(rel.from_source_id, clar)
 
 
 def _append_mappings_replay(

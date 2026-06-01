@@ -49,6 +49,7 @@ class AgentAttribution(BaseModel):
         "human_supervisor",
         "map-resolve",
         "map-audit",
+        "connect",
     ]
 
 

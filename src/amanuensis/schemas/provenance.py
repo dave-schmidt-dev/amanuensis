@@ -59,6 +59,8 @@ class ProvenanceRecord(BaseModel):
         "resolution",
         "resolution-supersede",
         "entity-supersede",
+        "cross-doc-relation",
+        "cross-doc-relation-supersede",
     ]
     entity_id: str
 
