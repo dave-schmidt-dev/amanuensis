@@ -91,6 +91,7 @@ from ._errors import (
 )
 from ._serialize import (
     parse_atom_md,
+    parse_cross_doc_relation_supersede_yaml,
     parse_cross_doc_relation_yaml,
     parse_entity_md,
     parse_entity_supersede_yaml,
@@ -99,6 +100,7 @@ from ._serialize import (
     parse_resolution_yaml,
     serialize_atom_md,
     serialize_clarification_md,
+    serialize_cross_doc_relation_supersede_yaml,
     serialize_cross_doc_relation_yaml,
     serialize_entity_md,
     serialize_entity_supersede_yaml,
@@ -1196,3 +1198,41 @@ class Substrate:
             if shared_entity is not None and shared_entity not in rel.shared_entities:
                 continue
             yield rel
+
+    def add_cross_doc_relation_supersede(self, sup: CrossDocRelationSupersede) -> None:
+        """Write a CrossDocRelationSupersede record atomically.
+
+        Mirrors ``add_resolution_supersede`` / ``add_entity_supersede``.
+        Lands under ``mappings/supersedes/<sup.id>.yaml`` — the same
+        shared directory used by Phase 2a's ``s-`` (ResolutionSupersede)
+        and ``t-`` (EntitySupersede) records. Records are distinguished
+        by id-prefix and by the ``kind`` discriminator on the record
+        itself (``"cross-doc-relation"`` here, ``"resolution"`` /
+        ``"entity"`` for Phase 2a).
+
+        Gates enforced:
+
+        1. **Id discipline** — ``sup.id == compute_id(sup)``.
+        2. **INV-13 immutability** — if the canonical path exists, reads
+           the existing bytes. If byte-identical, no-op (idempotent). If
+           divergent, raises ``MutationOfImmutableRecord``.
+        """
+        self._require_id_matches(sup)
+        path = self.supersede_path(sup.id)
+        serialized = serialize_cross_doc_relation_supersede_yaml(sup)
+        if path.is_file():
+            existing_bytes = path.read_bytes()
+            if existing_bytes == serialized.encode("utf-8"):
+                return  # idempotent
+            raise MutationOfImmutableRecord(
+                f"CrossDocRelationSupersede at {path} already exists with "
+                f"different content; refusing to overwrite (INV-13)"
+            )
+        atomic_write_text(path, serialized)
+
+    def get_cross_doc_relation_supersede(self, supersede_id: str) -> CrossDocRelationSupersede:
+        """Read and return a CrossDocRelationSupersede by its id."""
+        path = self.supersede_path(supersede_id)
+        if not path.is_file():
+            raise SubstrateNotFound(f"cross-doc relation supersede not found at {path}")
+        return parse_cross_doc_relation_supersede_yaml(path.read_text(encoding="utf-8"))

@@ -24,6 +24,7 @@ from amanuensis.fs import (
 )
 from amanuensis.schemas import (
     CrossDocRelation,
+    CrossDocRelationSupersede,
     RoleAttribution,
     compute_id,
 )
@@ -61,6 +62,32 @@ def _rel(role_attribution: RoleAttribution, **overrides: Any) -> CrossDocRelatio
     draft = CrossDocRelation(**payload)
     payload["id"] = compute_id(draft)
     return CrossDocRelation(**payload)
+
+
+def _supersede(
+    role_attribution: RoleAttribution,
+    old_rel: CrossDocRelation,
+    new_rel: CrossDocRelation,
+    **overrides: Any,
+) -> CrossDocRelationSupersede:
+    """Build a CrossDocRelationSupersede whose id matches ``compute_id``."""
+    from datetime import UTC, datetime
+
+    payload: dict[str, Any] = {
+        "id": "v-" + "0" * 16,
+        "supersedes_id": old_rel.id,
+        "superseded_by_id": new_rel.id,
+        "kind": "cross-doc-relation",
+        "reason": "Supervisor refined warrant.",
+        "provenance_id": "p-fixture-cdrsup-001",
+        "role_attributions": [role_attribution],
+        "at": datetime(2026, 5, 31, 22, 0, 0, tzinfo=UTC),
+        "schema_version": 1,
+    }
+    payload.update(overrides)
+    draft = CrossDocRelationSupersede(**payload)
+    payload["id"] = compute_id(draft)
+    return CrossDocRelationSupersede(**payload)
 
 
 # --- T2.1: happy-path write ------------------------------------------
@@ -171,3 +198,37 @@ def test_list_cross_doc_relations_filters_by_shared_entity(
 
     result = list(sub.list_cross_doc_relations(shared_entity="e-smith"))
     assert {r.id for r in result} == {rel_smith.id, rel_both.id}
+
+
+# --- T2.4: add_cross_doc_relation_supersede --------------------------
+
+
+def test_add_supersede_writes_to_mappings_supersedes(
+    tmp_workspace: Path, role_attribution: RoleAttribution
+) -> None:
+    sub = _new(tmp_workspace)
+    rel_old = _rel(role_attribution)
+    rel_new = _rel(role_attribution, warrant_basis="refined basis")
+    sub.add_cross_doc_relation(rel_old)
+    sub.add_cross_doc_relation(rel_new)
+
+    sup = _supersede(role_attribution, rel_old, rel_new)
+    sub.add_cross_doc_relation_supersede(sup)
+    path = tmp_workspace / "mappings" / "supersedes" / f"{sup.id}.yaml"
+    assert path.is_file()
+    assert sup.id.startswith("v-")
+
+
+def test_supersede_is_idempotent(tmp_workspace: Path, role_attribution: RoleAttribution) -> None:
+    sub = _new(tmp_workspace)
+    rel_old = _rel(role_attribution)
+    rel_new = _rel(role_attribution, warrant_basis="refined basis")
+    sub.add_cross_doc_relation(rel_old)
+    sub.add_cross_doc_relation(rel_new)
+    sup = _supersede(role_attribution, rel_old, rel_new)
+    sub.add_cross_doc_relation_supersede(sup)
+    # Identical re-write: must not raise.
+    sub.add_cross_doc_relation_supersede(sup)
+    sup_dir = tmp_workspace / "mappings" / "supersedes"
+    files = [p for p in sup_dir.iterdir() if p.is_file() and p.name.startswith("v-")]
+    assert len(files) == 1
