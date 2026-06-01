@@ -127,3 +127,21 @@ def test_clarification_kind_required(
     clarification_payload.pop("kind", None)
     with pytest.raises(ValidationError):
         Clarification(**clarification_payload)
+
+
+def test_clarification_kind_lineage_incomplete(
+    clarification_payload: dict[str, Any],
+) -> None:
+    """Phase 2c T6.1: ``lineage-incomplete`` is a recognised kind."""
+    clarification_payload["kind"] = "lineage-incomplete"
+    c = Clarification(**clarification_payload)
+    assert c.kind == "lineage-incomplete"
+
+
+def test_clarification_kind_scheme_missing(
+    clarification_payload: dict[str, Any],
+) -> None:
+    """Phase 2c T6.1: ``scheme-missing`` is a recognised kind."""
+    clarification_payload["kind"] = "scheme-missing"
+    c = Clarification(**clarification_payload)
+    assert c.kind == "scheme-missing"

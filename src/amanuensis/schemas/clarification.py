@@ -58,6 +58,8 @@ class Clarification(BaseModel):
         "warrant-defensibility-contested",
         "resolution-disputed",
         "resolution-ambiguous",
+        "lineage-incomplete",
+        "scheme-missing",
     ]
     raised_at: AwareDatetime
     raised_by: AgentAttribution
