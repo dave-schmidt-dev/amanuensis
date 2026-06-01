@@ -319,6 +319,64 @@ Status legend: `active` (gate enforced) | `near-threshold` (warn) | `waived` (ex
   relation traceable from atoms through resolutions through entities, which
   is the structural backbone of cross-document reasoning.
 
+## INV-16 — Probandum hierarchy is a tree (no cycles, no multi-parent)
+
+- **Status:** active (gated)
+- **Established:** 2026-06-01 (Phase 2c M4)
+- **Property:** The directed graph induced by `ProbandumEdge` records with
+  `child_kind == "probandum"` MUST be a tree. Concretely: (a) the graph is
+  acyclic — walking parent-to-child via probandum-only edges from any node
+  reaches a leaf set (atoms / cross-doc relations / probanda with no
+  outgoing edges) in finite steps; and (b) every non-root probandum has
+  exactly one PARENT (the set of parents of any given child is a
+  singleton). Parallel edges from the SAME parent to the SAME child
+  (different `kind` / `warrant`) remain legal because the parent set is
+  still a singleton. Attempting to write a `ProbandumEdge` whose
+  parent-to-child relation would close a cycle, would self-loop, or would
+  give the child a second distinct parent raises
+  `ProbandumTreeViolation` at `Substrate.add_probandum_edge`.
+  Superseded edges are excluded from both checks — they represent
+  retracted state and cannot anchor or break tree-shape.
+- **Gate test:** `tests/invariants/test_probandum_tree.py` — five cases:
+  (1) a clean tree (`ult → pen → interim`) passes; (2) a planted
+  self-loop edge (`p → p`) is caught; (3) a planted two-cycle
+  (`ult → pen` AND `pen → ult`) is caught; (4) a planted three-cycle
+  (`a → b → c → a`) is caught; (5) a clean 10-deep linear chain passes.
+- **Rationale:** Wigmore trees are trees; cycles would make lineage
+  walking non-terminating and provenance attribution ambiguous. The
+  spec's "acyclic" wording (§INV-16) and "tree" risk language
+  (§Risks #1) are reconciled by enforcing the stronger discipline
+  (tree, not DAG), because Wigmore semantics rely on a single canonical
+  lineage per probandum — DAG-with-duplicated-subtrees is the sanctioned
+  way to express multi-lineage participation.
+
+## INV-17 — Probandum lineage completes to an `ultimate`
+
+- **Status:** active (gated)
+- **Established:** 2026-06-01 (Phase 2c M4)
+- **Property:** Every probandum-edge's `parent_probandum_id` MUST trace
+  upward through INCOMING probandum-edges (where the parent is the
+  `child_id` of some earlier edge with `child_kind == "probandum"`) to
+  at least one `Probandum` with `kind == "ultimate"`. An `ultimate`
+  probandum trivially satisfies the gate (it IS the lineage terminus).
+  Substrate enforces this at write-time: a proposed edge whose parent
+  is itself a non-ultimate with no path to an ultimate raises
+  `LineageIncomplete` at `Substrate.add_probandum_edge`. The walk is
+  depth-capped at 100 (defensive) and excludes superseded edges.
+- **Gate test:** `tests/invariants/test_probandum_lineage.py` — four
+  cases: (1) a clean tree with full lineage passes; (2) an orphan
+  interim probandum (parent has no incoming edge) is caught;
+  (3) a penultimate parent with no incoming edge from an ultimate is
+  caught; (4) a chain whose top node is a `penultimate` rather than
+  an `ultimate` is caught.
+- **Rationale:** matches the synthesis-doc "probandum lineage check"
+  verification step. Findings without an ultimate-rooted lineage are
+  not part of the engagement's answer — they are unresolved sub-trees
+  that the supervisor still owes a connection for. Enforcing the gate
+  at write-time forces operators to author the tree top-down (ultimate
+  first, then penultimates linking to it, then interim levels) rather
+  than accumulating dangling sub-trees.
+
 ## INV-18 — Closed Walton-scheme vocabulary
 
 - **Status:** active (gated)
