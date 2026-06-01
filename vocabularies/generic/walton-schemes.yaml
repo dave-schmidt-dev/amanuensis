@@ -1,0 +1,22 @@
+# vocabularies/generic/walton-schemes.yaml
+#
+# Generic seed catalogue of Walton argument schemes (Walton/Reed/Macagno
+# 2008). Pinned per engagement via `amanuensis map walton-scheme snapshot`
+# into `mappings/walton-scheme-snapshot.yaml`. INV-18 enforces closed-
+# vocabulary discipline at probandum write-time against the snapshot.
+version: 1
+schemes:
+  - name: argument-from-expert-opinion
+    description: An expert E asserts proposition P; therefore P (Walton/Reed/Macagno 2008).
+  - name: argument-from-witness-testimony
+    description: A witness W reports observing event E; therefore E occurred.
+  - name: argument-from-temporal-correlation
+    description: Event A preceded event B; therefore A caused or enabled B.
+  - name: argument-from-cluster-heuristic
+    description: Entity X shares cluster-defining attributes with class C; therefore X belongs to C.
+  - name: argument-from-precedent
+    description: Decision D held P in case C; the current case is similar to C; therefore P.
+  - name: argument-from-analogy
+    description: Cases C1 and C2 share property X; C1 has property Y; therefore C2 likely has Y.
+  - name: argument-from-sign
+    description: Sign S typically indicates condition T; S is observed; therefore T likely holds.
