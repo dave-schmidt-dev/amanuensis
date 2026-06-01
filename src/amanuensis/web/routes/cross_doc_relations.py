@@ -22,16 +22,72 @@ Read-only per Phase 2b spec: supersedes are CLI-only (no POST endpoint).
 
 from __future__ import annotations
 
-from typing import Annotated
+from dataclasses import dataclass
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import HTMLResponse
 
 from amanuensis.fs import Substrate
+from amanuensis.fs._serialize import parse_cross_doc_relation_supersede_yaml
 
 from ..dependencies import get_substrate
 
 router = APIRouter()
+
+
+@dataclass
+class _SupersedeChainEntry:
+    """One line in the supersede-chain section on the detail page.
+
+    ``direction='forward'`` means *this* relation has been superseded by
+    ``other_id`` (rendered as "Superseded by <other>"). ``'backward'``
+    means *this* relation supersedes ``other_id`` (rendered as
+    "Supersedes <other>"). ``reason`` is the supervisor's free-text
+    explanation from the ``CrossDocRelationSupersede`` record.
+    """
+
+    direction: Literal["forward", "backward"]
+    other_id: str
+    reason: str
+
+
+def _walk_supersede_chain(
+    substrate: Substrate,
+    relation_id: str,
+) -> list[_SupersedeChainEntry]:
+    """Return both forward and backward supersede neighbours for ``relation_id``.
+
+    Mirrors the CLI ``map relation show`` logic (see
+    ``amanuensis/cli/map.py``). The supersedes directory is shared with
+    Phase 2a's ``s-*`` and ``t-*`` records; cross-doc relation
+    supersedes are namespaced ``v-*.yaml``.
+    """
+    supersedes_dir = substrate.mappings_root / "supersedes"
+    entries: list[_SupersedeChainEntry] = []
+    if not supersedes_dir.is_dir():
+        return entries
+    for path in sorted(supersedes_dir.glob("v-*.yaml")):
+        if not path.is_file() or ".tmp." in path.name:
+            continue
+        record = parse_cross_doc_relation_supersede_yaml(path.read_text(encoding="utf-8"))
+        if record.supersedes_id == relation_id:
+            entries.append(
+                _SupersedeChainEntry(
+                    direction="forward",
+                    other_id=record.superseded_by_id,
+                    reason=record.reason,
+                )
+            )
+        if record.superseded_by_id == relation_id:
+            entries.append(
+                _SupersedeChainEntry(
+                    direction="backward",
+                    other_id=record.supersedes_id,
+                    reason=record.reason,
+                )
+            )
+    return entries
 
 
 @router.get("/cross-doc-relations", response_class=HTMLResponse)
@@ -131,9 +187,7 @@ async def cross_doc_relation_detail(
         )
     relation = substrate._load_cross_doc_relation(path)  # pyright: ignore[reportPrivateUsage]
 
-    # Supersede-chain entries land in T8.3; pass an empty list now so the
-    # template's chain section renders the "(no supersede chain)" branch.
-    chain_entries: list[object] = []
+    chain_entries = _walk_supersede_chain(substrate, relation_id)
 
     templates = request.app.state.templates
     response = templates.TemplateResponse(  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType,reportReturnType]

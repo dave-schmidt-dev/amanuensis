@@ -1,4 +1,4 @@
-"""Web route tests for cross-doc relations (Phase 2b M8 T8.1+T8.2)."""
+"""Web route tests for cross-doc relations (Phase 2b M8 T8.1 - T8.3)."""
 
 # pyright: reportPrivateUsage=false
 
@@ -180,3 +180,60 @@ def test_detail_route_404(
     client = TestClient(web_app)
     response = client.get("/cross-doc-relations/x-nonexistent00000")
     assert response.status_code == 404
+
+
+def test_detail_route_no_supersede_chain(
+    tmp_workspace_with_two_cross_doc_relations: Path,
+    web_app: FastAPI,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A relation with no supersede record renders the empty-chain branch."""
+    monkeypatch.setenv("AMANUENSIS_WORKSPACE", str(tmp_workspace_with_two_cross_doc_relations))
+    sub = Substrate(tmp_workspace_with_two_cross_doc_relations)
+    rel = next(iter(sub.list_cross_doc_relations()))
+    client = TestClient(web_app)
+    response = client.get(f"/cross-doc-relations/{rel.id}")
+    assert response.status_code == 200
+    assert "(no supersede chain)" in response.text
+
+
+# ---------------------------------------------------------------------------
+# T8.3 — Supersede chain rendering on detail page
+# ---------------------------------------------------------------------------
+
+
+def test_detail_shows_supersede_chain(
+    tmp_workspace_with_cross_doc_supersede_chain: tuple[Path, str, str],
+    web_app: FastAPI,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Old → New chain renders 'superseded' on old and 'supersedes' on new."""
+    workspace, old_id, new_id = tmp_workspace_with_cross_doc_supersede_chain
+    monkeypatch.setenv("AMANUENSIS_WORKSPACE", str(workspace))
+    client = TestClient(web_app)
+
+    response_old = client.get(f"/cross-doc-relations/{old_id}")
+    assert response_old.status_code == 200
+    assert "superseded" in response_old.text.lower()
+    # old must link to new in the supersede section.
+    assert f"/cross-doc-relations/{new_id}" in response_old.text
+
+    response_new = client.get(f"/cross-doc-relations/{new_id}")
+    assert response_new.status_code == 200
+    assert "supersedes" in response_new.text.lower()
+    # new must link back to old.
+    assert f"/cross-doc-relations/{old_id}" in response_new.text
+
+
+def test_detail_supersede_chain_renders_reason(
+    tmp_workspace_with_cross_doc_supersede_chain: tuple[Path, str, str],
+    web_app: FastAPI,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The supervisor's reason text is rendered inline with the chain entry."""
+    workspace, old_id, _new_id = tmp_workspace_with_cross_doc_supersede_chain
+    monkeypatch.setenv("AMANUENSIS_WORKSPACE", str(workspace))
+    client = TestClient(web_app)
+    response = client.get(f"/cross-doc-relations/{old_id}")
+    assert response.status_code == 200
+    assert "fixture supersede for M8 T8.3" in response.text
