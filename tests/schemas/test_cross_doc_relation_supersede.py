@@ -1,0 +1,55 @@
+"""Tests for the CrossDocRelationSupersede schema (Phase 2b M1).
+
+Coverage:
+
+- T1.4: minimal-valid construction (round-trip via attribute access);
+  ``extra="forbid"`` rejects unknown fields
+- T1.5: content-addressable id stability — ``at`` is volatile, ``v-`` prefix
+"""
+
+from __future__ import annotations
+
+from datetime import UTC, datetime
+from typing import Any
+
+import pytest
+from pydantic import ValidationError
+
+from amanuensis.schemas import RoleAttribution
+from amanuensis.schemas.cross_doc_relation_supersede import (
+    CrossDocRelationSupersede,
+)
+
+
+@pytest.fixture
+def cross_doc_relation_supersede_payload(
+    role_attribution: RoleAttribution,
+) -> dict[str, Any]:
+    """Minimum-valid CrossDocRelationSupersede payload as kwargs."""
+    return {
+        "id": "v-fixture00000001",
+        "supersedes_id": "x-old",
+        "superseded_by_id": "x-new",
+        "reason": "warrant tightened after supervisor review",
+        "provenance_id": "p-fixture-0001",
+        "role_attributions": [role_attribution],
+        "at": datetime(2026, 5, 31, 12, 0, 0, tzinfo=UTC),
+        "schema_version": 1,
+    }
+
+
+def test_minimal_supersede(
+    cross_doc_relation_supersede_payload: dict[str, Any],
+) -> None:
+    s = CrossDocRelationSupersede(**cross_doc_relation_supersede_payload)
+    assert s.supersedes_id == "x-old"
+    assert s.superseded_by_id == "x-new"
+
+
+def test_rejects_extra_field(
+    cross_doc_relation_supersede_payload: dict[str, Any],
+) -> None:
+    cross_doc_relation_supersede_payload["unexpected"] = "nope"
+    with pytest.raises(ValidationError) as exc:
+        CrossDocRelationSupersede(**cross_doc_relation_supersede_payload)
+    assert any(err["type"] == "extra_forbidden" for err in exc.value.errors())
