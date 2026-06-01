@@ -2366,3 +2366,66 @@ def probandum_add_command(
         raise typer.Exit(code=2) from exc
 
     typer.echo(prob.id)
+
+
+def _format_probandum_line(p: Probandum) -> str:
+    """Render a single ``map probandum list`` line.
+
+    Mirrors ``_format_cross_doc_relation_line``: id-prefixed,
+    space-separated key=value pairs for grep-ability, with a truncated
+    statement excerpt so wide statements do not blow up the terminal.
+    """
+    excerpt = p.statement.strip().splitlines()[0] if p.statement.strip() else ""
+    if len(excerpt) > 80:
+        excerpt = excerpt[:77] + "..."
+    return f"{p.id}  kind={p.kind}  scheme={p.scheme}  {excerpt}"
+
+
+@probandum_app.command("list")
+@require_marker
+def probandum_list_command(
+    kind: Annotated[
+        str | None,
+        typer.Option(
+            "--kind",
+            help="Filter to probanda of the given kind (ultimate / penultimate / interim).",
+        ),
+    ] = None,
+    scheme: Annotated[
+        str | None,
+        typer.Option(
+            "--scheme",
+            help="Filter to probanda using the given Walton-scheme id.",
+        ),
+    ] = None,
+    workspace: Annotated[
+        Path | None,
+        typer.Option(
+            "--workspace",
+            "-w",
+            help="Workspace root (must contain amanuensis.yaml). Defaults to CWD.",
+        ),
+    ] = None,
+) -> None:
+    """List Probandum records in the workspace (read-only; T9.2).
+
+    Filters compose with AND semantics. Render order is lexicographic
+    by id (the substrate's natural directory walk).
+    """
+    from typing import Literal, cast
+
+    workspace_path = workspace_from_kwargs({"workspace": workspace})
+    substrate = Substrate(workspace_path)
+
+    if kind is not None and kind not in {"ultimate", "penultimate", "interim"}:
+        typer.secho(
+            f"--kind must be one of ultimate/penultimate/interim, got '{kind}'",
+            err=True,
+        )
+        raise typer.Exit(code=2)
+
+    kind_lit = (
+        cast("Literal['ultimate', 'penultimate', 'interim']", kind) if kind is not None else None
+    )
+    for p in substrate.list_probanda(kind=kind_lit, scheme=scheme):
+        typer.echo(_format_probandum_line(p))
