@@ -47,6 +47,8 @@ VALID_ROLES: tuple[str, ...] = (
     "map-audit",
     # Phase 2b M5 — Connector role.
     "connect",
+    # Phase 2c M7 — Hierarchize role.
+    "hierarchize",
 )
 
 

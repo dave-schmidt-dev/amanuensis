@@ -61,6 +61,10 @@ class ProvenanceRecord(BaseModel):
         "entity-supersede",
         "cross-doc-relation",
         "cross-doc-relation-supersede",
+        "probandum",
+        "probandum-edge",
+        "probandum-supersede",
+        "probandum-edge-supersede",
     ]
     entity_id: str
 

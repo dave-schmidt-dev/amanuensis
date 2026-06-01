@@ -50,6 +50,7 @@ class AgentAttribution(BaseModel):
         "map-resolve",
         "map-audit",
         "connect",
+        "hierarchize",
     ]
 
 

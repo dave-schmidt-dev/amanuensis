@@ -104,6 +104,8 @@ _DEFAULT_ROLE_TO_HARNESS: dict[str, str] = {
     "map-audit": "claude",
     # Phase 2b M5 — Connector role (proposes cross-doc relations).
     "connect": "claude",
+    # Phase 2c M7 — Hierarchize role (proposes interim probanda + edges).
+    "hierarchize": "claude",
 }
 
 

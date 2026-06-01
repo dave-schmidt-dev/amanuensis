@@ -1638,13 +1638,11 @@ def _auto_raise_scheme_clarification(
     if role_attributions:
         raised_by = role_attributions[0].agent
     else:
-        # The Phase 2c "hierarchize" role is not yet present in the
-        # ``AgentAttribution.role`` Literal (a separate brief owns that
-        # extension), so fall back to the closest existing role
-        # (``"auditor"``) for the synthetic stamp. Production callers
-        # always pass a non-empty ``role_attributions`` list so this
-        # branch is defensive-only.
-        raised_by = AgentAttribution(kind="llm", identifier="hierarchize", role="auditor")
+        # T7.3 added "hierarchize" to the ``AgentAttribution.role``
+        # Literal; the synthetic stamp can now name the real role.
+        # Production callers always pass a non-empty
+        # ``role_attributions`` list so this branch is defensive-only.
+        raised_by = AgentAttribution(kind="llm", identifier="hierarchize", role="hierarchize")
 
     # Truncate the statement so the context_refs entry stays compact in
     # the on-disk markdown (the full statement is reachable via the
@@ -1796,13 +1794,11 @@ def _auto_raise_lineage_clarification(
     if role_attributions:
         raised_by = role_attributions[0].agent
     else:
-        # The Phase 2c "hierarchize" role is not yet present in the
-        # ``AgentAttribution.role`` Literal (a separate brief owns that
-        # extension), so fall back to the closest existing role
-        # (``"auditor"``) for the synthetic stamp. Production callers
-        # always pass a non-empty ``role_attributions`` list so this
-        # branch is defensive-only.
-        raised_by = AgentAttribution(kind="llm", identifier="hierarchize", role="auditor")
+        # T7.3 added "hierarchize" to the ``AgentAttribution.role``
+        # Literal; the synthetic stamp can now name the real role.
+        # Production callers always pass a non-empty
+        # ``role_attributions`` list so this branch is defensive-only.
+        raised_by = AgentAttribution(kind="llm", identifier="hierarchize", role="hierarchize")
 
     # child_kind[:1] dispatches to a single-char prefix:
     #   p:<id> for probandum, a:<id> for atom, c:<id> for cross-doc-relation.

@@ -21,6 +21,8 @@ from amanuensis.cli.dispatch import _DEFAULT_ROLE_TO_HARNESS  # pyright: ignore[
         "map-audit",
         # Phase 2b M5 — Connector role.
         "connect",
+        # Phase 2c M7 — Hierarchize role.
+        "hierarchize",
     ],
 )
 def test_role_routes_to_claude(role: str) -> None:
@@ -50,3 +52,16 @@ def test_connect_role_in_table() -> None:
     """
     assert "connect" in _DEFAULT_ROLE_TO_HARNESS
     assert _DEFAULT_ROLE_TO_HARNESS["connect"] == "claude"
+
+
+def test_hierarchize_role_in_table() -> None:
+    """The Phase 2c Hierarchize role is registered in the routing table.
+
+    The dispatch driver routes by ``entry.role``; ``hierarchize`` is
+    the Phase 2c string the orchestrator (Phase 2c M8, future) will
+    enqueue. Roles missing from this table route to failures with
+    reason ``role-unmapped``, so the presence assertion is the
+    dispatch-side acceptance test for T7.3.
+    """
+    assert "hierarchize" in _DEFAULT_ROLE_TO_HARNESS
+    assert _DEFAULT_ROLE_TO_HARNESS["hierarchize"] == "claude"
