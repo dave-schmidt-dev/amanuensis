@@ -292,3 +292,29 @@ Status legend: `active` (gate enforced) | `near-threshold` (warn) | `waived` (ex
   accumulate conflicting resolutions silently. The supersede protocol provides a
   structured correction path while the duplicate guard makes concurrent or
   replayed writes safe.
+
+## INV-15 — Cross-doc edges are grounded in shared resolved entities
+
+- **Status:** active (gated)
+- **Established:** 2026-05-31 (Phase 2b M3)
+- **Property:** Every `CrossDocRelation` written to `mappings/relations/` must
+  declare a non-empty `shared_entities` list, and every listed entity id must
+  (a) exist as an `Entity` record under `mappings/entities/` (chain-walked to
+  its terminus via `latest_entity_for`) AND (b) be resolved by BOTH endpoint
+  atoms via Phase 2a `Resolution` records. Substrate `add_cross_doc_relation`
+  enforces this at write-time; the invariant gate test re-runs the check
+  against every on-disk cross-doc relation to catch records that bypassed the
+  substrate (e.g., manually authored YAML). Violations raise
+  `SharedEntityGateViolation`.
+- **Gate test:** `tests/invariants/test_cross_doc_shared_entity.py` — five
+  cases: (1) a workspace with bilateral resolutions and one valid edge passes;
+  (2) a relation with `shared_entities: []` is caught; (3) a relation
+  referencing an entity id with no on-disk Entity record is caught;
+  (4) a relation whose from-endpoint lacks a Resolution to the shared entity
+  is caught; (5) the to-endpoint mirror is caught.
+- **Rationale:** Cross-doc edges with no shared resolved entity are
+  ungrounded — there is no evidence in the substrate that the two atoms refer
+  to the same real-world thing, so any warrant connecting them is hollow.
+  Enforcing the gate at write-time AND at audit-time keeps every cross-doc
+  relation traceable from atoms through resolutions through entities, which
+  is the structural backbone of cross-document reasoning.
