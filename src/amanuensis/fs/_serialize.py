@@ -38,6 +38,7 @@ from amanuensis.schemas import (
     IterationDirective,
     ParagraphEntry,
     Probandum,
+    ProbandumEdge,
     ProvenanceRecord,
     Relation,
     Resolution,
@@ -330,3 +331,13 @@ def serialize_probandum_md(p: Probandum) -> str:
 def parse_probandum_md(text: str) -> Probandum:
     """Parse a frontmatter-bearing probandum .md file back into a Probandum."""
     return Probandum(**_parse_md(text, "statement"))
+
+
+def serialize_probandum_edge_yaml(edge: ProbandumEdge) -> str:
+    """Serialize a ProbandumEdge to plain YAML (no body)."""
+    return _safe_dump(edge.model_dump(mode="python"))
+
+
+def parse_probandum_edge_yaml(text: str) -> ProbandumEdge:
+    """Parse a plain-YAML probandum-edge file into a ProbandumEdge."""
+    return ProbandumEdge(**_safe_load(text))

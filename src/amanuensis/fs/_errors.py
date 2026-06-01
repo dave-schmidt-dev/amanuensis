@@ -154,6 +154,29 @@ class AchAlternativesGateViolation(SubstrateError, ValueError):
     """
 
 
+class ParentProbandumMissing(SubstrateError, ValueError):
+    """Raised when a ``ProbandumEdge``'s ``parent_probandum_id`` has no
+    on-disk Probandum at ``mappings/probanda/<id>.md``.
+
+    Edges anchor against an existing parent; if the parent isn't on disk
+    the substrate refuses to write rather than create a dangling ref.
+
+    Inherits from both ``SubstrateError`` and ``ValueError``.
+    """
+
+
+class EdgeChildMissing(SubstrateError, ValueError):
+    """Raised when a ``ProbandumEdge``'s child target has no on-disk record.
+
+    Depending on ``child_kind`` the target lives at:
+    - ``"probandum"`` → ``mappings/probanda/<id>.md``
+    - ``"atom"`` → ``distillations/<source>/atoms/<id>.md``
+    - ``"cross-doc-relation"`` → ``mappings/relations/<id>.yaml``
+
+    Inherits from both ``SubstrateError`` and ``ValueError``.
+    """
+
+
 class SharedEntityGateViolation(SubstrateError, ValueError):
     """Raised when a CrossDocRelation fails the INV-15 shared-entity gate.
 

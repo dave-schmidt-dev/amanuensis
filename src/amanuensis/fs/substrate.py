@@ -66,6 +66,7 @@ from amanuensis.schemas import (
     EntitySupersede,
     IterationDirective,
     Probandum,
+    ProbandumEdge,
     ProvenanceRecord,
     Relation,
     Resolution,
@@ -79,8 +80,10 @@ from ._atomic import atomic_write_text
 from ._errors import (
     AchAlternativesGateViolation,
     CrossSourceConstraintViolation,
+    EdgeChildMissing,
     MappingVocabularyAlreadyPinned,
     MutationOfImmutableRecord,
+    ParentProbandumMissing,
     ResolutionDuplicateTriple,
     SharedEntityGateViolation,
     SubstrateIdMismatch,
@@ -98,6 +101,7 @@ from ._serialize import (
     parse_cross_doc_relation_yaml,
     parse_entity_md,
     parse_entity_supersede_yaml,
+    parse_probandum_edge_yaml,
     parse_probandum_md,
     parse_provenance_yaml,
     parse_resolution_supersede_yaml,
@@ -109,6 +113,7 @@ from ._serialize import (
     serialize_entity_md,
     serialize_entity_supersede_yaml,
     serialize_iteration_md,
+    serialize_probandum_edge_yaml,
     serialize_probandum_md,
     serialize_resolution_supersede_yaml,
     serialize_resolution_yaml,
@@ -293,7 +298,8 @@ class Substrate:
         | EntitySupersede
         | CrossDocRelation
         | CrossDocRelationSupersede
-        | Probandum,
+        | Probandum
+        | ProbandumEdge,
     ) -> None:
         """Refuse to write a model whose declared id != its hash."""
         expected = compute_id(model)
@@ -1542,3 +1548,98 @@ class Substrate:
             emitted += 1
             if limit is not None and emitted >= limit:
                 return
+
+    def probandum_edge_path(self, edge_id: str) -> Path:
+        """Canonical path for a single ProbandumEdge file.
+
+        ``mappings/probandum-edges/<q-hash>.yaml``. Pure path computation;
+        no FS access.
+        """
+        _validate_id_component(edge_id, label="edge_id")
+        return self.mappings_root / "probandum-edges" / f"{edge_id}.yaml"
+
+    def add_probandum_edge(self, edge: ProbandumEdge) -> Path:
+        """Write a ProbandumEdge atomically.
+
+        Gates enforced (in order):
+
+        1. **Parent existence gate** — ``edge.parent_probandum_id`` must
+           exist in ``mappings/probanda/`` (direct file check here; M2.5
+           will refactor to chain-walk via ``latest_probandum_for``).
+           Raises ``ParentProbandumMissing``.
+        2. **Child existence gate** — depending on ``edge.child_kind``:
+           - ``"probandum"`` → must exist in ``mappings/probanda/``.
+           - ``"atom"`` → must exist at
+             ``distillations/<child_source_id>/atoms/<child_id>.md``.
+           - ``"cross-doc-relation"`` → must exist in
+             ``mappings/relations/<child_id>.yaml``.
+           Raises ``EdgeChildMissing``.
+        3. **Id discipline** — ``edge.id == compute_id(edge)``.
+        4. **INV-13 immutability** — byte-identical → no-op; divergent →
+           ``MutationOfImmutableRecord``.
+
+        INV-16 (no-cycle) and INV-17 (lineage-reaches-ultimate) are
+        deferred to Phase 2c M4 — this method does NOT enforce them.
+        """
+        # Gate 1: parent existence (direct file check; M2.5 will
+        # upgrade this to a chain-walk via ``latest_probandum_for``).
+        parent_path = self.probandum_path(edge.parent_probandum_id)
+        if not parent_path.is_file():
+            raise ParentProbandumMissing(
+                f"ProbandumEdge {edge.id}: parent_probandum_id "
+                f"{edge.parent_probandum_id!r} not found at {parent_path}"
+            )
+        # Gate 2: child existence (kind-dispatched)
+        if edge.child_kind == "probandum":
+            child_path = self.probandum_path(edge.child_id)
+            if not child_path.is_file():
+                raise EdgeChildMissing(
+                    f"ProbandumEdge {edge.id}: child_kind=probandum "
+                    f"child_id={edge.child_id!r} not found at {child_path}"
+                )
+        elif edge.child_kind == "atom":
+            # Schema validator already requires child_source_id when
+            # child_kind == "atom"; narrow for Pyright via an explicit
+            # guard (unreachable in practice because the constructor
+            # raised first).
+            if edge.child_source_id is None:
+                raise EdgeChildMissing(
+                    f"ProbandumEdge {edge.id}: child_kind=atom but "
+                    "child_source_id is None (schema invariant violated)"
+                )
+            atom_path = self.atom_path(edge.child_source_id, edge.child_id)
+            if not atom_path.is_file():
+                raise EdgeChildMissing(
+                    f"ProbandumEdge {edge.id}: child_kind=atom "
+                    f"child_source_id={edge.child_source_id!r} "
+                    f"child_id={edge.child_id!r} not found at {atom_path}"
+                )
+        elif edge.child_kind == "cross-doc-relation":
+            cdr_path = self.cross_doc_relation_path(edge.child_id)
+            if not cdr_path.is_file():
+                raise EdgeChildMissing(
+                    f"ProbandumEdge {edge.id}: child_kind=cross-doc-relation "
+                    f"child_id={edge.child_id!r} not found at {cdr_path}"
+                )
+        # Gate 3: id discipline
+        self._require_id_matches(edge)
+        # Gate 4: INV-13 immutability via byte-identical compare.
+        path = self.probandum_edge_path(edge.id)
+        serialized = serialize_probandum_edge_yaml(edge)
+        if path.is_file():
+            existing_bytes = path.read_bytes()
+            if existing_bytes == serialized.encode("utf-8"):
+                return path  # idempotent
+            raise MutationOfImmutableRecord(
+                f"ProbandumEdge at {path} already exists with different "
+                f"content; refusing to overwrite (INV-13)"
+            )
+        atomic_write_text(path, serialized)
+        return path
+
+    def get_probandum_edge(self, edge_id: str) -> ProbandumEdge:
+        """Read and return a ProbandumEdge by its content-addressable id."""
+        path = self.probandum_edge_path(edge_id)
+        if not path.is_file():
+            raise SubstrateNotFound(f"probandum edge not found at {path}")
+        return parse_probandum_edge_yaml(path.read_text(encoding="utf-8"))

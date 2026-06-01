@@ -575,3 +575,40 @@ def tmp_workspace_with_partial_resolutions_to_missing(
 def tmp_workspace_with_dangling_entity_ref(tmp_workspace: Path) -> Path:
     """Workspace with no Entity records — shared_entities reference dangles."""
     return tmp_workspace
+
+
+# --- Phase 2c probanda fixture (M2 + M4) -----------------------------
+
+
+@pytest.fixture
+def tmp_workspace_with_probanda(
+    tmp_workspace: Path, role_attribution: RoleAttribution
+) -> tuple[Path, Probandum, Probandum]:
+    """Workspace with one ultimate + one penultimate probandum planted.
+
+    Used by M2 edge tests (parent existence gate) and (later) M4 lineage
+    tests. The probanda are written via ``Substrate.add_probandum`` so
+    their canonical paths and ids are consistent with normal substrate
+    discipline.
+
+    Returns the workspace path, the ultimate probandum, and the
+    penultimate probandum (for the caller to reference by id).
+    """
+    from amanuensis.fs import Substrate
+
+    sub = Substrate(tmp_workspace)
+    ult = _probandum_basic_payload(
+        role_attribution,
+        kind="ultimate",
+        statement="ACME breached the contract.",
+        alternatives_considered=[],
+    )
+    pen = _probandum_basic_payload(
+        role_attribution,
+        kind="penultimate",
+        statement="ACME failed to pay on the due date.",
+        alternatives_considered=["ACME paid on time", "Payment was waived"],
+    )
+    sub.add_probandum(ult)
+    sub.add_probandum(pen)
+    return tmp_workspace, ult, pen
