@@ -411,6 +411,105 @@ Notable points:
   `run_connect_phase`); the Connector consumes one pre-built cluster per
   dispatch invocation.
 
+### Hierarchize (`map_hierarchize.md`, Phase 2c)
+
+Output contract, quoted from the skill:
+
+```markdown
+Emit a JSON object at
+`dispatch/outputs/hierarchize-<inputs_hash>/output.yaml` with two
+top-level lists: `interim_probanda` (proposed Probandum drafts with
+`kind: interim`) and `probandum_edges` (proposed ProbandumEdge drafts
+linking the parent penultimate down through the interim layer to
+evidence).
+```
+
+Skill metadata:
+
+- **Role name:** `hierarchize`.
+- **Skill file:** `amanuensis:map:hierarchize`
+  ([`src/amanuensis/skills/map_hierarchize.md`](../src/amanuensis/skills/map_hierarchize.md)).
+- **Phase:** `map`.
+- **Write-isolation directory:**
+  `dispatch/outputs/hierarchize-<inputs_hash>/`.
+- **Reconciler entry point:** `_process_hierarchize_output` in
+  [`src/amanuensis/dispatch/reconcile.py`](../src/amanuensis/dispatch/reconcile.py).
+  The reconciler is the only writer to `mappings/probanda/` and
+  `mappings/probandum-edges/`; the Hierarchize role itself NEVER writes
+  to the substrate.
+
+Input contract: the dispatch driver hands the Hierarchize role a JSON
+cluster keyed by a penultimate parent probandum, the ultimate it traces
+to, and a pre-filtered candidate-evidence pool the orchestrator has
+deemed plausibly relevant:
+
+```json
+{
+  "parent_probandum_id": "p-<hash>",
+  "parent_statement": "<the parent penultimate's statement>",
+  "ultimate_probandum": {
+    "id": "p-<hash>",
+    "statement": "<the ultimate this tree is rooted at>"
+  },
+  "candidate_evidence": [
+    {
+      "kind": "atom",
+      "id": "a-<hash>",
+      "source_id": "<src>",
+      "text": "<atom narrative>",
+      "predicate": "<predicate>"
+    },
+    {
+      "kind": "cross-doc-relation",
+      "id": "x-<hash>",
+      "warrant": "<warrant text>",
+      "shared_entities": ["e-<hash>", ...]
+    }
+  ],
+  "walton_schemes": ["scheme-name", "scheme-name", ...]
+}
+```
+
+Notable points:
+
+- **Interim-only proposals.** The Hierarchize role NEVER proposes
+  probanda with `kind: ultimate` or `kind: penultimate` — those are
+  supervisor-only artifacts authored via
+  `amanuensis map probandum add`. Every proposed probandum carries
+  `kind: interim`.
+- **ACH alternatives required.** Every proposed `interim` probandum
+  MUST carry at least one entry in `alternatives_considered`. The
+  substrate-layer `AchAlternativesGateViolation` rejects an empty list
+  at write-time; the reconciler propagates this as a shape error (no
+  clarification recovery — the auditor must pre-check).
+- **Closed Walton-scheme vocabulary (INV-18).** Every proposed
+  probandum's `scheme` MUST appear in the input `walton_schemes` list
+  (which mirrors `mappings/walton-scheme-snapshot.yaml`). Unknown
+  schemes route the proposal to a `scheme-missing` clarification via
+  the reconciler's `_auto_raise_scheme_clarification`; a supervisor
+  extends the snapshot via
+  `amanuensis map walton-scheme snapshot --extend` before retry.
+- **Tree-shape (INV-16) and lineage (INV-17).** A proposed edge that
+  would close a cycle, give a probandum child a second active parent,
+  or fail to trace upward to an `ultimate` via existing edges is
+  rejected by the reconciler. INV-16 violations are rejected outright
+  (no clarification recovery); INV-17 violations auto-raise a
+  `lineage-incomplete` clarification via the reconciler's
+  `_auto_raise_lineage_clarification`.
+- **Index references inside the batch.** When an edge needs to point
+  at an interim probandum proposed in the same batch, the skill uses
+  the integer index into `interim_probanda` as a string (`"0"`, `"1"`,
+  ...). The reconciler resolves these to real substrate ids during the
+  second pass after writing the probanda. Mixing index refs with real
+  ids in `child_id` / `parent_probandum_id` is supported.
+- **Cluster enumeration is the orchestrator's job.** Cluster
+  enumeration lives in
+  [`src/amanuensis/dispatch/hierarchize_orchestrator.py`](../src/amanuensis/dispatch/hierarchize_orchestrator.py)
+  (`enumerate_hierarchize_clusters`, `enqueue_hierarchize_clusters`,
+  `run_hierarchize_phase`); the Hierarchize role consumes one
+  pre-built cluster (keyed by penultimate parent) per dispatch
+  invocation.
+
 ## Example — a stub (`distill_contrarian.md`)
 
 A stub skill's frontmatter and body together describe both what the
@@ -499,6 +598,7 @@ test module uses an equivalent inline implementation for isolation.
 - [`../INVARIANTS.md`](../INVARIANTS.md) — INV-1 (marker), INV-3
   (provenance by construction), INV-4 (determinism boundary), INV-5
   (closed vocabulary), INV-6 (`scale_anchor`), INV-7 (citation
-  four-tuple), INV-8 (substrate is the source of truth).
+  four-tuple), INV-8 (substrate is the source of truth), INV-16/17/18
+  (Phase 2c probandum-tree gates).
 - [`../tests/skills/test_skill_frontmatter.py`](../tests/skills/test_skill_frontmatter.py)
   — the parametric frontmatter gate.
