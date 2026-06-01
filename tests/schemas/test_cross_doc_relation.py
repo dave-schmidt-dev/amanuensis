@@ -15,6 +15,7 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
+from pydantic import ValidationError
 
 from amanuensis.schemas import RoleAttribution
 from amanuensis.schemas.cross_doc_relation import CrossDocRelation
@@ -50,3 +51,35 @@ def test_minimal_valid_cross_doc_relation(
     assert rel.kind == "supports"
     assert rel.shared_entities == ["e-smith"]
     assert rel.schema_version == 1
+
+
+def test_rejects_extra_field(
+    cross_doc_relation_payload: dict[str, Any],
+) -> None:
+    cross_doc_relation_payload["extra_field"] = "nope"
+    with pytest.raises(ValidationError) as exc:
+        CrossDocRelation(**cross_doc_relation_payload)
+    assert any(err["type"] == "extra_forbidden" for err in exc.value.errors())
+
+
+def test_rejects_empty_shared_entities_via_explicit_validator(
+    cross_doc_relation_payload: dict[str, Any],
+) -> None:
+    """Schema layer ACCEPTS empty ``shared_entities``.
+
+    The non-empty gate lives in M2 substrate IO (INV-15 enforcement
+    requires a Substrate handle). This test asserts the schema does
+    NOT reject the empty list on its own.
+    """
+    cross_doc_relation_payload["shared_entities"] = []
+    rel = CrossDocRelation(**cross_doc_relation_payload)
+    assert rel.shared_entities == []
+
+
+def test_rejects_invalid_kind(
+    cross_doc_relation_payload: dict[str, Any],
+) -> None:
+    cross_doc_relation_payload["kind"] = "endorses"
+    with pytest.raises(ValidationError) as exc:
+        CrossDocRelation(**cross_doc_relation_payload)
+    assert any(err["loc"] == ("kind",) for err in exc.value.errors())
