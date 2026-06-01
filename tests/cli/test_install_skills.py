@@ -25,6 +25,7 @@ _FAKE_BINARY = "/usr/local/bin/__fake-harness__"
 # changes, this list is the canonical place to update tests.
 #
 # Phase 2b M5 adds ``map_connect.md`` (Connector role).
+# Phase 2c M7 adds ``map_hierarchize.md`` (Hierarchize role).
 _BUNDLED_SKILLS = {
     "distill.md",
     "distill_audit.md",
@@ -34,6 +35,7 @@ _BUNDLED_SKILLS = {
     "distill_premortem.md",
     "map_audit.md",
     "map_connect.md",
+    "map_hierarchize.md",
     "map_resolve.md",
 }
 
@@ -319,6 +321,67 @@ def test_map_connect_skill_installs_to_harness_skill_dir(
     skills_root = resources.files("amanuensis.skills")
     expected = (skills_root / "map_connect.md").read_bytes()
     assert connect_skill.read_bytes() == expected
+
+
+def test_map_hierarchize_skill_installs_to_harness_skill_dir(
+    cli_workspace: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The Phase 2c Hierarchize skill (``map_hierarchize.md``) lands in the harness skill dir.
+
+    Phase 2c M7/T7.1 ships a new role skill bundled at
+    ``src/amanuensis/skills/map_hierarchize.md``. The install routine
+    auto-discovers every ``*.md`` under that package, but this test
+    pins the expectation explicitly so a future refactor that drops
+    the file from the install set fails loudly.
+    """
+    _patch_which(monkeypatch, present={"claude"})
+    tmp_home = tmp_path / "harness-home"
+    result = runner.invoke(
+        app,
+        [
+            "install-skills",
+            "--harness",
+            "claude",
+            "--workspace",
+            str(cli_workspace),
+            "--harness-target",
+            str(tmp_home),
+        ],
+    )
+    assert result.exit_code == 0, result.stdout
+
+    install_dir = _install_dir_for(tmp_home, ".claude/skills")
+    hier_skill = install_dir / "map_hierarchize.md"
+    assert hier_skill.is_file(), (
+        f"expected Hierarchize skill at {hier_skill}; stdout:\n{result.stdout}"
+    )
+
+    # Byte-identical to the bundled source.
+    skills_root = resources.files("amanuensis.skills")
+    expected = (skills_root / "map_hierarchize.md").read_bytes()
+    assert hier_skill.read_bytes() == expected
+
+
+def test_map_hierarchize_skill_frontmatter_declares_hierarchize_role() -> None:
+    """The bundled ``map_hierarchize.md`` skill declares ``role: hierarchize``.
+
+    The frontmatter is the agent-facing surface; the role string must
+    line up with the schema's ``Literal[..., "hierarchize"]`` and with
+    the dispatch driver's role-binding table (Phase 2c T7.3).
+    """
+    skill_text = (Path(__file__).parents[2] / "src/amanuensis/skills/map_hierarchize.md").read_text(
+        encoding="utf-8"
+    )
+    assert skill_text.startswith("---"), "expected YAML frontmatter fence"
+    assert "name: map_hierarchize" in skill_text
+    assert "role: hierarchize" in skill_text
+    assert "stub: false" in skill_text
+    # The skill describes its Probandum + ProbandumEdge output contract.
+    assert "Probandum" in skill_text
+    assert "interim_probanda" in skill_text
+    assert "probandum_edges" in skill_text
 
 
 def test_map_audit_skill_covers_cross_doc_relation() -> None:
