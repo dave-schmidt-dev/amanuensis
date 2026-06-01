@@ -1468,6 +1468,57 @@ Format: dated entries, newest first. Bug entries cite the area touched:
   tests/integration/test_phase2b_connect_end_to_end.py,
   tests/e2e/{_fixture_builder.py,test_phase2b_overlay_flow.spec.ts}
 
+- **Phase 2b cleanup pass — six final-review items.** Closed all
+  follow-ups surfaced by the final cross-milestone code review before
+  Phase 2c kicked off. Each cleanup is a focused commit; tests added
+  per item; no behavior regressions. (1) ``Substrate.list_supersedes``
+  is now ``v-*`` (cross-doc-relation) aware: the kind Literal widened
+  to include ``"cross-doc-relation"``, three duplicate
+  ``glob("v-*.yaml")`` walks in substrate / web / CLI consolidated
+  through the unified dispatch, and ``_load_cross_doc_relation``
+  promoted to a public ``get_cross_doc_relation`` so the route layer
+  no longer reaches into a private method [ea39f1c, cleanup-1].
+  (2) Auto-raised clarification id plumbed through
+  ``_build_cross_doc_relation``'s return (new ``CrossDocBuildResult``
+  dataclass) instead of recovered by mtime-scan in
+  ``_process_connect_output`` — eliminates a deterministic-with-1s-
+  precision-only race when two clusters in one drain raise
+  clarifications under the same from_source [32baacf, cleanup-2].
+  (3) ``ConnectPhaseReport.relations_committed`` and
+  ``clarifications_raised`` now read from new per-role lists
+  ``connect_relations_committed`` / ``connect_clarifications_raised``
+  on ``ReconcileResult``, so a co-drained map-audit / map-resolve
+  output's ids no longer leak into the connect phase report [0a4d217,
+  cleanup-3]. (4) INV-13 immutability guard backported to Phase 2a's
+  ``add_resolution_supersede`` and ``add_entity_supersede`` — they
+  were the only mappings-writers without it, and the supersede records
+  are records under INV-13. Idempotent on identical content,
+  ``MutationOfImmutableRecord`` on divergent. New gate cases under
+  ``tests/invariants/test_mappings_immutability.py`` parametrize the
+  guard across all three supersede kinds [5dcbaf6, cleanup-4].
+  (5) Dashboard route defensively skips ``distillations/`` subdirs
+  whose name fails ``_validate_id_component`` — closes a 500 caused
+  by iCloud / Dropbox sync-daemon ``" 2"`` duplicate dirs
+  (``phase1-smoke 2``) that broke the Playwright runner. The route
+  now logs a ``WARNING`` via the ``amanuensis.web`` logger naming
+  each skipped dir [70854c8, cleanup-5]. (6) Spec text drift fixes at
+  ``docs/superpowers/specs/2026-05-31-phase2b-connect-design.md``: the
+  INV-15 ``Established`` line now matches the charter
+  (``2026-05-31 (Phase 2b M3)`` — the gate landed in M3, not M10);
+  the ``Gate test`` case enumeration now matches the shipped tests
+  (``test_clean_workspace_passes``, ``test_empty_shared_entities_caught``,
+  ``test_missing_entity_caught``, ``test_missing_from_resolution_caught``,
+  ``test_missing_to_resolution_caught``) [4ac06d5, cleanup-6].
+  | files: src/amanuensis/fs/substrate.py,
+  src/amanuensis/dispatch/{reconcile,connect_orchestrator}.py,
+  src/amanuensis/web/routes/{cross_doc_relations,dashboard,
+  _substrate_counts}.py, src/amanuensis/cli/map.py,
+  tests/fs/test_substrate_supersedes.py,
+  tests/dispatch/{test_connect_smoke,test_cross_doc_reconcile}.py,
+  tests/invariants/test_mappings_immutability.py,
+  tests/web/test_dashboard.py,
+  docs/superpowers/specs/2026-05-31-phase2b-connect-design.md
+
 ## 2026-05-31
 
 - **Phase 2a (Resolve) — SHIPPED.** All 82 tasks complete across 11
