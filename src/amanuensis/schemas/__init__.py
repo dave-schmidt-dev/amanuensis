@@ -28,6 +28,16 @@ Phase 2b types (Connect):
 - ``CrossDocRelationSupersede`` — supervisor correction for a
   cross-doc relation
 
+Phase 2c types (Hierarchize):
+
+- ``Probandum`` — proposition statement at a hierarchy level
+  (ultimate / interim / penultimate)
+- ``ProbandumEdge`` — supports/attacks/undercuts edge from a parent
+  ``Probandum`` to a child ``Probandum`` / ``Atom`` / ``CrossDocRelation``
+- ``ProbandumSupersede`` — supervisor correction for a ``Probandum``
+- ``ProbandumEdgeSupersede`` — supervisor correction for a
+  ``ProbandumEdge``
+
 Public helpers:
 
 - ``compute_id`` — content-addressable id computation for all
@@ -45,6 +55,10 @@ from .cross_doc_relation_supersede import CrossDocRelationSupersede
 from .entity import Entity
 from .entity_supersede import EntitySupersede
 from .iteration import IterationDirective
+from .probandum import Probandum
+from .probandum_edge import ProbandumEdge
+from .probandum_edge_supersede import ProbandumEdgeSupersede
+from .probandum_supersede import ProbandumSupersede
 from .provenance import ProvenanceRecord
 from .relation import Relation
 from .replay_log import ReplayLogEntry
@@ -65,6 +79,10 @@ __all__ = [
     "OperandRef",
     "OperandTypeSchema",
     "ParagraphEntry",
+    "Probandum",
+    "ProbandumEdge",
+    "ProbandumEdgeSupersede",
+    "ProbandumSupersede",
     "ProvenanceRecord",
     "Relation",
     "ReplayLogEntry",
