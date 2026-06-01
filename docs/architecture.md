@@ -268,13 +268,15 @@ plan source is §5.
 
   cache/<input-hash>.yaml                    (LLM-call cache; content-addressable)
 
-  mappings/                                  (Phase 2a cross-document artifacts — INV-12)
+  mappings/                                  (Phase 2a + 2b cross-document artifacts — INV-12)
     entity-vocabulary-snapshot.yaml          (active entity-kind registry; pinned by `amanuensis map`)
     entity-vocabulary-archive/<hash>.yaml    (prior snapshots; written by `map vocabulary snapshot --extend`)
     entities/e-<hash>.md                     (canonical Entity records; frontmatter + notes body)
     resolutions/j-<hash>.yaml                (Resolution records; pure YAML)
+    relations/x-<hash>.yaml                  (Phase 2b CrossDocRelation records; pure YAML — INV-15)
     supersedes/t-<hash>.yaml                 (EntitySupersede records)
     supersedes/s-<hash>.yaml                 (ResolutionSupersede records)
+    supersedes/v-<hash>.yaml                 (Phase 2b CrossDocRelationSupersede records)
     provenance/<prov-id>.yaml                (PROV-O records for mapping-phase artifacts)
     replay-log/                              (mappings-scoped replay log)
 ```
@@ -351,6 +353,8 @@ narrow public surface. Cross-module dependencies are a DAG; no cycles.
 | `amanuensis.schemas.resolution` | `Resolution` — entity-id join for one operand-ref triple | `schemas._shared` | `Resolution` |
 | `amanuensis.schemas.entity_supersede` | `EntitySupersede` — correction record for entity merges/renames | `schemas._shared` | `EntitySupersede` |
 | `amanuensis.schemas.resolution_supersede` | `ResolutionSupersede` — correction record for resolution updates | `schemas._shared` | `ResolutionSupersede` |
+| `amanuensis.schemas.cross_doc_relation` | `CrossDocRelation` — Phase 2b cross-document warrant-bearing edge (INV-15) | `schemas._shared` | `CrossDocRelation` |
+| `amanuensis.schemas.cross_doc_relation_supersede` | `CrossDocRelationSupersede` — correction record for cross-doc edges | `schemas._shared` | `CrossDocRelationSupersede` |
 | `amanuensis.fs` | Substrate filesystem (path conventions, atomic writes, workspace lock, replay log) | `schemas` | `Substrate`, `acquire_workspace_lock`, `ReplayLog`, typed errors |
 | `amanuensis.ingest` (M3.x) | Document → paragraph-indexed source mirror | `schemas`, `fs` | `ingest(pdf_path, source_id) -> SourceMirror` |
 | `amanuensis.vocabulary` (M2.x) | Closed predicate vocabulary registry + per-distillation snapshot loader | `schemas`, `fs` | `Vocabulary(snapshot_path).contains(predicate) -> bool` |
@@ -359,21 +363,30 @@ narrow public surface. Cross-module dependencies are a DAG; no cycles.
 | `amanuensis.validators.entity_kind_in_vocabulary` | Closed-vocabulary gate: rejects entities whose `kind` is absent from the active entity snapshot | `schemas`, `vocabulary.entity_registry` | `entity_kind_in_vocabulary(entity, substrate) -> ValidationResult` |
 | `amanuensis.llm` (M5.x) | LLM-call wrapper: cache + replay log + PROV-O record | `schemas`, `fs` | `cached_call(role, prompt, inputs) -> (output, provenance_record)` |
 | `amanuensis.dispatch` (M6.x) | Multi-agent queue / driver. **The only harness-aware module.** | `schemas`, `fs`, `llm` | `Dispatch(workspace).enqueue(role, prompt, inputs)`; `driver.run()` |
-| `amanuensis.dispatch.reconcile` | Reconciliation gate — merges role outputs into the substrate | `schemas`, `fs`, `validators` | `reconcile(workspace)`; Phase 2a: imports `_build_entity`, `_build_resolution` |
+| `amanuensis.dispatch.reconcile` | Reconciliation gate — merges role outputs into the substrate | `schemas`, `fs`, `validators` | `reconcile(workspace)`; Phase 2a: `_build_entity`, `_build_resolution`; Phase 2b: `_build_cross_doc_relation`, `_process_connect_output`, `_auto_raise_resolution_clarification` |
+| `amanuensis.dispatch.connect_orchestrator` | Phase 2b cluster enumeration + dispatch driver for the Connect phase | `schemas`, `fs`, `dispatch` | `enumerate_connect_clusters`, `enqueue_connect_clusters`, `run_connect_phase` |
 | `amanuensis.skills` (M4.x) | Skill content (markdown files; bundled with package) | (none) | Files installed to harness skill directories |
 | `amanuensis.cli` (M4.x) | Typer command surface | All of the above | `amanuensis` console script |
-| `amanuensis.cli.map` | `amanuensis map ...` sub-app (9 verbs; Phase 2a) | `schemas`, `fs`, `vocabulary.entity_registry` | `map`, `map status`, `map entity {list,show,merge}`, `map resolution {show,supersede}`, `map vocabulary {show,snapshot}` |
+| `amanuensis.cli.map` | `amanuensis map ...` sub-app (Phase 2a + 2b verbs) | `schemas`, `fs`, `vocabulary.entity_registry` | `map`, `map status`, `map entity {list,show,merge}`, `map resolution {show,supersede}`, `map vocabulary {show,snapshot}`, `map relation {list,show,supersede}` (Phase 2b), `--connect-only` (Phase 2b) |
 | `amanuensis.web` (M8.x) | FastAPI + HTMX + Cytoscape supervision UI | `schemas`, `fs`, `validators` | `amanuensis serve` |
-| `amanuensis.web.routes.entities` | Read-only entity browser routes | `schemas`, `fs` | `GET /entities`, `GET /entities/<id>` |
+| `amanuensis.web.routes.entities` | Read-only entity browser routes (Phase 2a; Phase 2b extends the detail page with a cross-doc-edge section) | `schemas`, `fs` | `GET /entities`, `GET /entities/<id>` |
 | `amanuensis.web.routes.resolutions` | Read-only resolution browser routes | `schemas`, `fs` | `GET /resolutions`, `GET /resolutions/<id>` |
-| `amanuensis.export` (M9.x) | Static HTML export (Phase 1 stub; Phase 4 production) | `schemas`, `fs`, `web` (renderer reuse) | `amanuensis export` |
+| `amanuensis.web.routes.cross_doc_relations` | Read-only Phase 2b cross-doc-relation routes (list + detail) | `schemas`, `fs` | `GET /cross-doc-relations`, `GET /cross-doc-relations/<id>` |
+| `amanuensis.export` (M9.x) | Static HTML export — Phase 1 per-source stub plus Phase 2b workspace appendix bundle | `schemas`, `fs`, `web` (renderer reuse) | `amanuensis export` |
+| `amanuensis.export.workspace_appendix` | Phase 2b workspace-level bundle: `cross-doc-relations.html` plus per-entity pages | `schemas`, `fs` | `export_workspace_appendix(substrate, out_dir)` |
 
 Phase 1 status as of M1.9: `schemas` and `fs` are complete. The
-remaining modules are scheduled in M2–M9. Phase 2a (Resolve) added
-`schemas.entity`, `schemas.resolution`, `schemas.entity_supersede`,
+remaining Phase 1 modules are scheduled in M2–M9. Phase 2a (Resolve)
+added `schemas.entity`, `schemas.resolution`, `schemas.entity_supersede`,
 `schemas.resolution_supersede`, `vocabulary.entity_registry`,
 `validators.entity_kind_in_vocabulary`, `cli.map`, and
-`web.routes.entities`/`web.routes.resolutions`.
+`web.routes.entities`/`web.routes.resolutions`. Phase 2b (Connect) added
+`schemas.cross_doc_relation`, `schemas.cross_doc_relation_supersede`,
+`dispatch.connect_orchestrator`, the `_build_cross_doc_relation` /
+`_process_connect_output` / `_auto_raise_resolution_clarification`
+reconciler functions, the `amanuensis:map:connect` role skill, the
+`amanuensis map relation {list,show,supersede}` CLI verbs,
+`web.routes.cross_doc_relations`, and `export.workspace_appendix`.
 
 ---
 
@@ -411,10 +424,12 @@ Phase 1 deliberate scope cuts, not bugs. The list mirrors the
   HTML file is the entire delivery surface in Phase 1 (M9.1); the full
   audit-HTML bundle, prose-report rendering, and render-time policy
   gates are Phase 4.
-- **Cross-document reasoning is Phase 2's job.** Phase 1 emits
-  intra-document relations only; cross-document support/attack edges,
-  shared entity graphs, and probandum hierarchies spanning sources are
-  Phase 2 (Map) outputs.
+- **Cross-document reasoning landed in Phase 2.** Phase 1 emits
+  intra-document relations only. Phase 2a (Resolve) shipped the shared
+  canonical-entity graph; Phase 2b (Connect) shipped cross-document
+  support / attack / undercut edges as `CrossDocRelation` records under
+  `mappings/relations/x-<hash>.yaml`, gated by INV-15 (shared-entity
+  groundedness). Probandum hierarchies spanning sources remain Phase 2c.
 - **POSIX-only.** The workspace flock uses `fcntl.flock`. Windows
   support is out of scope for Phase 1.
 - **Python 3.12+ but `<3.14`.** Python 3.14's `site.py` change skips
@@ -446,6 +461,29 @@ Phase 1 deliberate scope cuts, not bugs. The list mirrors the
   the supervisor selects a section path and the graph renders scoped
   to that section (plan §8). Documented as a known limit; full-graph
   virtualization is a Phase 1.5 candidate.
+- **Connector cluster explosion is not chunked.** Canonical entities
+  with 200+ resolved atoms produce a single cluster the Connector may
+  not be able to fit into one LLM call. Chunking (per-source-pair
+  partitions, sliding-window batches) is a Phase 2b.5 candidate; the
+  workaround for now is to narrow the per-engagement vocabulary so the
+  most-referenced entities split across kinds.
+- **No `kind` vocabulary extension on cross-doc edges.** Phase 2b
+  reuses the Toulmin trio (`supports` | `attacks` | `undercuts`) for
+  cross-doc edges, identical to Phase 1 intra-doc relations.
+  Wigmore-flavored kinds (`corroborates`, `contradicts`, `qualifies`,
+  ...) are deferred to Phase 2c.
+- **Real-LLM Connector dispatch is not yet verified end-to-end.**
+  Phase 2a's M11.2 deferred real-LLM Resolve dispatch to first
+  engagement; Phase 2b's M11 makes the same call for the Connector.
+  The mock-harness smoke test and the 3-distillation integration
+  fixture cover the code path; the real-LLM smoke runs against the
+  first production engagement.
+- **The CLI bundle exporter is workspace-level only.** `amanuensis
+  export --workspace-appendix --out-dir DIR` emits the full
+  cross-doc-relations appendix plus every canonical entity's page.
+  To inspect a single source's view of cross-doc edges, use the web
+  app's per-source graph with the Phase 2b Cytoscape cross-doc overlay
+  toggled on; per-source bundle export is not a Phase 2b deliverable.
 
 ---
 
