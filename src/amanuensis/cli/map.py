@@ -29,6 +29,7 @@ from typing import Annotated, Any
 
 import typer
 
+from amanuensis.dispatch.connect_orchestrator import run_connect_phase
 from amanuensis.dispatch.queue import enqueue
 from amanuensis.fs import ReplayLog, Substrate, WorkspaceLockTimeout, acquire_workspace_lock
 from amanuensis.fs._atomic import atomic_write_text
@@ -136,6 +137,16 @@ def map_command(
             ),
         ),
     ] = False,
+    connect_only: Annotated[
+        bool,
+        typer.Option(
+            "--connect-only",
+            help=(
+                "Skip the resolve/audit phases and run only the Phase 2b "
+                "Connect phase against an already-resolved substrate."
+            ),
+        ),
+    ] = False,
     workspace: Annotated[
         Path | None,
         typer.Option(
@@ -145,10 +156,23 @@ def map_command(
         ),
     ] = None,
 ) -> None:
-    """Run the full map warp-plan cycle (T7.2).
+    """Run the full map warp-plan cycle (T7.2 + Phase 2b M6/T6.3).
 
-    Enqueues the map-resolve role for dispatch.  Run
-    ``amanuensis dispatch --once`` afterwards to drive it.
+    Default phase order:
+
+    1. **Resolve / audit** — enqueue ``map-resolve`` (and, after a
+       supervisor runs ``amanuensis dispatch --once``, the operator
+       re-runs ``amanuensis map`` to enqueue ``map-audit``). This
+       half is Phase 2a M11.2's first-engagement contract.
+    2. **Connect** — enqueue one ``connect`` dispatch event per
+       multi-source canonical-entity cluster, then reconcile any
+       pending connect outputs. The driver-side LLM invocation is
+       deferred to first-engagement (the supervisor runs
+       ``amanuensis dispatch --once`` between phases).
+
+    ``--connect-only`` skips step 1 entirely and runs only the Connect
+    phase — useful when the resolve+audit substrate is already settled
+    and the operator just wants to refresh cross-doc edges.
 
     ``--non-interactive`` is the default and only implemented mode.
     An interactive mode that drives dispatch inline is Phase 2a.5
@@ -191,36 +215,97 @@ def map_command(
     #
     # Env-var seam: AMANUENSIS_HARNESS_HOME overrides Path.home() so
     # tests can point at a fake home without monkeypatching Path.home.
+    #
+    # Phase 2b note: the connect-only path skips the resolve/audit skill
+    # preflight too, on the assumption that an operator targeting
+    # ``--connect-only`` has already validated the resolve/audit skills
+    # are present at least once. If they haven't, the connect skill
+    # file (bundled into the package) is still resolved via importlib.
     # ------------------------------------------------------------------
-    harness_home_str = os.environ.get("AMANUENSIS_HARNESS_HOME")
-    harness_home = Path(harness_home_str) if harness_home_str else Path.home()
-    skills_dir = harness_home / ".claude" / "skills" / _AMANUENSIS_NAMESPACE
-    missing = [f for f in _REQUIRED_SKILL_FILES if not (skills_dir / f).is_file()]
-    if missing:
-        typer.secho(
-            "map-resolve/map-audit skills not installed for harness 'claude'; "
-            "run `amanuensis install-skills --harness claude` first",
-            err=True,
-        )
-        raise typer.Exit(code=2)
+    if not connect_only:
+        harness_home_str = os.environ.get("AMANUENSIS_HARNESS_HOME")
+        harness_home = Path(harness_home_str) if harness_home_str else Path.home()
+        skills_dir = harness_home / ".claude" / "skills" / _AMANUENSIS_NAMESPACE
+        missing = [f for f in _REQUIRED_SKILL_FILES if not (skills_dir / f).is_file()]
+        if missing:
+            typer.secho(
+                "map-resolve/map-audit skills not installed for harness 'claude'; "
+                "run `amanuensis install-skills --harness claude` first",
+                err=True,
+            )
+            raise typer.Exit(code=2)
 
     # ------------------------------------------------------------------
-    # Acquire workspace flock (5 s timeout).
+    # Acquire workspace flock (5 s timeout) for the resolve/audit
+    # orchestrator body. The Connect phase runs AFTER the flock is
+    # released:
+    #
+    #   - ``enqueue_connect_clusters`` only writes content-addressable
+    #     queue files (atomic_write_text); it does not append to the
+    #     replay log and does not need flock protection.
+    #   - ``reconcile_outputs`` re-acquires the flock itself for the
+    #     mappings-substrate write transaction; a re-entrant fresh
+    #     ``os.open`` of the lock file from the same process would
+    #     deadlock, so we drop the resolve/audit lock first.
     # ------------------------------------------------------------------
-    try:
-        with acquire_workspace_lock(workspace_path, timeout=5.0):
-            _run_map_orchestrator(
-                workspace_path=workspace_path,
-                substrate=substrate,
-                source_ids=source_ids,
-                role_set=role_set,
+    if not connect_only:
+        try:
+            with acquire_workspace_lock(workspace_path, timeout=5.0):
+                _run_map_orchestrator(
+                    workspace_path=workspace_path,
+                    substrate=substrate,
+                    source_ids=source_ids,
+                    role_set=role_set,
+                )
+        except WorkspaceLockTimeout as exc:
+            typer.secho(
+                "workspace flock held by another process — wait or release .amanuensis-lock",
+                err=True,
             )
-    except WorkspaceLockTimeout as exc:
-        typer.secho(
-            "workspace flock held by another process — wait or release .amanuensis-lock",
-            err=True,
+            raise typer.Exit(code=2) from exc
+
+    # Phase 2b Connect phase: enqueue clusters + drain pending connect
+    # outputs. Always runs (including under ``--connect-only``).
+    report = run_connect_phase(substrate)
+    _emit_connect_phase_summary(report=report, connect_only=connect_only)
+
+
+# ---------------------------------------------------------------------------
+# Phase 2b Connect-phase summary emitter (T6.3)
+# ---------------------------------------------------------------------------
+
+
+def _emit_connect_phase_summary(
+    *,
+    report: Any,
+    connect_only: bool,
+) -> None:
+    """Echo a supervisor-facing summary of the Connect-phase outcome.
+
+    Mirrors the brevity of the resolve/audit handoff line — operators
+    scanning ``amanuensis map`` output should see one line per phase.
+
+    ``report`` is a ``ConnectPhaseReport`` (typed loosely as ``Any``
+    here to keep the cross-module import light; the dataclass shape is
+    stable and the only fields read are the four numeric counters).
+    """
+    label = "connect" if connect_only else "Connect phase"
+    if report.enqueued == 0 and report.outputs_consumed == 0:
+        # Most common case for an operator running ``amanuensis map``
+        # on a fresh resolve/audit substrate: no connect outputs have
+        # landed yet (the supervisor hasn't dispatched the connect
+        # queue). Surface this clearly so the next step is obvious.
+        typer.echo(
+            f"{label}: no clusters enqueued, no outputs to consume. "
+            "Run `amanuensis dispatch --once` to drive any pending connect events."
         )
-        raise typer.Exit(code=2) from exc
+        return
+    typer.echo(
+        f"{label}: enqueued={report.enqueued} "
+        f"outputs_consumed={report.outputs_consumed} "
+        f"relations_committed={len(report.relations_committed)} "
+        f"clarifications_raised={len(report.clarifications_raised)}"
+    )
 
 
 # ---------------------------------------------------------------------------
