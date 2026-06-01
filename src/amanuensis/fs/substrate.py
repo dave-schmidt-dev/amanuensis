@@ -65,6 +65,7 @@ from amanuensis.schemas import (
     Entity,
     EntitySupersede,
     IterationDirective,
+    Probandum,
     ProvenanceRecord,
     Relation,
     Resolution,
@@ -76,6 +77,7 @@ from amanuensis.schemas import (
 
 from ._atomic import atomic_write_text
 from ._errors import (
+    AchAlternativesGateViolation,
     CrossSourceConstraintViolation,
     MappingVocabularyAlreadyPinned,
     MutationOfImmutableRecord,
@@ -96,6 +98,7 @@ from ._serialize import (
     parse_cross_doc_relation_yaml,
     parse_entity_md,
     parse_entity_supersede_yaml,
+    parse_probandum_md,
     parse_provenance_yaml,
     parse_resolution_supersede_yaml,
     parse_resolution_yaml,
@@ -106,6 +109,7 @@ from ._serialize import (
     serialize_entity_md,
     serialize_entity_supersede_yaml,
     serialize_iteration_md,
+    serialize_probandum_md,
     serialize_resolution_supersede_yaml,
     serialize_resolution_yaml,
     serialize_yaml,
@@ -288,7 +292,8 @@ class Substrate:
         | ResolutionSupersede
         | EntitySupersede
         | CrossDocRelation
-        | CrossDocRelationSupersede,
+        | CrossDocRelationSupersede
+        | Probandum,
     ) -> None:
         """Refuse to write a model whose declared id != its hash."""
         expected = compute_id(model)
@@ -1422,3 +1427,69 @@ class Substrate:
                 return self._load_cross_doc_relation(path)
             current_id = next_id
             depth += 1
+
+    # --- Phase 2c: probandum IO (M2) -------------------------------------
+
+    def probandum_path(self, probandum_id: str) -> Path:
+        """Canonical path for a single Probandum file.
+
+        ``mappings/probanda/<p-hash>.md``. Pure path computation; no FS access.
+        """
+        _validate_id_component(probandum_id, label="probandum_id")
+        return self.mappings_root / "probanda" / f"{probandum_id}.md"
+
+    def add_probandum(self, probandum: Probandum) -> Path:
+        """Write a Probandum atomically.
+
+        Gates enforced (in order):
+
+        1. **ACH alternatives gate** — when ``probandum.kind in
+           {"penultimate", "interim"}``, ``alternatives_considered`` MUST
+           be non-empty. Raises ``AchAlternativesGateViolation`` otherwise.
+           ``ultimate`` probanda are exempt (they ARE the alternative the
+           corpus picks between).
+        2. **Id discipline** — ``probandum.id == compute_id(probandum)``.
+        3. **INV-13 immutability** — if the canonical path exists, reads
+           the existing bytes. If byte-identical, no-op (idempotent). If
+           divergent, raises ``MutationOfImmutableRecord``.
+
+        INV-18 (closed Walton scheme vocabulary) is deferred to Phase 2c
+        M3 — this method accepts any non-empty string for ``scheme``.
+        """
+        # Gate 1: ACH alternatives gate (INV-19)
+        if (
+            probandum.kind in ("penultimate", "interim")
+            and len(probandum.alternatives_considered) < 1
+        ):
+            raise AchAlternativesGateViolation(
+                f"Probandum {probandum.id}: kind={probandum.kind!r} requires "
+                f"at least one entry in alternatives_considered "
+                f"(Analysis of Competing Hypotheses discipline)"
+            )
+        # Gate 2: id discipline
+        self._require_id_matches(probandum)
+        # Gate 3: INV-13 immutability via byte-identical compare. The
+        # statement body is the markdown body; frontmatter carries every
+        # other field. Volatile fields (``provenance_id``) DO drift between
+        # writes, but ``serialize_probandum_md`` dumps the whole model so
+        # any divergence is treated as a mismatch. Idempotent re-write of
+        # an identical record is the only sanctioned path.
+        path = self.probandum_path(probandum.id)
+        serialized = serialize_probandum_md(probandum)
+        if path.is_file():
+            existing_bytes = path.read_bytes()
+            if existing_bytes == serialized.encode("utf-8"):
+                return path  # idempotent
+            raise MutationOfImmutableRecord(
+                f"Probandum at {path} already exists with different "
+                f"content; refusing to overwrite (INV-13)"
+            )
+        atomic_write_text(path, serialized)
+        return path
+
+    def get_probandum(self, probandum_id: str) -> Probandum:
+        """Read and return a Probandum by its content-addressable id."""
+        path = self.probandum_path(probandum_id)
+        if not path.is_file():
+            raise SubstrateNotFound(f"probandum not found at {path}")
+        return parse_probandum_md(path.read_text(encoding="utf-8"))

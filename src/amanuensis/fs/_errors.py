@@ -138,6 +138,22 @@ class CrossSourceConstraintViolation(SubstrateError, ValueError):
     """
 
 
+class AchAlternativesGateViolation(SubstrateError, ValueError):
+    """Raised when a non-ultimate ``Probandum`` has empty ``alternatives_considered``.
+
+    Phase 2c hierarchize requires that ``penultimate`` and ``interim``
+    probanda enumerate at least one alternative hypothesis (Analysis of
+    Competing Hypotheses discipline). ``ultimate`` probanda are not
+    required to (they are themselves the alternatives the corpus picks
+    between). The substrate refuses the write rather than letting an
+    un-considered alternative ladder up the tree silently.
+
+    Inherits from both ``SubstrateError`` (so callers catching the
+    substrate base class handle it uniformly) and ``ValueError`` (so it
+    survives the natural "this is malformed input" idiom).
+    """
+
+
 class SharedEntityGateViolation(SubstrateError, ValueError):
     """Raised when a CrossDocRelation fails the INV-15 shared-entity gate.
 

@@ -37,6 +37,7 @@ from amanuensis.schemas import (
     EntitySupersede,
     IterationDirective,
     ParagraphEntry,
+    Probandum,
     ProvenanceRecord,
     Relation,
     Resolution,
@@ -309,3 +310,23 @@ def serialize_cross_doc_relation_supersede_yaml(sup: CrossDocRelationSupersede) 
 def parse_cross_doc_relation_supersede_yaml(text: str) -> CrossDocRelationSupersede:
     """Parse a plain-YAML cross-doc relation supersede file."""
     return CrossDocRelationSupersede(**_safe_load(text))
+
+
+# --- Phase 2c probandum serializers -----------------------------------
+
+
+def serialize_probandum_md(p: Probandum) -> str:
+    """Serialize a Probandum as YAML frontmatter + statement body.
+
+    The ``statement`` field is the markdown body; every other field
+    is rendered in the YAML frontmatter. Mirrors Phase 2a Entity's
+    markdown-body pattern.
+    """
+    payload = p.model_dump(mode="python")
+    frontmatter, body = _split_body(payload, "statement")
+    return _emit_md(frontmatter, body)
+
+
+def parse_probandum_md(text: str) -> Probandum:
+    """Parse a frontmatter-bearing probandum .md file back into a Probandum."""
+    return Probandum(**_parse_md(text, "statement"))

@@ -23,6 +23,7 @@ from amanuensis.schemas import (
     EntitySupersede,
     IterationDirective,
     OperandRef,
+    Probandum,
     ProvenanceRecord,
     Relation,
     Resolution,
@@ -374,6 +375,46 @@ _PHASE2B_FROM_SOURCE = "src-A"
 _PHASE2B_FROM_ATOM = "a-fixture0001"
 _PHASE2B_TO_SOURCE = "src-B"
 _PHASE2B_TO_ATOM = "a-fixture0002"
+
+
+# --- Phase 2c probandum builders -------------------------------------
+
+
+def _probandum_with_hash(payload: dict[str, Any]) -> Probandum:
+    payload["id"] = "p-" + "0" * 16
+    draft = Probandum(**payload)
+    payload["id"] = compute_id(draft)
+    return Probandum(**payload)
+
+
+def _probandum_basic_payload(
+    role_attribution: RoleAttribution,
+    *,
+    statement: str = "ACME breached the contract by failing to pay.",
+    kind: str = "ultimate",
+    scheme: str = "argument-from-expert-opinion",
+    alternatives_considered: list[str] | None = None,
+    confidence: str = "high",
+) -> Probandum:
+    """Build a Probandum fixture with correct content-addressable id.
+
+    Default ``alternatives_considered`` is ``[]`` (legal for ``ultimate``;
+    callers that build penultimate / interim probanda must pass a
+    non-empty list to clear the ACH alternatives gate).
+    """
+    payload: dict[str, Any] = {
+        "statement": statement,
+        "kind": kind,
+        "scheme": scheme,
+        "alternatives_considered": alternatives_considered
+        if alternatives_considered is not None
+        else [],
+        "confidence": confidence,
+        "provenance_id": "p-fixture-prob-001",
+        "role_attributions": [role_attribution],
+        "schema_version": 1,
+    }
+    return _probandum_with_hash(payload)
 
 
 def _forged_entity(entity_id: str, role_attribution: RoleAttribution) -> Entity:
