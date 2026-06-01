@@ -412,6 +412,14 @@ def _process_one_output(
             workspace_root=workspace_root,
             result=result,
         )
+    elif role == "hierarchize":
+        _process_hierarchize_output(
+            payload=payload,
+            inputs_hash=inputs_hash,
+            substrate=substrate,
+            workspace_root=workspace_root,
+            result=result,
+        )
     else:
         # Unknown role: not an error — the operator may dispatch roles
         # whose reconciliation is implemented elsewhere. Record nothing
@@ -2012,20 +2020,254 @@ def _process_connect_output(
     )
 
 
+# --- Phase 2c M7: Hierarchize output reconciliation --------------------
+
+
+def _process_hierarchize_output(
+    *,
+    payload: dict[str, Any],
+    inputs_hash: str,
+    substrate: Substrate,
+    workspace_root: Path,
+    result: ReconcileResult,
+) -> None:
+    """Reconcile one Hierarchize-role output payload.
+
+    The Hierarchize role emits a top-level object with two lists:
+
+    - ``interim_probanda``: candidate ``Probandum`` dicts. Each is
+      routed through :func:`_build_probandum`, which runs the INV-18
+      (closed Walton scheme) and INV-19 (ACH alternatives) gates.
+      INV-18 failures auto-raise a ``scheme-missing`` Clarification;
+      INV-19 failures propagate as ``CandidateShapeError``-class
+      (auditor responsibility to pre-check).
+    - ``probandum_edges``: candidate ``ProbandumEdge`` dicts. Each is
+      routed through :func:`_build_probandum_edge`, which runs the
+      INV-16 (tree-shape / cycle) and INV-17 (lineage) gates. INV-17
+      failures auto-raise a ``lineage-incomplete`` Clarification;
+      INV-16 failures propagate (auditor responsibility).
+
+    Two-pass discipline mirrors the worked example in
+    ``map_hierarchize.md``: first commit interim probanda, then walk
+    edges and resolve any ``parent_probandum_id`` / ``child_id``
+    references that are integer-like strings (``"0"``, ``"1"``, ...)
+    into the just-written probanda's real substrate ids. Atom and
+    cross-doc-relation ``child_id`` values are passed through
+    unchanged.
+
+    A single mappings-scope PROV record covers the entire output
+    payload (one Hierarchize call -> one PROV record). The replay-log
+    append at the end is mappings-scoped (mirrors map-resolve /
+    map-audit / connect).
+    """
+    from amanuensis.fs._atomic import atomic_write_text  # pyright: ignore[reportPrivateUsage]
+    from amanuensis.fs._serialize import serialize_yaml  # pyright: ignore[reportPrivateUsage]
+
+    proposed_probanda = _as_list(payload.get("interim_probanda"))
+    proposed_edges = _as_list(payload.get("probandum_edges"))
+    substrate_changes: list[str] = []
+
+    # PROV: stable started_at derived from inputs_hash so content-
+    # addressable PROV ids are deterministic across reconciler retries
+    # on the same output.
+    started_at = _stable_role_attribution_at(inputs_hash)
+
+    prov_draft = ProvenanceRecord(
+        id="p-" + "0" * 16,
+        entity_type="probandum",
+        entity_id="p-placeholder",
+        activity="hierarchize-reconcile",
+        activity_started_at=started_at,
+        activity_ended_at=started_at,
+        used_entity_ids=[],
+        was_attributed_to=AgentAttribution(
+            kind="llm",
+            identifier="hierarchize",
+            role="hierarchize",
+        ),
+        was_influenced_by=[inputs_hash] if inputs_hash else [],
+        schema_version=1,
+    )
+    prov_id = compute_id(prov_draft)
+    prov = prov_draft.model_copy(update={"id": prov_id})
+
+    # Persist the PROV first so any per-candidate commit can point at it.
+    prov_path = substrate.mappings_provenance_path(prov.id)
+    atomic_write_text(prov_path, serialize_yaml(prov))
+    substrate_changes.append(str(prov_path.relative_to(workspace_root)))
+
+    role_attribution = RoleAttribution(
+        agent=prov.was_attributed_to,
+        activity="proposed",
+        at=started_at,
+    )
+
+    # --- First pass: interim probanda --------------------------------
+    #
+    # Track index -> real-id mapping so the second pass can resolve
+    # ``"0"`` / ``"1"`` / ... references in edge candidates.
+    index_to_probandum_id: dict[str, str] = {}
+
+    for idx, raw_candidate in enumerate(proposed_probanda):
+        if not isinstance(raw_candidate, dict):
+            continue
+        candidate: dict[str, Any] = cast("dict[str, Any]", raw_candidate)
+        try:
+            prob = _build_probandum(
+                candidate,
+                substrate,
+                prov,
+                role_attributions=[role_attribution],
+            )
+        except CandidateShapeError as exc:
+            result.errors.append((Path("(in-memory-probandum)"), str(exc)))
+            continue
+
+        if prob is None:
+            # INV-18 rejection path. ``_build_probandum`` already
+            # auto-raised a ``scheme-missing`` Clarification under the
+            # first available distillation. Recover the id by scanning
+            # the open clarifications dir (the helper does not yet
+            # plumb the id back — that's a follow-up cleanup parallel
+            # to Phase 2b's cleanup-2).
+            #
+            # Phase 2c M7 keeps things simple: the smoke test asserts
+            # the clarification landed on disk; per-id plumbing into
+            # ReconcileResult can land alongside the Connector's
+            # cleanup-2 parallel in a later sweep.
+            clar_id = _recover_latest_clarification_id(substrate, kind="scheme-missing")
+            if clar_id is not None:
+                result.clarifications_raised.append(clar_id)
+            continue
+
+        # Happy path: record the committed probandum + map its index.
+        index_to_probandum_id[str(idx)] = prob.id
+        prob_path = substrate.probandum_path(prob.id)
+        substrate_changes.append(str(prob_path.relative_to(workspace_root)))
+
+    # --- Second pass: probandum edges --------------------------------
+    for raw_candidate in proposed_edges:
+        if not isinstance(raw_candidate, dict):
+            continue
+        candidate = cast("dict[str, Any]", raw_candidate)
+
+        # Resolve index references for parent_probandum_id + child_id.
+        resolved = dict(candidate)
+        parent_ref = resolved.get("parent_probandum_id")
+        if isinstance(parent_ref, str) and parent_ref in index_to_probandum_id:
+            resolved["parent_probandum_id"] = index_to_probandum_id[parent_ref]
+        child_ref = resolved.get("child_id")
+        if (
+            isinstance(child_ref, str)
+            and resolved.get("child_kind") == "probandum"
+            and child_ref in index_to_probandum_id
+        ):
+            resolved["child_id"] = index_to_probandum_id[child_ref]
+
+        try:
+            edge = _build_probandum_edge(
+                resolved,
+                substrate,
+                prov,
+                role_attributions=[role_attribution],
+            )
+        except CandidateShapeError as exc:
+            result.errors.append((Path("(in-memory-probandum-edge)"), str(exc)))
+            continue
+
+        if edge is None:
+            # INV-17 rejection path. ``_build_probandum_edge``
+            # auto-raised a ``lineage-incomplete`` Clarification.
+            clar_id = _recover_latest_clarification_id(substrate, kind="lineage-incomplete")
+            if clar_id is not None:
+                result.clarifications_raised.append(clar_id)
+            continue
+
+        edge_path = substrate.probandum_edge_path(edge.id)
+        substrate_changes.append(str(edge_path.relative_to(workspace_root)))
+
+    _append_mappings_replay(
+        workspace_root=workspace_root,
+        inputs_hash=inputs_hash,
+        substrate_changes=substrate_changes,
+        activity="hierarchize-reconcile",
+        actor_role="hierarchize",
+    )
+
+
+def _recover_latest_clarification_id(substrate: Substrate, *, kind: str) -> str | None:
+    """Scan open clarifications and return the most recent id of ``kind``.
+
+    Used by :func:`_process_hierarchize_output` to recover the id of a
+    Clarification auto-raised by :func:`_build_probandum` /
+    :func:`_build_probandum_edge`. The M6 helpers do not yet plumb the
+    id back through their return values; this scan is the bridge
+    until a follow-up parallel to Phase 2b's cleanup-2 lands.
+
+    The scan walks every distillation's open-clarifications directory
+    plus the ``_mappings`` sentinel (where Phase 2c clarifications
+    land when no real distillation exists). Returns the id of the
+    most-recently-modified Clarification matching ``kind``, or
+    ``None`` when no match exists.
+
+    Note: this is a best-effort recovery. A drain that auto-raises two
+    Hierarchize clarifications of the same kind within the same
+    mtime tick (1s on macOS HFS+) may attribute both raises to the
+    same id. Production scale should land the cleanup-2 parallel
+    (return-the-id-from-the-builder) before this matters.
+    """
+    from amanuensis.fs._serialize import (
+        parse_clarification_md,  # pyright: ignore[reportPrivateUsage]
+    )
+
+    candidates: list[tuple[float, str]] = []
+    dist_root = substrate.root / "distillations"
+    if not dist_root.is_dir():
+        return None
+    for source_dir in dist_root.iterdir():
+        if not source_dir.is_dir():
+            continue
+        open_dir = source_dir / "clarifications" / "open"
+        if not open_dir.is_dir():
+            continue
+        for clar_path in open_dir.iterdir():
+            if not clar_path.is_file() or not clar_path.name.endswith(".md"):
+                continue
+            if ".tmp." in clar_path.name:
+                continue
+            try:
+                clar = parse_clarification_md(clar_path.read_text(encoding="utf-8"))
+            except (ValueError, OSError):
+                continue
+            if clar.kind != kind:
+                continue
+            candidates.append((clar_path.stat().st_mtime, clar.id))
+    if not candidates:
+        return None
+    candidates.sort(reverse=True)
+    return candidates[0][1]
+
+
 def _append_mappings_replay(
     *,
     workspace_root: Path,
     inputs_hash: str,
     substrate_changes: list[str],
     activity: str,
-    actor_role: Literal["map-resolve", "map-audit", "connect"] = "map-resolve",
+    actor_role: Literal[
+        "map-resolve",
+        "map-audit",
+        "connect",
+        "hierarchize",
+    ] = "map-resolve",
 ) -> None:
     """Append a single replay-log entry to the mappings-scope log.
 
     ``actor_role`` defaults to ``"map-resolve"`` to preserve M7.4's
     contract for the map-resolve / map-audit reconcile paths. The
     Phase 2b M5 connect reconcile path passes ``actor_role="connect"``
-    so the replay-log entry's actor matches the activity.
+    so the replay-log entry's actor matches the activity. Phase 2c M7
+    extends with ``"hierarchize"``.
     """
     log = ReplayLog.for_mappings(workspace_root)
     log.append(
