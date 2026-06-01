@@ -28,6 +28,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from .routes import atoms as atom_routes
+from .routes import cross_doc_relations as cross_doc_relation_routes
 from .routes import dashboard as dashboard_routes
 from .routes import entities as entities_routes
 from .routes import forms as form_routes
@@ -150,6 +151,7 @@ def create_app() -> FastAPI:
     app.include_router(status_routes.router)
     app.include_router(entities_routes.router)
     app.include_router(resolution_routes.router)
+    app.include_router(cross_doc_relation_routes.router)
 
     return app
 

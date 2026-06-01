@@ -24,11 +24,17 @@ import pytest
 
 from amanuensis.fs import Substrate
 from amanuensis.fs._atomic import atomic_write_text
-from amanuensis.fs._serialize import serialize_yaml
+from amanuensis.fs._serialize import (
+    serialize_entity_md,
+    serialize_resolution_yaml,
+    serialize_yaml,
+)
 from amanuensis.schemas import (
     AgentAttribution,
     Atom,
     Clarification,
+    CrossDocRelation,
+    CrossDocRelationSupersede,
     Entity,
     EntitySupersede,
     OperandRef,
@@ -500,3 +506,222 @@ def merged_entity_workspace(
     web_substrate.add_entity_supersede(es)
 
     return web_workspace, entity_a.id, entity_b.id, resolution_r.id
+
+
+# ---------------------------------------------------------------------------
+# Phase 2b M8 — cross-doc relation web fixtures
+# ---------------------------------------------------------------------------
+#
+# Mirror of ``tests/cli/conftest.py``'s
+# ``tmp_workspace_with_two_cross_doc_relations``. Plants:
+#
+#   * The INV-1 marker.
+#   * Two empty distillation directories (``src-A`` / ``src-B``).
+#   * A shared canonical Entity (``e-smith``) + bilateral Resolutions so
+#     ``Substrate.add_cross_doc_relation``'s INV-15 gate passes.
+#   * Two CrossDocRelation records — one ``supports`` and one
+#     ``attacks`` — committed via the substrate so all write-time gates
+#     have run.
+#
+# The two relations differ only in ``kind`` + ``warrant`` so their
+# content-addressable ids diverge.
+
+_M8_FROM_SOURCE = "src-A"
+_M8_FROM_ATOM = "a-fixture0001"
+_M8_TO_SOURCE = "src-B"
+_M8_TO_ATOM = "a-fixture0002"
+_M8_SHARED_ENTITY = "e-smith"
+_M8_STABLE_AT = datetime(2026, 5, 31, 12, 0, 0, tzinfo=UTC)
+
+
+def _m8_plant_distillation_dir(workspace: Path, source_id: str) -> None:
+    (workspace / "distillations" / source_id).mkdir(parents=True, exist_ok=True)
+
+
+def _m8_plant_entity_literal(workspace: Path, entity: Entity) -> None:
+    """Write an Entity to ``mappings/entities/<id>.md`` bypassing add_entity.
+
+    Phase 2b's CrossDocRelation INV-15 gate looks up entities through
+    ``latest_entity_for`` and accepts any id whose terminal record exists,
+    so we plant a literal-id entity (``e-smith``) rather than a
+    content-addressable one to keep the bilateral-resolution scaffolding
+    short and stable across runs.
+    """
+    path = workspace / "mappings" / "entities" / f"{entity.id}.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    atomic_write_text(path, serialize_entity_md(entity))
+
+
+def _m8_plant_resolution_literal(workspace: Path, resolution: Resolution) -> None:
+    """Write a Resolution to ``mappings/resolutions/<id>.yaml`` bypassing add_resolution."""
+    path = workspace / "mappings" / "resolutions" / f"{resolution.id}.yaml"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    atomic_write_text(path, serialize_resolution_yaml(resolution))
+
+
+def _m8_role_attribution() -> RoleAttribution:
+    return RoleAttribution(
+        agent=AgentAttribution(kind="llm", identifier="claude-opus-4-7", role="connect"),
+        activity="proposed",
+        at=_M8_STABLE_AT,
+    )
+
+
+def _m8_build_cross_doc_relation(
+    *,
+    kind: str,
+    warrant: str,
+    role_attribution: RoleAttribution,
+) -> CrossDocRelation:
+    """Build a CrossDocRelation whose id matches ``compute_id`` for its content."""
+    payload: dict[str, Any] = {
+        "id": "x-" + "0" * 16,
+        "from_atom_id": _M8_FROM_ATOM,
+        "from_source_id": _M8_FROM_SOURCE,
+        "to_atom_id": _M8_TO_ATOM,
+        "to_source_id": _M8_TO_SOURCE,
+        "kind": kind,
+        "warrant": warrant,
+        "warrant_defensibility": "conventional",
+        "warrant_basis": "Both atoms reference the same canonical Smith entity.",
+        "confidence": "medium",
+        "shared_entities": [_M8_SHARED_ENTITY],
+        "provenance_id": "p-m8-cdr00000001",
+        "role_attributions": [role_attribution],
+        "schema_version": 1,
+    }
+    draft = CrossDocRelation(**payload)
+    payload["id"] = compute_id(draft)
+    return CrossDocRelation(**payload)
+
+
+def _m8_plant_shared_scaffold(workspace: Path) -> RoleAttribution:
+    """Plant marker, distillation dirs, shared Entity, bilateral Resolutions."""
+    marker = workspace / "amanuensis.yaml"
+    marker.write_text(
+        "schema_version: 1\nproject_name: m8-cross-doc-fixture\n",
+        encoding="utf-8",
+    )
+    _m8_plant_distillation_dir(workspace, _M8_FROM_SOURCE)
+    _m8_plant_distillation_dir(workspace, _M8_TO_SOURCE)
+
+    role_attr = _m8_role_attribution()
+
+    # Shared Entity (literal id; INV-15 walks via latest_entity_for).
+    entity = Entity(
+        id=_M8_SHARED_ENTITY,
+        kind="party",
+        canonical_name="Smith",
+        aliases=[],
+        notes=None,
+        provenance_id="p-m8-ent00000001",
+        role_attributions=[role_attr],
+        schema_version=1,
+    )
+    _m8_plant_entity_literal(workspace, entity)
+
+    # Bilateral Resolutions.
+    for slug, source_id, atom_id in (
+        ("from", _M8_FROM_SOURCE, _M8_FROM_ATOM),
+        ("to", _M8_TO_SOURCE, _M8_TO_ATOM),
+    ):
+        res = Resolution(
+            id=f"j-m8-fixture-{slug}",
+            source_id=source_id,
+            atom_id=atom_id,
+            operand_index=0,
+            entity_id=_M8_SHARED_ENTITY,
+            confidence="high",
+            basis="fixture-planted for M8 web tests",
+            provenance_id="p-m8-res00000001",
+            role_attributions=[role_attr],
+            schema_version=1,
+        )
+        _m8_plant_resolution_literal(workspace, res)
+    return role_attr
+
+
+@pytest.fixture
+def tmp_workspace_with_two_cross_doc_relations(tmp_path: Path) -> Path:
+    """Workspace with two committed CrossDocRelation records (supports + attacks).
+
+    Same shape as the CLI M7 fixture of the same name (see
+    ``tests/cli/conftest.py``). Lives here too so web tests can stay
+    self-contained.
+    """
+    role_attr = _m8_plant_shared_scaffold(tmp_path)
+    substrate = Substrate(tmp_path)
+    rel_supports = _m8_build_cross_doc_relation(
+        kind="supports",
+        warrant="Both endpoints attest the Smith role in matching positions.",
+        role_attribution=role_attr,
+    )
+    rel_attacks = _m8_build_cross_doc_relation(
+        kind="attacks",
+        warrant="The two endpoints describe the Smith role in contradictory ways.",
+        role_attribution=role_attr,
+    )
+    substrate.add_cross_doc_relation(rel_supports)
+    substrate.add_cross_doc_relation(rel_attacks)
+    return tmp_path
+
+
+@pytest.fixture
+def tmp_workspace_with_cross_doc_supersede_chain(
+    tmp_path: Path,
+) -> tuple[Path, str, str]:
+    """Workspace with two CrossDocRelations + one CrossDocRelationSupersede.
+
+    Plants the same shared scaffold as
+    ``tmp_workspace_with_two_cross_doc_relations``, two cross-doc
+    relations (an ``old`` ``supports`` relation and a ``new`` ``attacks``
+    relation), then a ``CrossDocRelationSupersede`` record pointing
+    ``old → new``.
+
+    Returns ``(workspace_path, old_relation_id, new_relation_id)``.
+    """
+    role_attr = _m8_plant_shared_scaffold(tmp_path)
+    substrate = Substrate(tmp_path)
+    rel_old = _m8_build_cross_doc_relation(
+        kind="supports",
+        warrant="Initial reading: the Smith role aligns across both atoms.",
+        role_attribution=role_attr,
+    )
+    rel_new = _m8_build_cross_doc_relation(
+        kind="attacks",
+        warrant="Supervisor revision: closer reading flips the warrant.",
+        role_attribution=role_attr,
+    )
+    substrate.add_cross_doc_relation(rel_old)
+    substrate.add_cross_doc_relation(rel_new)
+
+    sup_payload: dict[str, Any] = {
+        "id": "v-" + "0" * 16,
+        "supersedes_id": rel_old.id,
+        "superseded_by_id": rel_new.id,
+        "kind": "cross-doc-relation",
+        "reason": "fixture supersede for M8 T8.3",
+        "provenance_id": "p-m8-sup00000001",
+        "role_attributions": [role_attr],
+        "at": _M8_STABLE_AT,
+        "schema_version": 1,
+    }
+    sup_draft = CrossDocRelationSupersede(**sup_payload)
+    sup_payload["id"] = compute_id(sup_draft)
+    sup = CrossDocRelationSupersede(**sup_payload)
+    substrate.add_cross_doc_relation_supersede(sup)
+    return tmp_path, rel_old.id, rel_new.id
+
+
+@pytest.fixture
+def web_app() -> object:
+    """A fresh FastAPI app instance for cross-doc-relation tests.
+
+    The spec for M8's tests uses ``web_app`` as a parameter directly.
+    Tests still set ``AMANUENSIS_WORKSPACE`` via ``monkeypatch`` so the
+    request-scoped ``get_substrate`` dependency picks up the planted
+    workspace at request time.
+    """
+    from amanuensis.web.app import create_app
+
+    return create_app()
