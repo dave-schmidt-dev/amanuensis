@@ -574,3 +574,116 @@ def test_link_rejects_unknown_child_prefix(
     assert result.exit_code == 2
     haystack = (result.stdout or "") + (result.stderr or "")
     assert "prefix" in haystack.lower() or "p-" in haystack
+
+
+# ---------------------------------------------------------------------------
+# T9.6: amanuensis map probandum supersede <old-id> <new-id> --reason "..."
+# ---------------------------------------------------------------------------
+
+
+def test_supersede_writes_supersede_record(
+    tmp_workspace_with_walton_snapshot: Path,
+) -> None:
+    """The supersede verb writes a ProbandumSupersede and re-routes the chain."""
+    workspace = tmp_workspace_with_walton_snapshot
+    old_id = _add_probandum(workspace, "Original ultimate.", "ultimate")
+    new_id = _add_probandum(workspace, "Refined ultimate.", "ultimate")
+    result = runner.invoke(
+        map_app,
+        [
+            "probandum",
+            "supersede",
+            old_id,
+            new_id,
+            "--reason",
+            "supervisor refined statement",
+            "--workspace",
+            str(workspace),
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    sub = Substrate(workspace)
+    terminus = sub.latest_probandum_for(old_id)
+    assert terminus is not None
+    assert terminus.id == new_id
+
+
+def test_supersede_requires_reason_flag(
+    tmp_workspace_with_walton_snapshot: Path,
+) -> None:
+    """Omitting --reason exits non-zero (Typer required-option error)."""
+    workspace = tmp_workspace_with_walton_snapshot
+    old_id = _add_probandum(workspace, "Original.", "ultimate")
+    new_id = _add_probandum(workspace, "Refined.", "ultimate")
+    result = runner.invoke(
+        map_app,
+        [
+            "probandum",
+            "supersede",
+            old_id,
+            new_id,
+            "--workspace",
+            str(workspace),
+        ],
+    )
+    assert result.exit_code != 0
+
+
+def test_supersede_rejects_unknown_old_id(
+    tmp_workspace_with_walton_snapshot: Path,
+) -> None:
+    """An unknown old-id is rejected before any write."""
+    workspace = tmp_workspace_with_walton_snapshot
+    new_id = _add_probandum(workspace, "Replacement.", "ultimate")
+    result = runner.invoke(
+        map_app,
+        [
+            "probandum",
+            "supersede",
+            "p-doesnotexist01",
+            new_id,
+            "--reason",
+            "r",
+            "--workspace",
+            str(workspace),
+        ],
+    )
+    assert result.exit_code != 0
+
+
+def test_supersede_already_superseded_rejected(
+    tmp_workspace_with_walton_snapshot: Path,
+) -> None:
+    """Once a probandum is superseded, a second supersede on the old id is refused."""
+    workspace = tmp_workspace_with_walton_snapshot
+    a_id = _add_probandum(workspace, "A.", "ultimate")
+    b_id = _add_probandum(workspace, "B.", "ultimate")
+    c_id = _add_probandum(workspace, "C.", "ultimate")
+    first = runner.invoke(
+        map_app,
+        [
+            "probandum",
+            "supersede",
+            a_id,
+            b_id,
+            "--reason",
+            "first",
+            "--workspace",
+            str(workspace),
+        ],
+    )
+    assert first.exit_code == 0, first.output
+    second = runner.invoke(
+        map_app,
+        [
+            "probandum",
+            "supersede",
+            a_id,
+            c_id,
+            "--reason",
+            "second",
+            "--workspace",
+            str(workspace),
+        ],
+    )
+    assert second.exit_code != 0

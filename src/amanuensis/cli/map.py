@@ -2897,3 +2897,150 @@ def probandum_link_command(
         raise typer.Exit(code=2) from exc
 
     typer.echo(edge.id)
+
+
+@probandum_app.command("supersede")
+@require_marker
+def probandum_supersede_command(
+    old_id: Annotated[
+        str,
+        typer.Argument(help="Probandum id to supersede (e.g. p-<hash>)."),
+    ],
+    new_id: Annotated[
+        str,
+        typer.Argument(help="Replacement Probandum id (must already exist)."),
+    ],
+    reason: Annotated[
+        str,
+        typer.Option(
+            "--reason",
+            help="Human-readable reason for the correction (recorded in the supersede).",
+        ),
+    ],
+    actor: Annotated[
+        str,
+        typer.Option(
+            "--actor",
+            help="Identifier of the human performing the correction.",
+        ),
+    ] = "cli",
+    workspace: Annotated[
+        Path | None,
+        typer.Option(
+            "--workspace",
+            "-w",
+            help="Workspace root (must contain amanuensis.yaml). Defaults to CWD.",
+        ),
+    ] = None,
+) -> None:
+    """Supersede a Probandum with a replacement record (T9.6).
+
+    Mirrors ``map relation supersede``: validates both ids exist as
+    on-disk probanda, refuses if ``old_id`` is already superseded,
+    builds a ``ProbandumSupersede`` + matching ``ProvenanceRecord`` via
+    the two-pass compute_id pattern, then writes both atomically under
+    the workspace flock.
+    """
+    workspace_path = workspace_from_kwargs({"workspace": workspace})
+    substrate = Substrate(workspace_path)
+
+    # --- Validate both ids resolve to on-disk Probanda ----------------
+    if not substrate.probandum_path(old_id).is_file():
+        typer.secho(
+            f"probandum '{old_id}' not found in mappings/probanda/",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+    if not substrate.probandum_path(new_id).is_file():
+        typer.secho(
+            f"probandum '{new_id}' not found in mappings/probanda/",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+    # --- Refuse if ``old_id`` is already superseded --------------------
+    latest = substrate.latest_probandum_for(old_id)
+    if latest is not None and latest.id != old_id:
+        typer.secho(
+            f"probandum '{old_id}' is already superseded by '{latest.id}'; "
+            "supersede the latest in the chain",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+    now = datetime.now(UTC)
+    agent = AgentAttribution(kind="human", identifier=actor, role="human_supervisor")
+    role_attr = RoleAttribution(agent=agent, activity="superseded", at=now)
+
+    # Two-pass compute_id pattern (mirror relation_supersede_command).
+    sup_draft = ProbandumSupersede(
+        id="u-" + "0" * 16,
+        supersedes_id=old_id,
+        superseded_by_id=new_id,
+        kind="probandum",
+        reason=reason,
+        provenance_id="p-" + "0" * 16,
+        role_attributions=[role_attr],
+        at=now,
+        schema_version=1,
+    )
+    sup_id = compute_id(sup_draft)
+
+    prov_draft = ProvenanceRecord(
+        id="p-" + "0" * 16,
+        entity_type="probandum-supersede",
+        entity_id=sup_id,
+        activity="probandum-supersede",
+        activity_started_at=now,
+        activity_ended_at=now,
+        used_entity_ids=[],
+        was_attributed_to=agent,
+        was_influenced_by=[],
+        schema_version=1,
+    )
+    prov_id = compute_id(prov_draft)
+    prov = prov_draft.model_copy(update={"id": prov_id})
+    sup = sup_draft.model_copy(update={"id": sup_id, "provenance_id": prov_id})
+
+    try:
+        with acquire_workspace_lock(workspace_path, timeout=5.0):
+            substrate_changes: list[str] = []
+            prov_path = substrate.mappings_provenance_path(prov.id)
+            atomic_write_text(prov_path, serialize_yaml(prov))
+            substrate_changes.append(str(prov_path.relative_to(workspace_path)))
+
+            substrate.add_probandum_supersede(sup)
+            sup_path = substrate.supersede_path(sup.id)
+            substrate_changes.append(str(sup_path.relative_to(workspace_path)))
+
+            inputs_payload = json.dumps(
+                {
+                    "new_id": new_id,
+                    "old_id": old_id,
+                    "reason": reason,
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+            inputs_hash = hashlib.sha256(inputs_payload).hexdigest()
+
+            actor_attr = AgentAttribution(kind="human", identifier=actor, role="human_supervisor")
+            ReplayLog.for_mappings(workspace_path).append(
+                actor=actor_attr,
+                activity="probandum-supersede",
+                inputs_hash=inputs_hash,
+                outputs_hash=inputs_hash,
+                cache_hit=False,
+                substrate_changes=substrate_changes,
+                duration_seconds=0.0,
+                _lock_held=True,
+            )
+
+    except WorkspaceLockTimeout as exc:
+        typer.secho(
+            "workspace flock held by another process — wait or release .amanuensis-lock",
+            err=True,
+        )
+        raise typer.Exit(code=2) from exc
+
+    typer.echo(f"Superseded probandum '{old_id}' -> '{new_id}'. ProbandumSupersede id: {sup.id}")
