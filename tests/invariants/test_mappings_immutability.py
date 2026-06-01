@@ -44,14 +44,29 @@ import pytest
 from amanuensis.fs import Substrate
 from amanuensis.fs._atomic import atomic_write_text
 from amanuensis.fs._errors import MutationOfImmutableRecord
-from amanuensis.fs._serialize import serialize_entity_md, serialize_yaml
+from amanuensis.fs._serialize import (
+    serialize_cross_doc_relation_yaml,
+    serialize_entity_md,
+    serialize_yaml,
+)
 from amanuensis.schemas import AgentAttribution, RoleAttribution
 from tests.invariants.conftest import (
+    _INV15_ENTITY_ID,
+    _INV15_FROM_ATOM,
+    _INV15_FROM_SOURCE,
+    _INV15_TO_ATOM,
+    _INV15_TO_SOURCE,
     _MAPPINGS_ATOM_ID,
     _MAPPINGS_SOURCE_ID,
+    _build_cross_doc_relation_supersede,
     _build_entity,
     _build_resolution,
     _build_resolution_supersede,
+    _inv15_build_relation,
+    _inv15_forged_entity,
+    _inv15_forged_resolution,
+    _inv15_plant_entity,
+    _inv15_plant_resolution,
 )
 
 pytestmark = pytest.mark.invariants
@@ -210,4 +225,112 @@ def test_supersede_chain_allows_correction(tmp_path: Path) -> None:
     # v1 is still on disk (immutable — not deleted).
     assert s.resolution_path(res_v1.id).is_file(), (
         "resolution v1 should still exist on disk (immutability: no deletion)"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Phase 2b — INV-13 extended to CrossDocRelation
+# ---------------------------------------------------------------------------
+#
+# Mirrors cases 1, 2, and 4 above for CrossDocRelation: idempotent
+# re-add, mutation guard against tampered on-disk content, and supersede-
+# chain semantics. CrossDocRelation immutability is enforced by
+# Substrate.add_cross_doc_relation; CrossDocRelationSupersede records
+# carry corrections (Phase 2b).
+
+
+def _populated_cross_doc_workspace(tmp_path: Path, project_name: str) -> Path:
+    """Build a workspace with bilateral resolutions for the standard endpoints.
+
+    Plants ``e-smith`` Entity + Resolutions for both
+    ``(src-A, a-fixture0001)`` and ``(src-B, a-fixture0002)`` so any
+    CrossDocRelation with ``shared_entities=["e-smith"]`` and matching
+    endpoints passes INV-15.
+    """
+    marker = tmp_path / "amanuensis.yaml"
+    marker.write_text(f"schema_version: 1\nproject_name: {project_name}\n", encoding="utf-8")
+    entity = _inv15_forged_entity(_INV15_ENTITY_ID, _RA)
+    _inv15_plant_entity(tmp_path, entity)
+    _inv15_plant_resolution(
+        tmp_path,
+        _inv15_forged_resolution(
+            resolution_id="j-inv13-from",
+            source_id=_INV15_FROM_SOURCE,
+            atom_id=_INV15_FROM_ATOM,
+            entity_id=_INV15_ENTITY_ID,
+            role_attribution=_RA,
+        ),
+    )
+    _inv15_plant_resolution(
+        tmp_path,
+        _inv15_forged_resolution(
+            resolution_id="j-inv13-to",
+            source_id=_INV15_TO_SOURCE,
+            atom_id=_INV15_TO_ATOM,
+            entity_id=_INV15_ENTITY_ID,
+            role_attribution=_RA,
+        ),
+    )
+    return tmp_path
+
+
+def test_cross_doc_relation_add_idempotent(tmp_path: Path) -> None:
+    """add_cross_doc_relation is a no-op on second write of identical content."""
+    workspace = _populated_cross_doc_workspace(tmp_path, "inv13-cdr-idempotent")
+    s = Substrate(workspace)
+    rel = _inv15_build_relation(_RA, shared_entities=[_INV15_ENTITY_ID])
+    s.add_cross_doc_relation(rel)
+    # Re-adding the same relation must not raise.
+    s.add_cross_doc_relation(rel)
+    relations = list(s.list_cross_doc_relations())
+    assert len(relations) == 1, "add_cross_doc_relation duplicated the relation"
+
+
+def test_cross_doc_relation_mutation_raises(tmp_path: Path) -> None:
+    """add_cross_doc_relation raises MutationOfImmutableRecord on tampered on-disk content."""
+    workspace = _populated_cross_doc_workspace(tmp_path, "inv13-cdr-mutation")
+    s = Substrate(workspace)
+    rel = _inv15_build_relation(_RA, shared_entities=[_INV15_ENTITY_ID])
+    s.add_cross_doc_relation(rel)
+    # Forge the on-disk file: same id (so the immutability guard rather
+    # than the id check fires), different non-volatile content.
+    forged = rel.model_copy(update={"warrant_basis": "forged by hand"})
+    atomic_write_text(
+        s.cross_doc_relation_path(rel.id),
+        serialize_cross_doc_relation_yaml(forged),
+    )
+    with pytest.raises(MutationOfImmutableRecord):
+        s.add_cross_doc_relation(rel)
+
+
+def test_cross_doc_relation_supersede_chain_allows_correction(tmp_path: Path) -> None:
+    """A CrossDocRelationSupersede corrects a relation without hitting the immutability guard.
+
+    Writes rel_v1, writes rel_v2 (different warrant_basis), records the
+    supersede, then verifies that ``latest_cross_doc_relation_for(v1.id)``
+    returns v2.
+    """
+    workspace = _populated_cross_doc_workspace(tmp_path, "inv13-cdr-supersede")
+    s = Substrate(workspace)
+    rel_v1 = _inv15_build_relation(
+        _RA, shared_entities=[_INV15_ENTITY_ID], warrant_basis="initial basis"
+    )
+    rel_v2 = _inv15_build_relation(
+        _RA, shared_entities=[_INV15_ENTITY_ID], warrant_basis="refined basis"
+    )
+    s.add_cross_doc_relation(rel_v1)
+    s.add_cross_doc_relation(rel_v2)
+    supersede = _build_cross_doc_relation_supersede(
+        _RA, superseded_id=rel_v1.id, replacement_id=rel_v2.id
+    )
+    s.add_cross_doc_relation_supersede(supersede)
+
+    # Walking from v1 returns v2; v1 is still on disk (immutable, not deleted).
+    latest = s.latest_cross_doc_relation_for(rel_v1.id)
+    assert latest is not None, "expected a non-None latest cross-doc relation"
+    assert latest.id == rel_v2.id, (
+        f"expected latest cross-doc relation to be {rel_v2.id!r}, got {latest.id!r}"
+    )
+    assert s.cross_doc_relation_path(rel_v1.id).is_file(), (
+        "cross-doc relation v1 should still exist on disk (immutability: no deletion)"
     )

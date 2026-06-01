@@ -31,6 +31,7 @@ from amanuensis.schemas import (
     AgentAttribution,
     Atom,
     CrossDocRelation,
+    CrossDocRelationSupersede,
     Entity,
     EntitySupersede,
     OperandRef,
@@ -817,6 +818,7 @@ def _inv15_build_relation(
     from_atom_id: str = _INV15_FROM_ATOM,
     to_source_id: str = _INV15_TO_SOURCE,
     to_atom_id: str = _INV15_TO_ATOM,
+    warrant_basis: str = "Naming conventions match across documents.",
 ) -> CrossDocRelation:
     """Build a CrossDocRelation whose id matches ``compute_id`` for its content."""
     payload: dict[str, Any] = {
@@ -828,7 +830,7 @@ def _inv15_build_relation(
         "kind": "supports",
         "warrant": "Both atoms refer to the same Smith party.",
         "warrant_defensibility": "conventional",
-        "warrant_basis": "Naming conventions match across documents.",
+        "warrant_basis": warrant_basis,
         "confidence": "medium",
         "shared_entities": shared_entities,
         "provenance_id": "p-inv15-cdr",
@@ -838,6 +840,30 @@ def _inv15_build_relation(
     draft = CrossDocRelation(**payload)
     payload["id"] = compute_id(draft)
     return CrossDocRelation(**payload)
+
+
+def _build_cross_doc_relation_supersede(
+    role_attribution: RoleAttribution,
+    *,
+    superseded_id: str,
+    replacement_id: str,
+    reason: str = "supervisor refined warrant",
+) -> CrossDocRelationSupersede:
+    """Build a CrossDocRelationSupersede whose id matches ``compute_id``."""
+    payload: dict[str, Any] = {
+        "id": "v-" + "0" * 16,
+        "supersedes_id": superseded_id,
+        "superseded_by_id": replacement_id,
+        "kind": "cross-doc-relation",
+        "reason": reason,
+        "provenance_id": "p-inv15-cdr-sup",
+        "role_attributions": [role_attribution],
+        "at": _STABLE_AT,
+        "schema_version": 1,
+    }
+    draft = CrossDocRelationSupersede(**payload)
+    payload["id"] = compute_id(draft)
+    return CrossDocRelationSupersede(**payload)
 
 
 def _inv15_plant_cross_doc_relation(tmp_path: Path, rel: CrossDocRelation) -> None:
